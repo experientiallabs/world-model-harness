@@ -81,3 +81,21 @@ class Provider(Protocol):
     def verify(self) -> VerifyResult:
         """Cheap creds/model check run on startup (`wmh providers verify`)."""
         ...
+
+
+# One read-only instance reused across every verify() ping (complete() never mutates messages).
+_PING_MESSAGES: list[Message] = [Message(role="user", content="ping")]
+
+
+def verify_via_ping(provider: Provider) -> VerifyResult:
+    """Shared `verify()`: one cheap 1-token completion, reporting failure as ok=False.
+
+    Every backend's verify() is identical apart from its kind/model (both on the config), so they
+    all delegate here. Never raises — `verify_all` relies on that to not crash startup.
+    """
+    cfg = provider.config
+    try:
+        provider.complete("", _PING_MESSAGES, max_tokens=1)
+    except Exception as exc:  # noqa: BLE001 - verify reports failure, never raises
+        return VerifyResult(ok=False, kind=cfg.kind, model=cfg.model, detail=str(exc))
+    return VerifyResult(ok=True, kind=cfg.kind, model=cfg.model)
