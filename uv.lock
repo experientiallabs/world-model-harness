@@ -897,6 +897,10 @@ config = [
     { name = "tomli-w" },
 ]
 dev = [
+    { name = "anthropic" },
+    { name = "boto3" },
+    { name = "openai" },
+    { name = "opentelemetry-proto" },
     { name = "pytest" },
     { name = "ruff" },
     { name = "tomli-w" },
@@ -923,9 +927,9 @@ requires-dist = [
     { name = "rich", specifier = ">=13.7" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.5" },
     { name = "tomli-w", marker = "extra == 'config'", specifier = ">=1.0" },
-    { name = "tomli-w", marker = "extra == 'dev'", specifier = ">=1.0" },
     { name = "ty", marker = "extra == 'dev'", specifier = ">=0.0.1a1" },
     { name = "typer", specifier = ">=0.12" },
     { name = "uvicorn", specifier = ">=0.29" },
+    { name = "world-model-harness", extras = ["anthropic", "openai", "bedrock", "otel", "config"], marker = "extra == 'dev'" },
 ]
 provides-extras = ["anthropic", "openai", "bedrock", "otel", "config", "dev"]

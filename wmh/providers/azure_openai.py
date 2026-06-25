@@ -32,13 +32,17 @@ class AzureOpenAIProvider:
         # Lazy: construct on first use. api_key + endpoint default to AZURE_OPENAI_API_KEY /
         # AZURE_OPENAI_ENDPOINT from the environment; api_version must be supplied by config.
         if self._client is None:
-            from openai import AzureOpenAI
-
+            # Validate config before reaching for the SDK, so a config error doesn't depend on the
+            # optional `openai` extra being installed.
             if self.config.api_version is None:
                 raise ValueError("AzureOpenAIProvider requires config.api_version to be set.")
+            endpoint = self.config.endpoint or _require_endpoint()
+
+            from openai import AzureOpenAI
+
             self._client = AzureOpenAI(
                 api_version=self.config.api_version,
-                azure_endpoint=self.config.endpoint or _require_endpoint(),
+                azure_endpoint=endpoint,
             )
         return self._client
 
