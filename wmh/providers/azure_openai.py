@@ -1,7 +1,7 @@
 """Azure OpenAI provider (GPT 5.5).
 
 Reads AZURE_OPENAI_API_KEY + AZURE_OPENAI_ENDPOINT from the environment; deployment name and
-api_version come from ProviderConfig.options.
+api_version come from ProviderConfig.deployment / ProviderConfig.api_version.
 """
 
 from __future__ import annotations
@@ -14,7 +14,7 @@ class AzureOpenAIProvider:
 
     def __init__(self, config: ProviderConfig) -> None:
         self.config = config
-        # TODO: openai.AzureOpenAI(api_key, azure_endpoint, api_version) from env + options.
+        # TODO: openai.AzureOpenAI(api_key, azure_endpoint, api_version) from env + config fields.
 
     def complete(
         self,

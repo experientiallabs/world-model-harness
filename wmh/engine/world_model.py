@@ -9,11 +9,10 @@ from __future__ import annotations
 
 import uuid
 
-from wmh.optimize import Judge  # noqa: F401  (re-exported convenience for callers)
-from wmh.prompts import BASE_ENV_PROMPT, build_env_prompt
-from wmh.providers.base import Provider
+from wmh.core.types import Action, EnvState, Observation, Session, Step
+from wmh.engine.prompts import BASE_ENV_PROMPT, build_env_prompt
+from wmh.providers.base import Message, Provider
 from wmh.retrieval import Retriever
-from wmh.types import Action, EnvState, Observation, Session, Step
 
 
 class WorldModel:
@@ -70,9 +69,7 @@ class WorldModel:
         raise NotImplementedError
 
 
-def _user_message(text: str):  # noqa: ANN202 - thin helper, typed at call sites
-    from wmh.providers.base import Message
-
+def _user_message(text: str) -> Message:
     return Message(role="user", content=text)
 
 

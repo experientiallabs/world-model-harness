@@ -1,7 +1,8 @@
-"""`wmh` CLI — the UI for ingestion and the operator console for the harness.
+"""`wmh` CLI — ingestion UI and operator console for the harness.
 
-Commands map onto the lifecycle in DESIGN.md:
-    init -> providers verify -> ingest -> build -> serve / demo / step
+Deliberately small. The lifecycle is:
+    providers verify -> build -> serve / demo
+`build` creates the `.wmh/` artifact directory itself, so there is no separate init step.
 """
 
 from __future__ import annotations
@@ -13,30 +14,22 @@ providers_app = typer.Typer(help="Manage and verify LLM providers.")
 app.add_typer(providers_app, name="providers")
 
 
-@app.command("init")
-def init() -> None:
-    """Scaffold a `.wmh/` project and write a starter config."""
-    raise NotImplementedError
-
-
 @providers_app.command("verify")
 def providers_verify() -> None:
     """Ping every configured provider (Anthropic/Bedrock/Azure/OpenAI) and report status."""
     raise NotImplementedError
 
 
-@app.command("ingest")
-def ingest(
+@app.command("build")
+def build(
     file: str = typer.Option(None, "--file", help="Path to exported traces (OTLP-JSON / JSONL)."),
     vendor: str = typer.Option(None, "--vendor", help="Vendor name to pull traces via SDK."),
 ) -> None:
-    """Ingest traces from a file upload or a vendor SDK pull into `.wmh/traces/`."""
-    raise NotImplementedError
+    """Ingest traces (file upload or vendor SDK pull) and build the `.wmh/` artifact.
 
-
-@app.command("build")
-def build() -> None:
-    """Normalize -> split -> embed/index -> GEPA optimize -> write the `.wmh/` artifact."""
+    Creates `.wmh/` if absent, then: ingest -> normalize -> split(train/test) -> embed/index ->
+    GEPA optimize -> write the artifact.
+    """
     raise NotImplementedError
 
 
@@ -49,16 +42,6 @@ def serve(port: int = typer.Option(8000, help="Port for the local backend.")) ->
 @app.command("demo")
 def demo() -> None:
     """Demo the harness: an LLM agent makes a tool call vs the world model; show prompt+output."""
-    raise NotImplementedError
-
-
-@app.command("step")
-def step(
-    session: str = typer.Option(..., "--session", help="Session id."),
-    tool: str = typer.Option(..., "--tool", help="Tool name to call."),
-    args: str = typer.Option("{}", "--args", help="JSON tool arguments."),
-) -> None:
-    """Issue a single tool-call step from the CLI (debugging convenience)."""
     raise NotImplementedError
 
 

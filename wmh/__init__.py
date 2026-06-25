@@ -7,7 +7,7 @@ Public API:
     obs = wm.step(session.id, action)
 """
 
-from wmh.types import (
+from wmh.core.types import (
     Action,
     ActionKind,
     EnvState,
@@ -16,7 +16,7 @@ from wmh.types import (
     Step,
     Trace,
 )
-from wmh.world_model import WorldModel
+from wmh.engine.world_model import WorldModel
 
 __all__ = [
     "WorldModel",

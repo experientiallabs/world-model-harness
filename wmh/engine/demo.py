@@ -9,9 +9,9 @@ from __future__ import annotations
 
 from pydantic import BaseModel
 
+from wmh.core.types import Action, Observation, Step
+from wmh.engine.world_model import WorldModel
 from wmh.providers.base import Provider
-from wmh.types import Action, Observation, Step
-from wmh.world_model import WorldModel
 
 
 class DemoResult(BaseModel):

@@ -13,8 +13,8 @@ from __future__ import annotations
 
 from typing import Protocol, runtime_checkable
 
+from wmh.core.types import Action, EnvState, Step, Trace
 from wmh.providers.base import Provider
-from wmh.types import Action, EnvState, Step, Trace
 
 
 @runtime_checkable

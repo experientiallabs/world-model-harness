@@ -11,7 +11,7 @@ into the single completion that predicts the next observation (DreamGym Eq. 4).
 
 from __future__ import annotations
 
-from wmh.types import Action, Session, Step
+from wmh.core.types import Action, Session, Step
 
 # Layer (a): the env-agnostic base prompt. GEPA (layer b) evolves a specialized version of this.
 # Kept deliberately short here; the real content is tuned during `wmh build`.

@@ -31,6 +31,11 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["wmh"]
 
+[tool.pytest.ini_options]
+# Tests live inline next to the modules they cover (foo.py -> foo_test.py).
+python_files = ["*_test.py"]
+testpaths = ["wmh"]
+
 [tool.ruff]
 line-length = 100
 target-version = "py311"

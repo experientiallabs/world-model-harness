@@ -6,11 +6,11 @@ backend directly. `verify_all` powers `wmh providers verify`.
 
 from __future__ import annotations
 
-from wmh.providers.anthropic_provider import AnthropicProvider
-from wmh.providers.azure_openai_provider import AzureOpenAIProvider
+from wmh.providers.anthropic import AnthropicProvider
+from wmh.providers.azure_openai import AzureOpenAIProvider
 from wmh.providers.base import Provider, ProviderConfig, ProviderKind, VerifyResult
-from wmh.providers.bedrock_provider import BedrockProvider
-from wmh.providers.openai_provider import OpenAIProvider
+from wmh.providers.bedrock import BedrockProvider
+from wmh.providers.openai import OpenAIProvider
 
 _BACKENDS = {
     ProviderKind.ANTHROPIC: AnthropicProvider,

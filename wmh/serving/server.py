@@ -8,7 +8,7 @@ from __future__ import annotations
 from fastapi import FastAPI
 from pydantic import BaseModel
 
-from wmh.types import Action, EnvState, Observation, Session
+from wmh.core.types import Action, EnvState, Observation, Session
 
 
 class NewSessionRequest(BaseModel):

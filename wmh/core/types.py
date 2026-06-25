@@ -7,9 +7,12 @@ WorldModel, retriever, optimizer, and providers all operate on.
 from __future__ import annotations
 
 from enum import StrEnum
-from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, JsonValue
+
+# Tool arguments, env config, and span metadata are user-defined JSON. `JsonValue` is pydantic's
+# concrete recursive JSON type — honest about the shape without falling back to `Any`.
+JsonObject = dict[str, JsonValue]
 
 
 class ActionKind(StrEnum):
@@ -22,7 +25,7 @@ class Action(BaseModel):
 
     kind: ActionKind
     name: str | None = None  # tool name, when kind == tool_call
-    arguments: dict[str, Any] = Field(default_factory=dict)
+    arguments: JsonObject = Field(default_factory=dict)
     content: str | None = None  # message text, when kind == message
 
 
@@ -35,7 +38,7 @@ class Observation(BaseModel):
     content: str
     is_error: bool = False
     reward: float | None = None
-    metadata: dict[str, Any] = Field(default_factory=dict)
+    metadata: JsonObject = Field(default_factory=dict)
 
 
 class EnvState(BaseModel):
@@ -46,7 +49,7 @@ class EnvState(BaseModel):
     across a session (e.g. "user created foo.txt", "logged in as alice").
     """
 
-    structured: dict[str, Any] = Field(default_factory=dict)
+    structured: JsonObject = Field(default_factory=dict)
     scratchpad: str = ""
 
 
@@ -66,7 +69,7 @@ class Trace(BaseModel):
     trace_id: str
     steps: list[Step] = Field(default_factory=list)
     source: str = "unknown"  # vendor name or file path
-    metadata: dict[str, Any] = Field(default_factory=dict)
+    metadata: JsonObject = Field(default_factory=dict)
 
 
 class Session(BaseModel):

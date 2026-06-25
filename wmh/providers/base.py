@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from enum import StrEnum
-from typing import Any, Protocol, runtime_checkable
+from typing import Literal, Protocol, runtime_checkable
 
 from pydantic import BaseModel, Field
 
@@ -15,15 +15,22 @@ class ProviderKind(StrEnum):
     OPENAI = "openai"  # GPT 5.5 direct
 
 
+Role = Literal["user", "assistant"]
+
+
 class Message(BaseModel):
-    role: str  # "user" | "assistant"
+    role: Role
     content: str
+
+
+class TokenUsage(BaseModel):
+    input_tokens: int = 0
+    output_tokens: int = 0
 
 
 class Completion(BaseModel):
     text: str
-    usage: dict[str, int] = Field(default_factory=dict)
-    raw: dict[str, Any] = Field(default_factory=dict)
+    usage: TokenUsage = Field(default_factory=TokenUsage)
 
 
 class VerifyResult(BaseModel):
@@ -36,15 +43,18 @@ class VerifyResult(BaseModel):
 class ProviderConfig(BaseModel):
     """Everything needed to construct one provider.
 
-    Credentials are read from the environment by default (keys named per backend); explicit fields
-    here override. The skeleton documents the env var names in `wmh.config`.
+    Credentials are read from the environment by default (keys named per backend); the explicit
+    backend knobs below override. The env var names are documented in `wmh.config`.
     """
 
     kind: ProviderKind
     model: str
     embed_model: str | None = None
-    # Backend-specific knobs (endpoint, region, deployment, api_version, ...) live here.
-    options: dict[str, Any] = Field(default_factory=dict)
+    # Backend knobs (only some apply per kind):
+    endpoint: str | None = None  # Azure OpenAI / custom base URL
+    region: str | None = None  # AWS Bedrock region
+    deployment: str | None = None  # Azure OpenAI deployment name
+    api_version: str | None = None  # Azure OpenAI API version
 
 
 @runtime_checkable

@@ -10,8 +10,8 @@ This is the reference adapter; it also documents the generic shape other adapter
 
 from __future__ import annotations
 
-from wmh.ingest.base import register_adapter
-from wmh.types import Trace
+from wmh.core.types import Trace
+from wmh.ingest.adapter import VendorPull, register_adapter
 
 
 class OtelGenAIAdapter:
@@ -21,7 +21,7 @@ class OtelGenAIAdapter:
         # TODO: parse OTLP-JSON; group spans by trace_id; map gen_ai.* -> Step list.
         raise NotImplementedError
 
-    def from_vendor(self, **options: object) -> list[Trace]:
+    def from_vendor(self, pull: VendorPull) -> list[Trace]:
         # TODO: pull from an OTLP-compatible backend; reuse the same span->Step mapping.
         raise NotImplementedError
 
