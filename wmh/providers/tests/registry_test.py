@@ -14,7 +14,11 @@ def test_all_four_providers_construct_and_satisfy_protocol() -> None:
         assert isinstance(provider, Provider)
 
 
-def test_provider_verify_is_stubbed() -> None:
+def test_verify_never_raises_and_reports_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+    # No creds must surface as ok=False, never an exception — verify_all relies on this so
+    # startup never crashes. Drop the key so this is deterministic regardless of the dev env.
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     provider = get_provider(ProviderConfig(kind=ProviderKind.ANTHROPIC, model="claude-opus-4-8"))
-    with pytest.raises(NotImplementedError):
-        provider.verify()
+    result = provider.verify()
+    assert result.ok is False
+    assert result.kind is ProviderKind.ANTHROPIC
