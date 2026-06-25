@@ -74,6 +74,22 @@ def test_from_file_parses_jsonl_with_multiple_traces() -> None:
     assert second.steps[0].observation.content == "3 results"
 
 
+def test_from_file_skips_corrupt_jsonl_lines(tmp_path: Path) -> None:
+    good = (
+        '{"traceId": "cccc", "spanId": "01", "name": "chat", '
+        '"attributes": [{"key": "gen_ai.completion", "value": {"stringValue": "hi"}}]}'
+    )
+    path = tmp_path / "partial.jsonl"
+    # A truncated middle line (crashed exporter) must not abort the whole ingest.
+    path.write_text(f"{good}\n{{truncated\n{good}\n", encoding="utf-8")
+
+    traces = OtelGenAIAdapter().from_file(str(path))
+
+    assert len(traces) == 1
+    assert traces[0].trace_id == "cccc"
+    assert len(traces[0].steps) == 2  # both valid lines parsed; the corrupt one skipped
+
+
 def test_from_vendor_without_endpoint_raises_friendly_error() -> None:
     saved = os.environ.pop(VENDOR_ENDPOINT_ENV, None)
     try:

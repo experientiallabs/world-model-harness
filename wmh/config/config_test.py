@@ -59,3 +59,25 @@ def test_load_with_dir_but_no_config_raises_friendly_error(tmp_path: Path) -> No
 def test_defaults_round_trip(tmp_path: Path) -> None:
     save_config(HarnessConfig(), root=tmp_path / ".wmh")
     assert load_config(root=tmp_path / ".wmh") == HarnessConfig()
+
+
+def test_load_corrupt_toml_raises_friendly_error(tmp_path: Path) -> None:
+    root = tmp_path / ".wmh"
+    root.mkdir()
+    (root / "config.toml").write_text("this is = = not valid", encoding="utf-8")
+    with pytest.raises(ValueError, match="not valid TOML"):
+        load_config(root=root)
+
+
+def test_load_schema_invalid_toml_raises_friendly_error(tmp_path: Path) -> None:
+    root = tmp_path / ".wmh"
+    root.mkdir()
+    (root / "config.toml").write_text('top_k = "not-an-int"', encoding="utf-8")
+    with pytest.raises(ValueError, match="config schema"):
+        load_config(root=root)
+
+
+def test_save_does_not_leave_temp_file(tmp_path: Path) -> None:
+    root = tmp_path / ".wmh"
+    save_config(HarnessConfig(), root=root)
+    assert list(root.glob("*.tmp")) == []

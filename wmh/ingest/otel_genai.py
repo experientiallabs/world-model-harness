@@ -311,10 +311,16 @@ def _build_steps(spans: list[_ParsedSpan]) -> list[Step]:
                 action = _tool_call_action_from_tool_span(span)
                 flush(action, observation, [span.span_id])
             else:
-                if pending.kind == ActionKind.TOOL_CALL and not pending.arguments:
-                    pending.arguments = _tool_args(span.attributes)
-                if pending.kind == ActionKind.TOOL_CALL and pending.name is None:
-                    pending.name = _tool_call_action_from_tool_span(span).name
+                # The LLM span usually carries the call's name/args; backfill from the tool span
+                # only when it didn't. Derive the tool-span action once to avoid re-parsing.
+                if pending.kind == ActionKind.TOOL_CALL and (
+                    not pending.arguments or pending.name is None
+                ):
+                    from_tool = _tool_call_action_from_tool_span(span)
+                    if not pending.arguments:
+                        pending.arguments = from_tool.arguments
+                    if pending.name is None:
+                        pending.name = from_tool.name
                 flush(pending, observation, [*pending_ids, span.span_id])
             pending, pending_ids = None, []
         elif _is_llm_span(span):
@@ -332,17 +338,16 @@ def _spans_to_traces(spans: list[_ParsedSpan], source: str) -> list[Trace]:
     by_trace: dict[str, list[_ParsedSpan]] = {}
     for span in spans:
         by_trace.setdefault(span.trace_id, []).append(span)
-    traces: list[Trace] = []
+    # Build each trace from its start-ordered spans, then order traces by their earliest span.
+    # Sorting each group by (start_nano, span_id) leaves group[0] as that trace's earliest span,
+    # so we reuse it as the inter-trace sort key rather than re-scanning.
+    ordered: list[tuple[int, Trace]] = []
     for group in by_trace.values():
         group.sort(key=lambda s: (s.start_nano, s.span_id))
-        traces.append(Trace(trace_id=group[0].trace_id, steps=_build_steps(group), source=source))
-    # Deterministic ordering: by each trace's earliest span start.
-    traces.sort(key=lambda t: _earliest_start(by_trace[t.trace_id]))
-    return traces
-
-
-def _earliest_start(spans: list[_ParsedSpan]) -> int:
-    return min((s.start_nano for s in spans), default=0)
+        trace = Trace(trace_id=group[0].trace_id, steps=_build_steps(group), source=source)
+        ordered.append((group[0].start_nano, trace))
+    ordered.sort(key=lambda pair: pair[0])
+    return [trace for _, trace in ordered]
 
 
 class OtelGenAIAdapter:
@@ -354,11 +359,17 @@ class OtelGenAIAdapter:
         try:
             payload: JsonValue = json.loads(text)
         except json.JSONDecodeError:
-            # Not a single JSON document; treat as JSONL (one object/span per line).
+            # Not a single JSON document; treat as JSONL (one object/span per line). A single
+            # corrupt line (truncated by a crashed exporter, say) is skipped rather than aborting
+            # the whole ingest and losing every valid trace.
             for line in text.splitlines():
                 stripped = line.strip()
-                if stripped:
+                if not stripped:
+                    continue
+                try:
                     spans.extend(_collect_spans(json.loads(stripped)))
+                except json.JSONDecodeError:
+                    continue
         else:
             spans = _collect_spans(payload)
         return _spans_to_traces(spans, source=f"file:{path}")
@@ -394,7 +405,12 @@ class OtelGenAIAdapter:
         response = httpx.get(endpoint, headers=headers, params=params, timeout=30.0)
         response.raise_for_status()
         spans = _collect_spans(response.json())
-        return _spans_to_traces(spans, source=f"vendor:{pull.project or endpoint}")
+        traces = _spans_to_traces(spans, source=f"vendor:{pull.project or endpoint}")
+        # The `limit` query param is a placeholder a real backend may ignore; enforce it locally
+        # so the `VendorPull.limit` contract holds regardless of what the backend honors.
+        if pull.limit is not None:
+            traces = traces[: pull.limit]
+        return traces
 
 
 register_adapter(OtelGenAIAdapter())

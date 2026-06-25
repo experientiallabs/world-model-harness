@@ -9,7 +9,7 @@ import tomllib
 from pathlib import Path
 
 import tomli_w
-from pydantic import BaseModel, Field, JsonValue
+from pydantic import BaseModel, Field, JsonValue, ValidationError
 
 from wmh.core.types import JsonObject
 from wmh.providers.base import ProviderConfig, ProviderKind
@@ -100,15 +100,32 @@ def load_config(root: str | Path = ARTIFACT_DIR) -> HarnessConfig:
         raise FileNotFoundError(
             f"{paths.config} is missing; run `wmh build` to (re)generate the project config"
         )
-    with paths.config.open("rb") as fh:
-        data = tomllib.load(fh)
-    return HarnessConfig.model_validate(data)
+    try:
+        with paths.config.open("rb") as fh:
+            data = tomllib.load(fh)
+    except tomllib.TOMLDecodeError as exc:
+        raise ValueError(
+            f"{paths.config} is not valid TOML ({exc}); re-run `wmh build` to regenerate it"
+        ) from exc
+    try:
+        return HarnessConfig.model_validate(data)
+    except ValidationError as exc:
+        raise ValueError(
+            f"{paths.config} does not match the current config schema ({exc}); "
+            "re-run `wmh build` to regenerate it"
+        ) from exc
 
 
 def save_config(config: HarnessConfig, root: str | Path = ARTIFACT_DIR) -> None:
-    """Write `config` to `.wmh/config.toml`, creating `.wmh/` if missing."""
+    """Write `config` to `.wmh/config.toml`, creating `.wmh/` if missing.
+
+    Writes to a temp file in the same directory and renames into place so an interrupted or
+    failed write never leaves a truncated `config.toml` behind.
+    """
     paths = ArtifactPaths(root)
     paths.root.mkdir(parents=True, exist_ok=True)
     data = _strip_none_object(config.model_dump(mode="json"))
-    with paths.config.open("wb") as fh:
+    tmp = paths.config.with_name(f"{paths.config.name}.tmp")
+    with tmp.open("wb") as fh:
         tomli_w.dump(data, fh)
+    tmp.replace(paths.config)
