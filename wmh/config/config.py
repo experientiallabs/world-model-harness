@@ -5,10 +5,13 @@
 
 from __future__ import annotations
 
+import tomllib
 from pathlib import Path
 
-from pydantic import BaseModel, Field
+import tomli_w
+from pydantic import BaseModel, Field, JsonValue
 
+from wmh.core.types import JsonObject
 from wmh.providers.base import ProviderConfig, ProviderKind
 
 ARTIFACT_DIR = ".wmh"
@@ -69,11 +72,43 @@ class ArtifactPaths:
         return self.root / "metrics.json"
 
 
+def _strip_none(value: JsonValue) -> JsonValue:
+    """Drop `None`-valued keys recursively so TOML (which has no null) can represent the config.
+
+    On load, pydantic refills the missing optional fields with their `None` defaults, so dropping
+    them here round-trips losslessly.
+    """
+    if isinstance(value, dict):
+        return _strip_none_object(value)
+    if isinstance(value, list):
+        return [_strip_none(v) for v in value]
+    return value
+
+
+def _strip_none_object(obj: dict[str, JsonValue]) -> JsonObject:
+    return {k: _strip_none(v) for k, v in obj.items() if v is not None}
+
+
 def load_config(root: str | Path = ARTIFACT_DIR) -> HarnessConfig:
-    # TODO: read config.toml; raise a friendly error if `wmh build` hasn't run yet.
-    raise NotImplementedError
+    """Read `.wmh/config.toml`. Raises a friendly error if the project hasn't been built yet."""
+    paths = ArtifactPaths(root)
+    if not paths.root.exists():
+        raise FileNotFoundError(
+            f"no {ARTIFACT_DIR}/ directory at {paths.root}; run `wmh build` first to create it"
+        )
+    if not paths.config.exists():
+        raise FileNotFoundError(
+            f"{paths.config} is missing; run `wmh build` to (re)generate the project config"
+        )
+    with paths.config.open("rb") as fh:
+        data = tomllib.load(fh)
+    return HarnessConfig.model_validate(data)
 
 
 def save_config(config: HarnessConfig, root: str | Path = ARTIFACT_DIR) -> None:
-    # TODO: write config.toml, creating `.wmh/` if missing.
-    raise NotImplementedError
+    """Write `config` to `.wmh/config.toml`, creating `.wmh/` if missing."""
+    paths = ArtifactPaths(root)
+    paths.root.mkdir(parents=True, exist_ok=True)
+    data = _strip_none_object(config.model_dump(mode="json"))
+    with paths.config.open("wb") as fh:
+        tomli_w.dump(data, fh)
