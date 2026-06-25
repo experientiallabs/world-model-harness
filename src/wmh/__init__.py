@@ -9,6 +9,7 @@ Public API:
 
 from wmh.types import (
     Action,
+    ActionKind,
     EnvState,
     Observation,
     Session,
@@ -20,6 +21,7 @@ from wmh.world_model import WorldModel
 __all__ = [
     "WorldModel",
     "Action",
+    "ActionKind",
     "Observation",
     "EnvState",
     "Session",

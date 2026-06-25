@@ -4,6 +4,8 @@ A `TraceAdapter` turns one source's spans into the generic `Trace` schema. One c
 ships (official OTel GenAI semconv); others register behind the same protocol.
 """
 
+# Import for the registration side effect so `get_adapter("otel-genai")` works on package import.
+from wmh.ingest import otel_genai as otel_genai  # noqa: F401
 from wmh.ingest.base import TraceAdapter, get_adapter, register_adapter
 
 __all__ = ["TraceAdapter", "get_adapter", "register_adapter"]

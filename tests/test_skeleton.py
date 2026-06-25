@@ -7,10 +7,11 @@ from __future__ import annotations
 
 import pytest
 
-from wmh import Action, EnvState, Observation, Session, Step, Trace, WorldModel
+import wmh
+from wmh import Action, ActionKind, EnvState, Observation, Session, Step, Trace, WorldModel
+from wmh.ingest import get_adapter
 from wmh.providers import ProviderConfig, ProviderKind, get_provider
 from wmh.providers.base import Provider
-from wmh.types import ActionKind
 
 
 def test_types_instantiate() -> None:
@@ -40,6 +41,17 @@ def test_cli_app_exposes_commands() -> None:
 
     names = {cmd.name for cmd in app.registered_commands}
     assert {"init", "ingest", "build", "serve", "demo", "step"} <= names
+
+
+def test_public_api_matches_quickstart() -> None:
+    # README/docstring quickstart imports ActionKind from the package root.
+    assert "ActionKind" in wmh.__all__
+    assert wmh.ActionKind is ActionKind
+
+
+def test_default_otel_adapter_is_registered_on_import() -> None:
+    # DESIGN/README claim the OTel adapter ships registered; importing wmh.ingest must suffice.
+    assert get_adapter("otel-genai").name == "otel-genai"
 
 
 def test_world_model_new_session_works() -> None:
