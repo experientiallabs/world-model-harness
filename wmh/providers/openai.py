@@ -2,7 +2,19 @@
 
 from __future__ import annotations
 
-from wmh.providers.base import Completion, Message, ProviderConfig, VerifyResult
+from typing import TYPE_CHECKING
+
+from wmh.providers import _openai_common
+from wmh.providers.base import (
+    Completion,
+    Message,
+    ProviderConfig,
+    ProviderKind,
+    VerifyResult,
+)
+
+if TYPE_CHECKING:
+    from openai import OpenAI
 
 
 class OpenAIProvider:
@@ -10,7 +22,15 @@ class OpenAIProvider:
 
     def __init__(self, config: ProviderConfig) -> None:
         self.config = config
-        # TODO: lazily construct openai.OpenAI() from OPENAI_API_KEY.
+        self._client: OpenAI | None = None
+
+    def _get_client(self) -> OpenAI:
+        # Lazy: don't import the SDK or read OPENAI_API_KEY until first use.
+        if self._client is None:
+            from openai import OpenAI
+
+            self._client = OpenAI()  # picks up OPENAI_API_KEY from the environment
+        return self._client
 
     def complete(
         self,
@@ -20,10 +40,20 @@ class OpenAIProvider:
         temperature: float = 0.7,
         max_tokens: int = 2048,
     ) -> Completion:
-        raise NotImplementedError
+        return _openai_common.complete(
+            self._get_client().chat.completions, self.config.model, system, messages, max_tokens
+        )
 
     def embed(self, texts: list[str]) -> list[list[float]]:
-        raise NotImplementedError
+        if self.config.embed_model is None:
+            raise ValueError("OpenAIProvider.embed requires config.embed_model to be set.")
+        return _openai_common.embed(self._get_client().embeddings, self.config.embed_model, texts)
 
     def verify(self) -> VerifyResult:
-        raise NotImplementedError
+        try:
+            self.complete("", [Message(role="user", content="ping")], max_tokens=1)
+        except Exception as exc:  # noqa: BLE001 - verify reports failure, never raises
+            return VerifyResult(
+                ok=False, kind=ProviderKind.OPENAI, model=self.config.model, detail=str(exc)
+            )
+        return VerifyResult(ok=True, kind=ProviderKind.OPENAI, model=self.config.model)
