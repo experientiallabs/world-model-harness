@@ -6,13 +6,13 @@ WorldModel, retriever, optimizer, and providers all operate on.
 
 from __future__ import annotations
 
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 from pydantic import BaseModel, Field
 
 
-class ActionKind(str, Enum):
+class ActionKind(StrEnum):
     TOOL_CALL = "tool_call"
     MESSAGE = "message"
 

@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-from enum import Enum
+from enum import StrEnum
 from typing import Any, Protocol, runtime_checkable
 
 from pydantic import BaseModel, Field
 
 
-class ProviderKind(str, Enum):
+class ProviderKind(StrEnum):
     ANTHROPIC = "anthropic"  # Opus 4.8 direct
     BEDROCK = "bedrock"  # Claude 4.8 via AWS
     AZURE_OPENAI = "azure_openai"  # GPT 5.5 via Azure

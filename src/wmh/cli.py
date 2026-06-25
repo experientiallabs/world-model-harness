@@ -13,7 +13,7 @@ providers_app = typer.Typer(help="Manage and verify LLM providers.")
 app.add_typer(providers_app, name="providers")
 
 
-@app.command()
+@app.command("init")
 def init() -> None:
     """Scaffold a `.wmh/` project and write a starter config."""
     raise NotImplementedError
@@ -21,11 +21,11 @@ def init() -> None:
 
 @providers_app.command("verify")
 def providers_verify() -> None:
-    """Ping every configured provider (Anthropic, Bedrock, Azure OpenAI, OpenAI) and report status."""
+    """Ping every configured provider (Anthropic/Bedrock/Azure/OpenAI) and report status."""
     raise NotImplementedError
 
 
-@app.command()
+@app.command("ingest")
 def ingest(
     file: str = typer.Option(None, "--file", help="Path to exported traces (OTLP-JSON / JSONL)."),
     vendor: str = typer.Option(None, "--vendor", help="Vendor name to pull traces via SDK."),
@@ -34,25 +34,25 @@ def ingest(
     raise NotImplementedError
 
 
-@app.command()
+@app.command("build")
 def build() -> None:
     """Normalize -> split -> embed/index -> GEPA optimize -> write the `.wmh/` artifact."""
     raise NotImplementedError
 
 
-@app.command()
+@app.command("serve")
 def serve(port: int = typer.Option(8000, help="Port for the local backend.")) -> None:
     """Run the local FastAPI backend so agents can step against the world model over HTTP."""
     raise NotImplementedError
 
 
-@app.command()
+@app.command("demo")
 def demo() -> None:
-    """Demonstrate the harness: an LLM agent makes a tool call vs the world model; print prompt+output."""
+    """Demo the harness: an LLM agent makes a tool call vs the world model; show prompt+output."""
     raise NotImplementedError
 
 
-@app.command()
+@app.command("step")
 def step(
     session: str = typer.Option(..., "--session", help="Session id."),
     tool: str = typer.Option(..., "--tool", help="Tool name to call."),

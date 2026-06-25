@@ -19,7 +19,7 @@ anthropic = ["anthropic>=0.39"]
 openai = ["openai>=1.40"]
 bedrock = ["boto3>=1.34"]
 otel = ["opentelemetry-proto>=1.24"]
-dev = ["pytest>=8.0", "ruff>=0.5", "mypy>=1.10"]
+dev = ["pytest>=8.0", "ruff>=0.5", "ty>=0.0.1a1"]
 
 [project.scripts]
 wmh = "wmh.cli:app"
@@ -35,6 +35,8 @@ packages = ["src/wmh"]
 line-length = 100
 target-version = "py311"
 
-[tool.mypy]
-python_version = "3.11"
-warn_unused_ignores = true
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "ANN", "BLE"]
+
+[tool.ty.environment]
+python-version = "3.11"

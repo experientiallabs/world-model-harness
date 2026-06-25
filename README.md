@@ -58,6 +58,19 @@ One interface, four backends, verified on startup. Credentials are read from the
 | Azure OpenAI | GPT 5.5 | `AZURE_OPENAI_API_KEY`, `AZURE_OPENAI_ENDPOINT` |
 | OpenAI | GPT 5.5 | `OPENAI_API_KEY` |
 
+## Development
+
+Managed with [uv](https://docs.astral.sh/uv/); linting/formatting with
+[ruff](https://docs.astral.sh/ruff/); type checking with [ty](https://github.com/astral-sh/ty).
+
+```bash
+uv sync --extra dev      # create the env + install dev tools
+uv run ruff check .      # lint
+uv run ruff format .     # format
+uv run ty check          # type check
+uv run pytest -q         # tests
+```
+
 ## Status
 
 This is a **skeleton**: interfaces, types, CLI, and HTTP routes are wired and importable; the heavy

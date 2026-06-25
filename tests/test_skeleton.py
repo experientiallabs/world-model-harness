@@ -38,8 +38,7 @@ def test_provider_verify_is_stubbed() -> None:
 def test_cli_app_exposes_commands() -> None:
     from wmh.cli import app
 
-    # Typer infers the command name from the callback function name (cmd.name stays None).
-    names = {cmd.name or cmd.callback.__name__ for cmd in app.registered_commands}
+    names = {cmd.name for cmd in app.registered_commands}
     assert {"init", "ingest", "build", "serve", "demo", "step"} <= names
 
 

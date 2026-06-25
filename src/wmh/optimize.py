@@ -1,7 +1,7 @@
 """GEPA prompt optimization + the LLM judge that scores predictions.
 
-GEPA (arXiv 2507.19457): replay held-out steps through a candidate prompt, score predicted vs. real
-observation with an LLM judge that also returns a natural-language critique, reflect on the critiques
+GEPA (arXiv 2507.19457): replay held-out steps through a candidate prompt, score predicted vs.
+real observation with an LLM judge that also returns a natural-language critique, reflect on those
 to mutate the prompt, and keep a Pareto frontier of candidates across trace buckets.
 """
 
@@ -22,8 +22,7 @@ class JudgeResult(BaseModel):
 
 @runtime_checkable
 class Judge(Protocol):
-    def score(self, predicted: Observation, actual: Observation, context: Step) -> JudgeResult:
-        ...
+    def score(self, predicted: Observation, actual: Observation, context: Step) -> JudgeResult: ...
 
 
 class LLMJudge:
@@ -47,8 +46,7 @@ class OptimizeResult(BaseModel):
 class Optimizer(Protocol):
     def optimize(
         self, train: list[Trace], test: list[Trace], base_prompt: str, budget: int
-    ) -> OptimizeResult:
-        ...
+    ) -> OptimizeResult: ...
 
 
 class GEPAOptimizer:

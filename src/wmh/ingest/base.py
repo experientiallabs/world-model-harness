@@ -6,7 +6,7 @@ convention the spans follow). An adapter owns both: it pulls/reads raw spans and
 
 from __future__ import annotations
 
-from typing import Any, Protocol, runtime_checkable
+from typing import Protocol, runtime_checkable
 
 from wmh.types import Trace
 
@@ -21,7 +21,7 @@ class TraceAdapter(Protocol):
         """Read traces from an exported file (OTLP-JSON / vendor JSONL)."""
         ...
 
-    def from_vendor(self, **options: Any) -> list[Trace]:
+    def from_vendor(self, **options: object) -> list[Trace]:
         """Pull traces via a vendor SDK/API (creds + filters in options)."""
         ...
 

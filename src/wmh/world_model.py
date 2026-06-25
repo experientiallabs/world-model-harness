@@ -2,7 +2,7 @@
 
 This is the public API agents call (in-process or via the local backend). Each `step` retrieves
 similar past steps, builds the env prompt, completes it with the serving provider, and updates the
-session — including the env's free-text scratchpad "database" — to stay consistent across the session.
+session — including the env's free-text scratchpad "database" — to stay consistent across it.
 """
 
 from __future__ import annotations
@@ -31,7 +31,7 @@ class WorldModel:
         self._sessions: dict[str, Session] = {}
 
     @classmethod
-    def load(cls, artifact_dir: str, provider: Provider) -> "WorldModel":
+    def load(cls, artifact_dir: str, provider: Provider) -> WorldModel:
         """Construct from a built `.wmh/` artifact (optimized prompt + indexed replay buffer)."""
         # TODO: load config, optimized prompt, and rebuild/load the retriever index.
         raise NotImplementedError
@@ -57,8 +57,9 @@ class WorldModel:
         observation = _parse_observation(_completion.text)  # TODO
 
         # (4) advance session: append step, update structured state + scratchpad, enrich buffer
-        step = Step(action=action, observation=observation, state_before=session.state,
-                    task=session.task)
+        step = Step(
+            action=action, observation=observation, state_before=session.state, task=session.task
+        )
         session.history.append(step)
         self._update_state(session, step)  # TODO: let the env write to its scratchpad "database"
         self._retriever.add(step)
