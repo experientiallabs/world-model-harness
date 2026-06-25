@@ -1,0 +1,60 @@
+{
+  "resourceSpans": [
+    {
+      "resource": {
+        "attributes": [
+          { "key": "service.name", "value": { "stringValue": "demo-agent" } }
+        ]
+      },
+      "scopeSpans": [
+        {
+          "scope": { "name": "opentelemetry.instrumentation.genai" },
+          "spans": [
+            {
+              "traceId": "0af7651916cd43dd8448eb211c80319c",
+              "spanId": "b7ad6b7169203331",
+              "name": "chat gpt-5.5",
+              "startTimeUnixNano": "1700000000000000000",
+              "endTimeUnixNano": "1700000001000000000",
+              "attributes": [
+                { "key": "gen_ai.operation.name", "value": { "stringValue": "chat" } },
+                { "key": "gen_ai.request.model", "value": { "stringValue": "gpt-5.5" } },
+                { "key": "gen_ai.prompt", "value": { "stringValue": "What is the weather in Paris?" } },
+                { "key": "gen_ai.tool.name", "value": { "stringValue": "get_weather" } },
+                { "key": "gen_ai.tool.call.arguments", "value": { "stringValue": "{\"city\": \"Paris\"}" } }
+              ],
+              "status": { "code": 1 }
+            },
+            {
+              "traceId": "0af7651916cd43dd8448eb211c80319c",
+              "spanId": "c8be7c8270314442",
+              "parentSpanId": "b7ad6b7169203331",
+              "name": "execute_tool get_weather",
+              "startTimeUnixNano": "1700000001000000000",
+              "endTimeUnixNano": "1700000002000000000",
+              "attributes": [
+                { "key": "gen_ai.operation.name", "value": { "stringValue": "execute_tool" } },
+                { "key": "gen_ai.tool.name", "value": { "stringValue": "get_weather" } },
+                { "key": "gen_ai.tool.message", "value": { "stringValue": "18C and sunny" } }
+              ],
+              "status": { "code": 1 }
+            },
+            {
+              "traceId": "0af7651916cd43dd8448eb211c80319c",
+              "spanId": "d9cf8d9371425553",
+              "name": "chat gpt-5.5",
+              "startTimeUnixNano": "1700000002000000000",
+              "endTimeUnixNano": "1700000003000000000",
+              "attributes": [
+                { "key": "gen_ai.operation.name", "value": { "stringValue": "chat" } },
+                { "key": "gen_ai.request.model", "value": { "stringValue": "gpt-5.5" } },
+                { "key": "gen_ai.completion", "value": { "stringValue": "It is 18C and sunny in Paris." } }
+              ],
+              "status": { "code": 1 }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
