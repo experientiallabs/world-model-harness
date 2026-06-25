@@ -7,7 +7,6 @@ and the critique is what GEPA reflects on to mutate the prompt.
 from __future__ import annotations
 
 import json
-import re
 from typing import Protocol, runtime_checkable
 
 from pydantic import BaseModel, ValidationError
@@ -94,14 +93,36 @@ def _parse_judgement(text: str) -> JudgeResult:
 
 
 def _extract_json(text: str) -> str | None:
-    """Pull the first plausible JSON object out of a model reply."""
-    fenced = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL)
-    if fenced:
-        return fenced.group(1)
-    # Greedy match from the first '{' to the last '}' to tolerate trailing prose.
-    brace = re.search(r"\{.*\}", text, re.DOTALL)
-    if brace:
-        return brace.group(0)
+    """Pull the first complete JSON object out of a model reply.
+
+    Scans for the first ``{`` and returns up to its balanced closing ``}`` (tracking string
+    literals and escapes). This tolerates ```json fences, surrounding prose, nested objects, and
+    multiple objects (we take the first) — cases a greedy/lazy regex gets wrong.
+    """
+    start = text.find("{")
+    if start == -1:
+        return None
+    depth = 0
+    in_string = False
+    escaped = False
+    for i in range(start, len(text)):
+        ch = text[i]
+        if in_string:
+            if escaped:
+                escaped = False
+            elif ch == "\\":
+                escaped = True
+            elif ch == '"':
+                in_string = False
+            continue
+        if ch == '"':
+            in_string = True
+        elif ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return text[start : i + 1]
     return None
 
 

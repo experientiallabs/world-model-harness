@@ -18,6 +18,7 @@ so the optimizer evolves against the exact prompt the world model serves.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
@@ -26,9 +27,15 @@ import gepa
 from gepa.core.adapter import EvaluationBatch, GEPAAdapter
 from pydantic import BaseModel, Field
 
-from wmh.core.types import Action, EnvState, JsonValue, Observation, Step, Trace
+from wmh.core.types import Action, EnvState, JsonObject, JsonValue, Observation, Step, Trace
 from wmh.optimize.judge import Judge
 from wmh.providers.base import Message, Provider
+
+
+def _render_json(value: JsonObject) -> str:
+    """Stable, sorted-key JSON for an object so equal state/args render identically across runs."""
+    return json.dumps(value, sort_keys=True, default=str)
+
 
 # The single named component GEPA evolves: the specialized env (system) prompt.
 ENV_PROMPT_COMPONENT = "env_prompt"
@@ -71,7 +78,7 @@ def _render_demo(step: Step) -> str:
     action = step.action
     label = action.name or action.content or "(none)"
     return (
-        f"- action({action.kind.value}): {label} args={action.arguments}\n"
+        f"- action({action.kind.value}): {label} args={_render_json(action.arguments)}\n"
         f"  -> observation(is_error={step.observation.is_error}): {step.observation.content}"
     )
 
@@ -92,10 +99,11 @@ def _assemble_env_prompt(
     action_label = action.name or action.content or "(none)"
     user = (
         f"TASK: {task or '(none)'}\n\n"
-        f"ENV STATE:\n  structured: {state.structured}\n  scratchpad: {state.scratchpad}\n\n"
+        f"ENV STATE:\n  structured: {_render_json(state.structured)}\n"
+        f"  scratchpad: {state.scratchpad}\n\n"
         f"SIMILAR PAST EXAMPLES:\n{demo_block}\n\n"
-        f"AGENT ACTION ({action.kind.value}): {action_label} args={action.arguments}\n\n"
-        f"ENVIRONMENT RESPONSE:"
+        f"AGENT ACTION ({action.kind.value}): {action_label} args={_render_json(action.arguments)}"
+        "\n\nENVIRONMENT RESPONSE:"
     )
     return system, user
 

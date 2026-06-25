@@ -75,6 +75,27 @@ def test_parse_clamps_out_of_range_scores() -> None:
     assert _parse_judgement('{"score": -0.5, "critique": "x"}').score == 0.0
 
 
+def test_parse_takes_first_of_multiple_objects() -> None:
+    # A reply that echoes an example object before the real verdict must not fall back to 0.0.
+    text = '{"score": 0.5, "critique": "good"} also note {"score": 0.9, "critique": "other"}'
+    result = _parse_judgement(text)
+    assert result.score == 0.5
+    assert result.critique == "good"
+
+
+def test_parse_handles_nested_objects() -> None:
+    text = '{"score": 0.6, "critique": "x", "meta": {"a": 1, "b": {"c": 2}}}'
+    result = _parse_judgement(text)
+    assert result.score == 0.6
+
+
+def test_parse_ignores_braces_inside_strings() -> None:
+    text = '{"score": 0.3, "critique": "saw a } brace and a { in the output"}'
+    result = _parse_judgement(text)
+    assert result.score == 0.3
+    assert "} brace" in result.critique
+
+
 def test_parse_unparseable_falls_back_to_zero() -> None:
     result = _parse_judgement("the model rambled with no json at all")
     assert result.score == 0.0
