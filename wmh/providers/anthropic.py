@@ -8,9 +8,9 @@ from wmh.providers.base import (
     Completion,
     Message,
     ProviderConfig,
-    ProviderKind,
     TokenUsage,
     VerifyResult,
+    verify_via_ping,
 )
 
 if TYPE_CHECKING:
@@ -61,17 +61,12 @@ class AnthropicProvider:
         return Completion(text=text, usage=usage)
 
     def embed(self, texts: list[str]) -> list[list[float]]:
-        # Anthropic has no embeddings API.
+        # Anthropic has no embeddings API; retrieval (phi) must use a separate embed provider
+        # (OpenAI/Bedrock) selected via HarnessConfig.embed_provider.
         raise NotImplementedError(
-            "AnthropicProvider has no embeddings API; set config.embed_provider to OpenAI or "
-            "Bedrock for retrieval (phi)."
+            "AnthropicProvider has no embeddings API; use an OpenAI or Bedrock embed provider "
+            "for retrieval (phi)."
         )
 
     def verify(self) -> VerifyResult:
-        try:
-            self.complete("", [Message(role="user", content="ping")], max_tokens=1)
-        except Exception as exc:  # noqa: BLE001 - verify reports failure, never raises
-            return VerifyResult(
-                ok=False, kind=ProviderKind.ANTHROPIC, model=self.config.model, detail=str(exc)
-            )
-        return VerifyResult(ok=True, kind=ProviderKind.ANTHROPIC, model=self.config.model)
+        return verify_via_ping(self)

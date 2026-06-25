@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import cast
 
+import pytest
+
 from wmh.providers import _openai_common
 from wmh.providers.base import Message
 
@@ -42,3 +44,18 @@ def test_complete_handles_missing_usage() -> None:
     assert completion.text == "hi"
     assert completion.usage.input_tokens == 0
     assert completion.usage.output_tokens == 0
+
+
+def test_complete_raises_clearly_on_empty_choices() -> None:
+    class _Resp:
+        choices: list[object] = []
+        usage = None
+
+    class _Chat:
+        def create(self, **kwargs: object) -> _Resp:
+            return _Resp()
+
+    chat = cast("_openai_common._ChatCompletions", _Chat())
+    # Content filtering can return zero choices; we want a clear ValueError, not IndexError.
+    with pytest.raises(ValueError, match="no choices"):
+        _openai_common.complete(chat, "m", "", [Message(role="user", content="x")], 8)

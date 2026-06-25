@@ -45,9 +45,32 @@ class _FakeChat:
         self.completions = completions
 
 
+class _FakeEmbeddingItem:
+    def __init__(self, embedding: list[float]) -> None:
+        self.embedding = embedding
+
+
+class _FakeEmbeddingResponse:
+    def __init__(self, vectors: list[list[float]]) -> None:
+        self.data = [_FakeEmbeddingItem(v) for v in vectors]
+
+
+class _FakeEmbeddings:
+    def __init__(self, response: _FakeEmbeddingResponse) -> None:
+        self.response = response
+        self.last_kwargs: dict[str, object] = {}
+
+    def create(self, **kwargs: object) -> _FakeEmbeddingResponse:
+        self.last_kwargs = kwargs
+        return self.response
+
+
 class _FakeClient:
-    def __init__(self, chat: _FakeChatCompletions) -> None:
+    def __init__(
+        self, chat: _FakeChatCompletions, embeddings: _FakeEmbeddings | None = None
+    ) -> None:
         self.chat = _FakeChat(chat)
+        self.embeddings = embeddings
 
 
 def _config() -> ProviderConfig:
@@ -79,12 +102,40 @@ def test_missing_deployment_raises(monkeypatch: pytest.MonkeyPatch) -> None:
     provider = AzureOpenAIProvider(
         ProviderConfig(kind=ProviderKind.AZURE_OPENAI, model="gpt-5.5", api_version="2024-10-21")
     )
-    # The deployment guard fires before the client is ever needed; fake it so a missing
-    # deployment is the only thing that can raise.
+    # Fake the client so the missing-deployment ValueError is the only thing that can raise
+    # (complete() evaluates _get_client() before _deployment(), so a real client would try to
+    # construct first).
     fake = _FakeClient(_FakeChatCompletions(_FakeChatResponse("", _FakeUsage(0, 0))))
     monkeypatch.setattr(provider, "_get_client", lambda: fake)
     with pytest.raises(ValueError, match="deployment"):
         provider.complete("", [Message(role="user", content="x")])
+
+
+def test_embed_uses_embed_model_as_deployment(monkeypatch: pytest.MonkeyPatch) -> None:
+    embeddings = _FakeEmbeddings(_FakeEmbeddingResponse([[0.5, 0.6]]))
+    config = ProviderConfig(
+        kind=ProviderKind.AZURE_OPENAI,
+        model="gpt-5.5",
+        endpoint="https://example.openai.azure.com",
+        deployment="gpt55-deploy",
+        api_version="2024-10-21",
+        embed_model="embed-deploy",
+    )
+    provider = AzureOpenAIProvider(config)
+    fake = _FakeClient(_FakeChatCompletions(_FakeChatResponse("", _FakeUsage(0, 0))), embeddings)
+    monkeypatch.setattr(provider, "_get_client", lambda: fake)
+
+    vectors = provider.embed(["a"])
+
+    assert vectors == [[0.5, 0.6]]
+    # embed_model is sent as the Azure deployment name (the `model` arg).
+    assert embeddings.last_kwargs["model"] == "embed-deploy"
+
+
+def test_embed_requires_embed_model() -> None:
+    provider = AzureOpenAIProvider(_config())  # _config() sets no embed_model
+    with pytest.raises(ValueError, match="embed_model"):
+        provider.embed(["x"])
 
 
 def test_get_client_requires_api_version(monkeypatch: pytest.MonkeyPatch) -> None:

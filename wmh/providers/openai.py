@@ -9,8 +9,8 @@ from wmh.providers.base import (
     Completion,
     Message,
     ProviderConfig,
-    ProviderKind,
     VerifyResult,
+    verify_via_ping,
 )
 
 if TYPE_CHECKING:
@@ -50,10 +50,4 @@ class OpenAIProvider:
         return _openai_common.embed(self._get_client().embeddings, self.config.embed_model, texts)
 
     def verify(self) -> VerifyResult:
-        try:
-            self.complete("", [Message(role="user", content="ping")], max_tokens=1)
-        except Exception as exc:  # noqa: BLE001 - verify reports failure, never raises
-            return VerifyResult(
-                ok=False, kind=ProviderKind.OPENAI, model=self.config.model, detail=str(exc)
-            )
-        return VerifyResult(ok=True, kind=ProviderKind.OPENAI, model=self.config.model)
+        return verify_via_ping(self)

@@ -73,7 +73,7 @@ def test_complete_maps_request_and_parses_completion(monkeypatch: pytest.MonkeyP
 
 def test_embed_raises_pointing_at_embed_provider() -> None:
     provider = AnthropicProvider(_config())
-    with pytest.raises(NotImplementedError, match="embed_provider"):
+    with pytest.raises(NotImplementedError, match="OpenAI or Bedrock embed provider"):
         provider.embed(["x"])
 
 

@@ -63,7 +63,7 @@ def test_complete_builds_anthropic_body_and_parses(monkeypatch: pytest.MonkeyPat
 
 
 def test_embed_not_implemented() -> None:
-    with pytest.raises(NotImplementedError, match="embed_provider"):
+    with pytest.raises(NotImplementedError, match="OpenAI embed provider"):
         BedrockProvider(_config()).embed(["x"])
 
 

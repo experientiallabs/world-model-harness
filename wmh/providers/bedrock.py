@@ -9,9 +9,9 @@ from wmh.providers.base import (
     Completion,
     Message,
     ProviderConfig,
-    ProviderKind,
     TokenUsage,
     VerifyResult,
+    verify_via_ping,
 )
 
 if TYPE_CHECKING:
@@ -77,16 +77,11 @@ class BedrockProvider:
         return Completion(text=text, usage=usage)
 
     def embed(self, texts: list[str]) -> list[list[float]]:
-        # Embeddings on Bedrock (Titan / Cohere) are a separate model surface, not yet wired up.
+        # Embeddings on Bedrock (Titan / Cohere) are a separate model surface, not yet wired up;
+        # use an OpenAI embed provider for retrieval (phi) in the meantime.
         raise NotImplementedError(
-            "BedrockProvider embeddings are not implemented; configure an OpenAI embed_provider."
+            "BedrockProvider embeddings are not implemented; use an OpenAI embed provider."
         )
 
     def verify(self) -> VerifyResult:
-        try:
-            self.complete("", [Message(role="user", content="ping")], max_tokens=1)
-        except Exception as exc:  # noqa: BLE001 - verify reports failure, never raises
-            return VerifyResult(
-                ok=False, kind=ProviderKind.BEDROCK, model=self.config.model, detail=str(exc)
-            )
-        return VerifyResult(ok=True, kind=ProviderKind.BEDROCK, model=self.config.model)
+        return verify_via_ping(self)

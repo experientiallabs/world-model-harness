@@ -56,6 +56,10 @@ def complete(
         messages=to_messages(system, messages),
         max_completion_tokens=max_tokens,
     )
+    if not response.choices:
+        # Content filtering (and some error modes) can return zero choices; surface it clearly
+        # rather than letting choices[0] raise a bare IndexError.
+        raise ValueError(f"{model} returned no choices")
     text = response.choices[0].message.content or ""
     usage = response.usage
     token_usage = (

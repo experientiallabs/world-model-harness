@@ -13,8 +13,8 @@ from wmh.providers.base import (
     Completion,
     Message,
     ProviderConfig,
-    ProviderKind,
     VerifyResult,
+    verify_via_ping,
 )
 
 if TYPE_CHECKING:
@@ -61,18 +61,14 @@ class AzureOpenAIProvider:
         )
 
     def embed(self, texts: list[str]) -> list[list[float]]:
+        # As with `model` in complete(), `embed_model` must be the Azure *deployment* name of an
+        # embedding model, not a base OpenAI model id, or the call 404s.
         if self.config.embed_model is None:
             raise ValueError("AzureOpenAIProvider.embed requires config.embed_model (deployment).")
         return _openai_common.embed(self._get_client().embeddings, self.config.embed_model, texts)
 
     def verify(self) -> VerifyResult:
-        try:
-            self.complete("", [Message(role="user", content="ping")], max_tokens=1)
-        except Exception as exc:  # noqa: BLE001 - verify reports failure, never raises
-            return VerifyResult(
-                ok=False, kind=ProviderKind.AZURE_OPENAI, model=self.config.model, detail=str(exc)
-            )
-        return VerifyResult(ok=True, kind=ProviderKind.AZURE_OPENAI, model=self.config.model)
+        return verify_via_ping(self)
 
 
 def _require_endpoint() -> str:
