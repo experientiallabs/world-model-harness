@@ -1,0 +1,47 @@
+[project]
+name = "world-model-harness"
+version = "0.1.0"
+description = "Docker as an LLM: a frontier model acts as your agent's environment, reconstructed from OTel traces."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "typer>=0.12",
+    "fastapi>=0.110",
+    "uvicorn>=0.29",
+    "pydantic>=2.6",
+    "numpy>=1.26",
+    "httpx>=0.27",
+    "rich>=13.7",
+]
+
+[project.optional-dependencies]
+anthropic = ["anthropic>=0.39"]
+openai = ["openai>=1.40"]
+bedrock = ["boto3>=1.34"]
+otel = ["opentelemetry-proto>=1.24"]
+dev = ["pytest>=8.0", "ruff>=0.5", "ty>=0.0.1a1"]
+
+[project.scripts]
+wmh = "wmh.cli:app"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["wmh"]
+
+[tool.pytest.ini_options]
+# Tests live inline next to the modules they cover (foo.py -> foo_test.py).
+python_files = ["*_test.py"]
+testpaths = ["wmh"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "ANN", "BLE"]
+
+[tool.ty.environment]
+python-version = "3.11"
