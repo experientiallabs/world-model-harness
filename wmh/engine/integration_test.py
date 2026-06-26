@@ -1,8 +1,9 @@
 """End-to-end integration test against a real Bedrock model.
 
 Skipped unless ``AWS_REGION`` is set (same gate as the provider live smoke tests). It exercises the
-full payoff path on real SIB-derived tau2 traces: convert -> build (GEPA on a live LLM) -> persist
--> load -> step. It writes into a tmp dir and uses a small GEPA budget to stay cheap.
+full payoff path on a self-contained, tau2-shaped OTel trace (built inline below, no external
+corpus): convert -> build (GEPA on a live LLM) -> persist -> load -> step. It writes into a tmp dir
+and uses a small GEPA budget to stay cheap.
 """
 
 from __future__ import annotations

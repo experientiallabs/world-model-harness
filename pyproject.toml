@@ -48,9 +48,17 @@ testpaths = ["wmh"]
 [tool.ruff]
 line-length = 100
 target-version = "py311"
+# `tools/` holds isolated, self-contained capture tooling that runs in its OWN Python env
+# (e.g. tools/tau2-capture imports the real tau2-bench under Python 3.13). It is NOT part of the
+# `wmh` package and `wmh` never imports it — only the trace files it produces land in `examples/`.
+# Keep it out of the 3.11 wmh lint/type gate.
+extend-exclude = ["tools/"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "ANN", "BLE"]
 
 [tool.ty.environment]
 python-version = "3.11"
+
+[tool.ty.src]
+exclude = ["tools/"]
