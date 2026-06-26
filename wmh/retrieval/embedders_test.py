@@ -1,4 +1,4 @@
-"""Tests for the offline HashingEmbedder."""
+"""Tests for the offline HashingEmbedder and the get_embedder factory."""
 
 from __future__ import annotations
 
@@ -6,7 +6,9 @@ import math
 
 import pytest
 
-from wmh.retrieval.embedders import HashingEmbedder
+from wmh.config import HarnessConfig
+from wmh.providers.base import EmbedderKind, ProviderConfig, ProviderKind
+from wmh.retrieval.embedders import HashingEmbedder, get_embedder
 
 
 def _cosine(a: list[float], b: list[float]) -> float:
@@ -43,3 +45,52 @@ def test_batch_matches_individual() -> None:
 def test_rejects_nonpositive_dim() -> None:
     with pytest.raises(ValueError, match="positive"):
         HashingEmbedder(dim=0)
+
+
+# --- get_embedder factory ------------------------------------------------------------------------
+
+
+def test_get_embedder_defaults_to_hashing_sized_to_embed_dim() -> None:
+    embedder = get_embedder(HarnessConfig(embed_dim=77))  # default embed_provider is HASHING
+    assert isinstance(embedder, HashingEmbedder)
+    assert len(embedder.embed(["x"])[0]) == 77
+
+
+def test_get_embedder_builds_provider_with_embed_dim_threaded(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, ProviderConfig] = {}
+
+    def fake_get_provider(config: ProviderConfig) -> object:
+        captured["config"] = config
+        return object()  # the factory returns whatever the registry builds
+
+    # The factory imports get_provider from wmh.providers lazily; patch it there.
+    import wmh.providers as providers_pkg
+
+    monkeypatch.setattr(providers_pkg, "get_provider", fake_get_provider)
+
+    config = HarnessConfig(
+        providers=[
+            ProviderConfig(
+                kind=ProviderKind.BEDROCK,
+                model="us.anthropic.claude-opus-4-8",
+                embed_model="amazon.titan-embed-text-v2:0",
+            )
+        ],
+        embed_provider=EmbedderKind.BEDROCK,
+        embed_dim=256,
+    )
+    get_embedder(config)
+
+    built = captured["config"]
+    assert built.kind is ProviderKind.BEDROCK
+    assert built.embed_model == "amazon.titan-embed-text-v2:0"
+    assert built.embed_dim == 256  # embed_dim stamped onto the provider config
+
+
+def test_get_embedder_missing_provider_config_raises() -> None:
+    # embed_provider points at OPENAI but no OpenAI ProviderConfig is registered.
+    config = HarnessConfig(embed_provider=EmbedderKind.OPENAI)
+    with pytest.raises(ValueError, match="no provider config for openai"):
+        get_embedder(config)

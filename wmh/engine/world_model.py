@@ -14,6 +14,7 @@ from wmh.core.types import Action, EnvState, Observation, Session, Step
 from wmh.engine.prompts import BASE_ENV_PROMPT, build_env_prompt
 from wmh.providers.base import Embedder, Message, Provider
 from wmh.retrieval import EmbeddingRetriever, Retriever
+from wmh.tracking import Phase, RunRecord, RunTracker
 
 
 class WorldModel:
@@ -29,6 +30,9 @@ class WorldModel:
         self._env_prompt = env_prompt
         self._top_k = top_k
         self._sessions: dict[str, Session] = {}
+        # Per-session token/cost/time accounting (serve-time observability). One tracker per
+        # session, started when the session is created; `session_usage` exposes running totals.
+        self._trackers: dict[str, RunTracker] = {}
 
     @classmethod
     def load(
@@ -37,11 +41,11 @@ class WorldModel:
         """Construct from a built `.wmh/` artifact (optimized prompt + indexed replay buffer).
 
         `provider` serves the live world model (generation). `embedder` supplies phi for retrieval;
-        when omitted we use the offline `HashingEmbedder` (the default build embedder), so loading
-        needs no embedding credentials.
+        when omitted we reconstruct the configured embedder (`embed_provider` + `embed_dim`), which
+        defaults to the offline `HashingEmbedder` so loading needs no embedding credentials.
         """
         from wmh.config import ArtifactPaths, load_config
-        from wmh.retrieval.embedders import HashingEmbedder
+        from wmh.retrieval.embedders import get_embedder
 
         config = load_config(artifact_dir)
         paths = ArtifactPaths(artifact_dir)
@@ -50,9 +54,9 @@ class WorldModel:
             if paths.optimized_prompt.exists()
             else BASE_ENV_PROMPT
         )
-        # Reconstruct the *same* embedder the build used (dim is persisted in config), so the
+        # Reconstruct the *same* embedder the build used (provider + dim persisted in config), so
         # query vectors match the stored matrix. A caller-supplied embedder overrides.
-        retriever = EmbeddingRetriever(embedder or HashingEmbedder(dim=config.embed_dim))
+        retriever = EmbeddingRetriever(embedder or get_embedder(config))
         if paths.index.exists():
             retriever.load(paths.index)
         return cls(provider, retriever, env_prompt=env_prompt, top_k=config.top_k)
@@ -60,7 +64,21 @@ class WorldModel:
     def new_session(self, task: str | None = None, seed_state: EnvState | None = None) -> Session:
         session = Session(id=uuid.uuid4().hex, task=task, state=seed_state or EnvState())
         self._sessions[session.id] = session
+        tracker = RunTracker(run_id=session.id, kind="serve")
+        tracker.start()
+        self._trackers[session.id] = tracker
         return session
+
+    def session_usage(self, session_id: str) -> RunRecord:
+        """Return the running token/cost/time record for `session_id` (DreamGym serve metering).
+
+        The tracker is started at `new_session` and intentionally left running for the life of the
+        session (serve sessions have no explicit end), so `duration_seconds` is live wall-clock
+        since the session was created — not just time spent inside `step`. Raises `KeyError` if
+        `session_id` is unknown (callers that take session ids from clients should validate first,
+        as the serving API does).
+        """
+        return self._trackers[session_id].record_summary()
 
     def get_session(self, session_id: str) -> Session:
         return self._sessions[session_id]
@@ -90,6 +108,11 @@ class WorldModel:
         system, user = build_env_prompt(self._env_prompt, session, action, demos)
         completion = self._provider.complete(system, [_user_message(user)])
         observation = parse_observation(completion.text)
+
+        # serve-time metering: attribute this call's tokens/cost to the session
+        tracker = self._trackers.get(session_id)
+        if tracker is not None:
+            tracker.record(Phase.SERVE, self._provider.config.model, completion.usage)
 
         # (4) advance session: append step, update structured state + scratchpad, enrich buffer
         step = Step(

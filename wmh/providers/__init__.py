@@ -6,21 +6,24 @@ verified on startup with a cheap ping. Built fresh for this repo; no external cl
 
 from wmh.providers.base import (
     Completion,
+    EmbedderKind,
     Message,
     Provider,
     ProviderConfig,
     ProviderKind,
     VerifyResult,
 )
-from wmh.providers.registry import get_provider, verify_all
+from wmh.providers.registry import get_provider, verify_all, verify_embedder
 
 __all__ = [
     "Provider",
     "ProviderConfig",
     "ProviderKind",
+    "EmbedderKind",
     "Completion",
     "Message",
     "VerifyResult",
     "get_provider",
     "verify_all",
+    "verify_embedder",
 ]
