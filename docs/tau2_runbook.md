@@ -58,13 +58,13 @@ models/tau2-airline/
 ## 2. Load the stored model and step against it
 
 ```python
-from wmh.engine.world_model import WorldModel
+from wmh.config.store import WorldModelStore
 from wmh.core.types import Action, ActionKind
-from wmh.providers import get_provider, ProviderConfig, ProviderKind
+from wmh.engine.loader import load_world_model
 
-provider = get_provider(ProviderConfig(
-    kind=ProviderKind.BEDROCK, model="us.anthropic.claude-opus-4-8", region="us-east-1"))
-wm = WorldModel.load("/tmp/tau2_wmh", provider)
+# Resolve the named model under the project root and load it with the provider it was built on.
+model_dir = WorldModelStore("/tmp/tau2_wmh").resolve("tau2-airline")
+wm, _provider = load_world_model(model_dir)
 
 s = wm.new_session(task="Customer request: I am Katherine Johnson (u_kath). Look up my account.")
 print(wm.step(s.id, Action(kind=ActionKind.TOOL_CALL, name="bash",

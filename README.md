@@ -7,7 +7,8 @@ reconstructed from your own OpenTelemetry traces. No sandbox, no live services, 
 
 Inspired by **Qwen-AgentWorld** (LLM-as-environment), **GEPA** (reflective prompt evolution), and
 **DreamGym** (retrieval over a trace replay buffer) — but with **zero training**: we get there with
-prompt optimization on a frontier model. See [`DESIGN.md`](./DESIGN.md) for the full design.
+prompt optimization on a frontier model. See [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md) for how
+the pieces fit (and where to plug in a new provider, adapter, or embedder).
 
 ## How it works
 
@@ -25,6 +26,7 @@ wmh providers verify                       # confirm Anthropic / Bedrock / Azure
 wmh build                                  # guided creation wizard (prompts for name, traces, provider…)
 wmh build --name airline --file traces.jsonl   # …or fully scriptable with flags -> .wmh/models/airline/
 wmh list                                   # show every built world model
+wmh eval traces.jsonl                      # score reconstruction fidelity (replay + LLM judge)
 wmh serve                                  # local backend on :8000 (serves all built models)
 wmh demo                                   # watch an LLM agent step against the world model
 wmh play                                   # step into the environment yourself (interactive REPL)
@@ -42,10 +44,13 @@ is optional.
 
 ```python
 from wmh import WorldModel, Action, ActionKind
-from wmh.providers import get_provider, ProviderConfig, ProviderKind
+from wmh.config.store import WorldModelStore
+from wmh.engine.loader import load_world_model
 
-provider = get_provider(ProviderConfig(kind=ProviderKind.ANTHROPIC, model="claude-opus-4-8"))
-wm = WorldModel.load(".wmh", provider)
+# Resolve a named model under the project root (.wmh/models/<name>/) and load it with the
+# serve provider + embedder it was built with — no need to reconstruct the provider yourself.
+model_dir = WorldModelStore(".wmh").resolve("airline")
+wm, _provider = load_world_model(model_dir)
 
 session = wm.new_session(task="check out the cart")
 obs = wm.step(session.id, Action(kind=ActionKind.TOOL_CALL, name="add_to_cart",

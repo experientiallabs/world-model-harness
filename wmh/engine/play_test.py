@@ -67,6 +67,15 @@ def test_parse_action_rejects_empty_and_bad_json() -> None:
         parse_action('get_user ["not", "an", "object"]')
 
 
+def test_parse_action_non_ascii_first_word_is_a_message() -> None:
+    # Tool names are ASCII identifiers; a non-ASCII first word is prose, not a tool call
+    # (str.isalpha() would otherwise accept Unicode letters and misread it).
+    action = parse_action("café {}")
+    assert action.kind == ActionKind.MESSAGE
+    action2 = parse_action("日本 hello")
+    assert action2.kind == ActionKind.MESSAGE
+
+
 def test_play_turn_steps_and_evolves_scratchpad() -> None:
     retriever = EmbeddingRetriever(HashingEmbedder(dim=32))
     retriever.index(
