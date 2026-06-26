@@ -109,16 +109,7 @@ def test_add_into_empty_buffer_then_retrieves() -> None:
     assert retriever.topk(EnvState(), step.action, k=1)[0].observation.content == "first"
 
 
-def test_encode_text_is_structured_and_stable() -> None:
-    state = EnvState(structured={"b": 2, "a": 1}, scratchpad="logged in")
-    action = Action(kind=ActionKind.TOOL_CALL, name="buy", arguments={"sku": "A1"})
-    text = EmbeddingRetriever._encode_text(state, action)
-    # Keys are sorted -> deterministic rendering regardless of dict insertion order.
-    assert "STATE:" in text and "ACTION kind=tool_call" in text
-    assert "tool: buy" in text and '"a":1' in text and '"b":2' in text
-    assert "scratchpad: logged in" in text
-    other = EnvState(structured={"a": 1, "b": 2}, scratchpad="logged in")
-    assert EmbeddingRetriever._encode_text(other, action) == text
+# phi text rendering (encode_state_action) is owned and tested by wmh/core/render_test.py.
 
 
 def test_save_load_roundtrip_preserves_topk(tmp_path) -> None:  # noqa: ANN001 - pytest fixture

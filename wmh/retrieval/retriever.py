@@ -59,12 +59,9 @@ class EmbeddingRetriever:
         self._steps: list[Step] = []
         self._matrix: NDArray[np.float64] | None = None
 
-    # phi(s, a): retrieval embeds the canonical (state, action) summary from wmh.core.render, the
-    # same text the engine and GEPA render, so an embedded step and a shown demo describe one step
-    # identically.
-    _encode_text = staticmethod(encode_state_action)
-
     def _embed_steps(self, steps: list[Step]) -> NDArray[np.float64]:
+        # phi(s, a) embeds the canonical (state, action) summary from wmh.core.render — the same
+        # text the engine and GEPA render, so an embedded step and a shown demo match.
         texts = [encode_state_action(s.state_before, s.action) for s in steps]
         vectors = self._provider.embed(texts)
         return np.asarray(vectors, dtype=np.float64)

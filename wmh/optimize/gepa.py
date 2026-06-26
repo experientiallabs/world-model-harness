@@ -11,9 +11,9 @@ critiques into the reflective dataset the engine feeds back to the reflection LM
 
 The optimizer stays decoupled from the serving engine: replaying a candidate only needs a
 `Provider` (see `predict_observation`), so we do NOT import `wmh.engine` (that would create the
-cycle engine -> optimize -> engine). The env-prompt assembly here is a minimal local copy.
-TODO: converge `_assemble_env_prompt` with `wmh.engine.prompts.build_env_prompt` during integration
-so the optimizer evolves against the exact prompt the world model serves.
+cycle engine -> optimize -> engine). Prompt assembly is the shared
+`wmh.core.render.build_env_prompt` — the exact assembly the world model serves — so GEPA evolves
+against what is actually deployed.
 """
 
 from __future__ import annotations
@@ -42,8 +42,10 @@ class OptimizeMetrics(BaseModel):
     """Outcome metrics from an optimization run."""
 
     held_out_accuracy: float = 0.0  # mean judge score on the held-out split
-    judge_agreement: float = 0.0  # judge self-consistency / human-agreement proxy
     rollouts_used: int = 0
+    # Reserved: judge self-consistency / human-agreement proxy. Populating it needs repeated or
+    # independent judging (not yet implemented); `None` until then so it never reads as a real 0.0.
+    judge_agreement: float | None = None
 
 
 class OptimizeResult(BaseModel):
@@ -142,7 +144,11 @@ class WorldModelGEPAAdapter(GEPAAdapter[_EvalStep, _StepTrajectory, Observation]
             step = item.step
             try:
                 predicted = predict_observation(
-                    self._provider, prompt, step.task, step.state_before, step.action,
+                    self._provider,
+                    prompt,
+                    step.task,
+                    step.state_before,
+                    step.action,
                     demos=item.demos,
                 )
                 result = self._judge.score(predicted, step.observation, step)
@@ -273,11 +279,10 @@ class GEPAOptimizer:
             frontier=frontier,
             metrics=OptimizeMetrics(
                 held_out_accuracy=float(result.val_aggregate_scores[result.best_idx]),
-                # TODO: judge_agreement needs repeated/independent judging; left at default for now.
-                judge_agreement=0.0,
                 rollouts_used=int(result.total_metric_calls or 0),
             ),
         )
+
 
 def _eval_steps(traces: list[Trace], demos: DemoRetriever) -> list[_EvalStep]:
     """Bundle each step with the (leak-free) demos the serving model would retrieve for it."""
