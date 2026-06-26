@@ -23,6 +23,13 @@ Supported file formats:
   - OTLP-JSON: a single object with `resourceSpans` -> `scopeSpans` -> `spans`
   - JSON array of the above, or of bare span objects
   - JSONL: one OTLP-JSON object or one bare span object per line
+
+Optional `wmh.*` enrichments (a strict superset of the semconv — traces that omit them parse
+unchanged): an action span may carry `wmh.state.structured`/`wmh.state.scratchpad` (the env state
+BEFORE the action -> `Step.state_before`), and any span may carry `wmh.trace.metadata` (a JSON
+object -> `Trace.metadata`, e.g. the benchmark name + gold assertions a capture stamps on). These
+let a faithfully-captured benchmark trace feed open-loop replay, which scores the predicted
+observation for `(state_before, action)` against the recorded one.
 """
 
 from __future__ import annotations
@@ -34,7 +41,7 @@ from pathlib import Path
 import httpx
 from pydantic import BaseModel, Field, JsonValue
 
-from wmh.core.types import Action, ActionKind, JsonObject, Observation, Step, Trace
+from wmh.core.types import Action, ActionKind, EnvState, JsonObject, Observation, Step, Trace
 from wmh.ingest.adapter import VendorPull, register_adapter
 
 # `gen_ai.operation.name` values, per the OTel GenAI semantic conventions.
@@ -57,6 +64,18 @@ _TOOL_OUTPUT_KEYS = (
     "gen_ai.completion",
     "output",
 )
+
+# Optional `wmh.*` attributes that enrich a step beyond the bare OTel GenAI semconv. They are a
+# strict superset: traces that omit them (e.g. the committed `examples/*.otel.jsonl`) parse exactly
+# as before. We carry them on the LLM (action) span so a step's state is recorded with the action
+# the agent took against it, which is what open-loop replay feeds in.
+#   - `wmh.state.structured` : JSON snapshot of the env's machine-readable state BEFORE the action
+#   - `wmh.state.scratchpad` : free-text env state before the action
+# Trace-level metadata (benchmark name, gold assertions) rides on any span via `wmh.trace.metadata`
+# (a JSON object); the first span that carries it wins, so a capture can stamp it once.
+_STATE_STRUCTURED_KEY = "wmh.state.structured"
+_STATE_SCRATCHPAD_KEY = "wmh.state.scratchpad"
+_TRACE_METADATA_KEY = "wmh.trace.metadata"
 
 # Env vars the (placeholder) vendor pull reads. The real query semantics are vendor-specific; see
 # the TODO in `from_vendor`.
@@ -294,22 +313,70 @@ def _trace_task(spans: list[_ParsedSpan]) -> str | None:
     return None
 
 
+def _state_before(span: _ParsedSpan) -> EnvState:
+    """Read an optional `wmh.state.*` snapshot off an action span (empty when absent)."""
+    attrs = span.attributes
+    structured = attrs.get(_STATE_STRUCTURED_KEY)
+    if isinstance(structured, str):
+        try:
+            decoded: JsonValue = json.loads(structured)
+        except json.JSONDecodeError:
+            decoded = {}
+        structured = decoded
+    scratchpad = attrs.get(_STATE_SCRATCHPAD_KEY)
+    return EnvState(
+        structured=structured if isinstance(structured, dict) else {},
+        scratchpad=scratchpad if isinstance(scratchpad, str) else "",
+    )
+
+
+def _trace_metadata(spans: list[_ParsedSpan]) -> JsonObject:
+    """First `wmh.trace.metadata` object across a trace's spans (benchmark name, gold, ...)."""
+    for span in spans:
+        raw = span.attributes.get(_TRACE_METADATA_KEY)
+        if isinstance(raw, dict):
+            return raw
+        if isinstance(raw, str):
+            try:
+                decoded: JsonValue = json.loads(raw)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(decoded, dict):
+                return decoded
+    return {}
+
+
 def _build_steps(spans: list[_ParsedSpan]) -> list[Step]:
-    """Pair ordered Action spans with their following Observation spans into Steps."""
+    """Pair ordered Action spans with their following Observation spans into Steps.
+
+    The optional `wmh.state.*` snapshot recorded on an action span becomes that step's
+    `state_before`; absent it (the bare-semconv case) the step keeps the default empty `EnvState`.
+    """
     task = _trace_task(spans)
     steps: list[Step] = []
     pending: Action | None = None
     pending_ids: list[str] = []
+    pending_state = EnvState()
 
-    def flush(action: Action, observation: Observation, span_ids: list[str]) -> None:
-        steps.append(Step(action=action, observation=observation, task=task, raw_span_ids=span_ids))
+    def flush(
+        action: Action, observation: Observation, span_ids: list[str], state: EnvState
+    ) -> None:
+        steps.append(
+            Step(
+                action=action,
+                observation=observation,
+                state_before=state,
+                task=task,
+                raw_span_ids=span_ids,
+            )
+        )
 
     for span in spans:
         if _is_tool_span(span):
             observation = _observation_from_tool_span(span)
             if pending is None:
                 action = _tool_call_action_from_tool_span(span)
-                flush(action, observation, [span.span_id])
+                flush(action, observation, [span.span_id], _state_before(span))
             else:
                 # The LLM span usually carries the call's name/args; backfill from the tool span
                 # only when it didn't. Derive the tool-span action once to avoid re-parsing.
@@ -321,16 +388,17 @@ def _build_steps(spans: list[_ParsedSpan]) -> list[Step]:
                         pending.arguments = from_tool.arguments
                     if pending.name is None:
                         pending.name = from_tool.name
-                flush(pending, observation, [*pending_ids, span.span_id])
-            pending, pending_ids = None, []
+                flush(pending, observation, [*pending_ids, span.span_id], pending_state)
+            pending, pending_ids, pending_state = None, [], EnvState()
         elif _is_llm_span(span):
             if pending is not None:
-                flush(pending, Observation(content=""), pending_ids)
+                flush(pending, Observation(content=""), pending_ids, pending_state)
             pending, pending_ids = _action_from_llm_span(span), [span.span_id]
+            pending_state = _state_before(span)
         # Non-GenAI spans are ignored.
 
     if pending is not None:
-        flush(pending, Observation(content=""), pending_ids)
+        flush(pending, Observation(content=""), pending_ids, pending_state)
     return steps
 
 
@@ -344,7 +412,12 @@ def _spans_to_traces(spans: list[_ParsedSpan], source: str) -> list[Trace]:
     ordered: list[tuple[int, Trace]] = []
     for group in by_trace.values():
         group.sort(key=lambda s: (s.start_nano, s.span_id))
-        trace = Trace(trace_id=group[0].trace_id, steps=_build_steps(group), source=source)
+        trace = Trace(
+            trace_id=group[0].trace_id,
+            steps=_build_steps(group),
+            source=source,
+            metadata=_trace_metadata(group),
+        )
         ordered.append((group[0].start_nano, trace))
     ordered.sort(key=lambda pair: pair[0])
     return [trace for _, trace in ordered]

@@ -12,9 +12,13 @@ functional equivalence) plus a deterministic is_error-flag check. Run:
 
 ```bash
 AWS_REGION=us-east-1 uv run wmh eval \
-  examples/tau2-bench.otel.jsonl examples/bird-sql.otel.jsonl examples/dabstep.otel.jsonl \
+  examples/tau2-bench.otel.jsonl \
   --out report.json
 ```
+
+`wmh eval` takes one or more trace files; pass every benchmark corpus you have captured. Today the
+committed corpus is `examples/tau2-bench.otel.jsonl` only (see [`benchmarks.md`](./benchmarks.md));
+add more files here as new benchmarks are captured via the `tools/<bench>-capture/` pattern.
 
 Inspect the lowest-scoring steps' critiques to find systematic failure modes, change the prompt,
 re-run on the same split, and keep changes that move fidelity without overfitting to one benchmark.
@@ -24,7 +28,7 @@ re-run on the same split, and keep changes that move fidelity without overfittin
 Initial overall fidelity was ~0.43, but inspecting results surfaced two distinct issues:
 
 1. **A data artifact, not a model failure.** Half the held-out steps had *empty* ground truth —
-   they were the agent's final `SIB_SUBMIT` turn, which has no environment reply. Scoring against a
+   they were the agent's final submit/answer turn, which has no environment reply. Scoring against a
    non-existent observation dragged the number down. Fix: trace ingestion only emits a step for an
    agent turn that HAS a following environment reply (unpaired trailing turns are dropped). On steps
    with a real observation, fidelity was already ~0.62.
@@ -48,6 +52,8 @@ success/error from what the action would really do.
 
 - This is deliberately NOT GEPA-on-the-base: we keep the base general and hand-tuned, then let GEPA
   specialize per-project from this stronger starting point.
-- Fidelity numbers on small benchmarks (tau2, bird-sql, gaia have 1-3 traces) are noisy; weight the
-  larger sets (financebench, continual-learning, terminal-bench) and the overall step-weighted mean.
+- Fidelity numbers on a small corpus are noisy; weight the overall step-weighted mean, and treat
+  per-file numbers as a signal rather than a benchmark until more benchmarks are captured. (The
+  baseline above was measured on the earlier, larger multi-benchmark corpus; the methodology is
+  unchanged — only the committed corpus is now tau2-only.)
 ```
