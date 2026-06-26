@@ -15,6 +15,11 @@ from wmh.core.parsing import extract_json_object
 from wmh.core.types import Observation, Step
 from wmh.providers.base import Message, Provider
 
+# A stable substring of JUDGE_SYSTEM used to recognize judge calls when attributing run cost
+# (wmh.tracking.metered). Kept as a named constant so the prompt and the classifier never drift:
+# JUDGE_SYSTEM must always contain JUDGE_MARKER (pinned by judge_test.py).
+JUDGE_MARKER = "grade a world model"
+
 JUDGE_SYSTEM = """You grade a world model that simulates an environment for an AI agent.
 Given the agent's action, the ACTUAL observation the real environment returned, and a PREDICTED
 observation the world model generated, judge whether the prediction is *functionally equivalent* to

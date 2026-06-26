@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
+from wmh.optimize.judge import JUDGE_MARKER
 from wmh.providers.base import (
     Completion,
     Message,
@@ -25,16 +26,15 @@ from wmh.providers.base import (
 )
 from wmh.tracking.tracker import Phase, RunTracker
 
-# System-prompt fingerprints of the build-time call sites (see judge.py / gepa.py).
-_JUDGE_MARKER = "grade a world model"
-_REFLECTION_MARKER = "improve the system prompt"
-
 
 def classify_build_call(system: str) -> Phase:
-    """Default phase classifier for a build-time `complete`: judge vs GEPA (rollout/reflection)."""
-    if _JUDGE_MARKER in system:
+    """Default phase classifier for a build-time `complete`: judge vs GEPA (rollout/reflection).
+
+    The judge is recognized by `JUDGE_MARKER` (owned by judge.py, so the prompt and this classifier
+    can't drift). Everything else during build — GEPA rollouts (env-sim) and reflection — is GEPA.
+    """
+    if JUDGE_MARKER in system:
         return Phase.JUDGE
-    # GEPA rollouts (env-sim) and reflection both belong to the optimization phase.
     return Phase.GEPA
 
 
