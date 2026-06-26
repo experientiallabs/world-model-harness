@@ -6,11 +6,14 @@ from a re-implementation, the world model would learn to imitate our approximati
 real benchmark. So we run the real benchmark (including its own LLM user-simulator) and record what
 its real environment actually returned.
 
-**tau²-bench (`examples/tau2-bench.otel.jsonl`) is the only captured benchmark so far** — it is the
-entire committed corpus, captured live on Bedrock Opus 4.8. A small honest corpus from the real
-benchmark beats a large one from an approximation. More benchmarks are added one at a time via the
-same isolated capture-tool pattern (see [Adding a new benchmark](#adding-a-new-benchmark)); each
-contributes its own `examples/<benchmark>.otel.jsonl`.
+Captured benchmarks so far, each its own `examples/<benchmark>.otel.jsonl` produced by an isolated
+capture tool under `tools/<benchmark>-capture/` (see [Adding a new benchmark](#adding-a-new-benchmark)):
+
+- **`tau2-bench`** — captured live from Sierra's real tau²-bench on Bedrock Opus 4.8 (customer-service
+  tool use; per-step gold rides in metadata). See `tools/tau2-capture/`.
+- **`terminal-tasks`** — real computer-use-agent runs on a Unix shell (`bash` tool calls with the real
+  command output recorded per call, including failures: tracebacks, HTTP 301s, retries). Converted
+  from terminal-task agent trajectories. See `tools/terminal-tasks-capture/`.
 
 ## The trace contract
 

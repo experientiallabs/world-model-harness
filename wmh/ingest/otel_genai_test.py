@@ -189,6 +189,31 @@ def test_committed_tau2_corpus_satisfies_the_replay_contract() -> None:
     assert n_steps > 0
 
 
+def test_committed_terminal_tasks_corpus_satisfies_the_replay_contract() -> None:
+    """The committed terminal-tasks corpus (if present) must parse into replay-ready traces.
+
+    Real bash tool calls with real recorded outputs (including failures). Each step has a tool-call
+    action and the originating task; state_before is empty (a shell has no compact state snapshot).
+    """
+    corpus = _EXAMPLES / "terminal-tasks.otel.jsonl"
+    if not corpus.exists():  # pragma: no cover - committed corpus; only missing in a partial slice
+        pytest.skip("terminal-tasks corpus not present")
+
+    traces = OtelGenAIAdapter().from_file(str(corpus))
+    assert traces, "corpus produced no traces"
+
+    n_steps = 0
+    for trace in traces:
+        assert trace.metadata.get("benchmark") == "terminal-tasks"
+        assert trace.steps, f"trace {trace.trace_id} has no steps"
+        for step in trace.steps:
+            n_steps += 1
+            assert step.action.kind == ActionKind.TOOL_CALL
+            assert step.action.name  # the real tool name (bash)
+            assert step.task  # the originating task instruction
+    assert n_steps > 0
+
+
 def test_from_vendor_without_endpoint_raises_friendly_error() -> None:
     saved = os.environ.pop(VENDOR_ENDPOINT_ENV, None)
     try:
