@@ -14,6 +14,8 @@ from wmh.ingest.adapter import VendorPull
 from wmh.ingest.otel_genai import VENDOR_ENDPOINT_ENV, OtelGenAIAdapter
 
 _TESTDATA = Path(__file__).parent / "testdata"
+# `wmh/ingest/otel_genai_test.py` -> repo root is parents[2].
+_EXAMPLES = Path(__file__).resolve().parents[2] / "examples"
 
 
 def test_default_otel_adapter_is_registered_on_import() -> None:
@@ -129,9 +131,7 @@ def test_state_and_metadata_attributes_populate_step_and_trace(tmp_path: Path) -
         ],
     }
     path = tmp_path / "enriched.jsonl"
-    path.write_text(
-        json.dumps(span_llm) + "\n" + json.dumps(span_tool) + "\n", encoding="utf-8"
-    )
+    path.write_text(json.dumps(span_llm) + "\n" + json.dumps(span_tool) + "\n", encoding="utf-8")
 
     traces = OtelGenAIAdapter().from_file(str(path))
 
@@ -158,6 +158,35 @@ def test_traces_without_wmh_attributes_keep_empty_state_and_metadata() -> None:
     for step in traces[0].steps:
         assert step.state_before.structured == {}
         assert step.state_before.scratchpad == ""
+
+
+def test_committed_tau2_corpus_satisfies_the_replay_contract() -> None:
+    """The committed real tau2-bench corpus must parse into replay-ready traces.
+
+    Guards the trace contract on the actual captured artifact (not a synthetic fixture): every trace
+    carries benchmark + gold metadata, and every step has a real tool-call action, the real recorded
+    observation, and the originating task. `state_before` is intentionally empty for tau2 — the env
+    DB is huge and would leak the answer (open-loop replay must reconstruct, not look up), so the
+    converter omits it; the adapter still supports `wmh.state.*` for future small-state benchmarks.
+    """
+    corpus = _EXAMPLES / "tau2-bench.otel.jsonl"
+    if not corpus.exists():  # pragma: no cover - committed corpus; only missing in a partial slice
+        pytest.skip("tau2-bench corpus not present")
+
+    traces = OtelGenAIAdapter().from_file(str(corpus))
+    assert traces, "corpus produced no traces"
+
+    n_steps = 0
+    for trace in traces:
+        assert trace.metadata.get("benchmark") == "tau2-bench"
+        assert "gold" in trace.metadata  # gold rides along for the deferred closed-loop eval
+        assert trace.steps, f"trace {trace.trace_id} has no steps"
+        for step in trace.steps:
+            n_steps += 1
+            assert step.action.kind == ActionKind.TOOL_CALL
+            assert step.action.name  # a real tau2 tool name
+            assert step.task  # the originating user instruction
+    assert n_steps > 0
 
 
 def test_from_vendor_without_endpoint_raises_friendly_error() -> None:
