@@ -5,18 +5,21 @@ with GEPA on a live LLM, persist a `.wmh/` artifact, then load it and step again
 and verified on 2026-06-25 with **Bedrock Opus 4.8** for generation and the offline
 `HashingEmbedder` for retrieval (no embedding credentials required).
 
+> **Note (corpus changed):** the worked numbers and `get_user u_kath`-style tool calls below were
+> recorded against the earlier SIB-derived bash corpus. The committed corpus is now captured from the
+> **real tau²-bench** (§0), whose actions are real tool calls (e.g. `get_user_details(user_id=...)`),
+> not bash commands. The *pipeline steps* are unchanged; the specific commands/outputs shown are
+> illustrative and will differ on the current corpus.
+
 ## 0. Source data
 
-A ready-to-use OTel GenAI trace corpus ships in `examples/` (one `*.otel.jsonl` per benchmark),
-including `examples/tau2-bench.otel.jsonl`. These were derived from `self-improvement-bench`'s saved
-agent transcripts (OpenInference message logs where each agent turn is a ` ```sib_bash``` ` command
-and the environment reply wraps `<returncode>`/`<output>`) and converted into the bare OTel `gen_ai.*`
-span shape the `otel-genai` ingestion adapter reads: each agent bash turn → an LLM `bash` tool-call
-span, each following env reply → an `execute_tool` span (error status on non-zero return code), the
-first request → the trace `gen_ai.prompt` (tau). Only turns with a paired env reply become steps.
-
-The one-off conversion tooling is intentionally NOT committed (it's coupled to the SIB repo layout);
-the committed `examples/` corpus is the reusable artifact.
+`examples/tau2-bench.otel.jsonl` is a ready-to-use OTel GenAI trace corpus captured from the **real**
+[tau²-bench](https://github.com/sierra-research/tau2-bench) benchmark — see
+[`benchmarks.md`](./benchmarks.md) for how it is produced (an isolated `tools/tau2-capture/` tool runs
+the real benchmark on Bedrock and converts its trajectories; `wmh` never imports tau2). Each trace is
+one solved task: per agent tool call, the real tool-call action and the real recorded observation,
+with the task's gold and reward in `Trace.metadata`. It is the only committed benchmark corpus so far;
+more are added via the same per-benchmark capture-tool pattern.
 
 ## 1. Build the world model (ingest → split → index → GEPA → persist)
 

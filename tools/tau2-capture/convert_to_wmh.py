@@ -52,13 +52,25 @@ def _gold(task: dict[str, Any]) -> dict[str, Any]:
     return crit if isinstance(crit, dict) else {}
 
 
+def _as_task_text(value: Any) -> str:  # noqa: ANN401 - tau2 fields are loosely typed JSON
+    """Render a task field as a JSON-clean string: pass plain strings through, JSON-encode dicts.
+
+    tau2's `user_scenario.instructions` may be a plain string OR a structured dict
+    (domain/reason_for_call/known_info/...). Encoding the dict with json.dumps keeps the trace
+    JSON-clean end to end, so downstream can json.loads it (vs. a Python-repr needing literal_eval).
+    """
+    if isinstance(value, str):
+        return value
+    return json.dumps(value, ensure_ascii=False, sort_keys=True)
+
+
 def _task_text(task: dict[str, Any]) -> str:
     """The agent-visible request: the user-scenario instructions, else the ticket."""
     scenario = task.get("user_scenario")
     if isinstance(scenario, dict) and scenario.get("instructions"):
-        return str(scenario["instructions"])
+        return _as_task_text(scenario["instructions"])
     if task.get("ticket"):
-        return str(task["ticket"])
+        return _as_task_text(task["ticket"])
     return ""
 
 

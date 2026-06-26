@@ -6,8 +6,11 @@ from a re-implementation, the world model would learn to imitate our approximati
 real benchmark. So we run the real benchmark (including its own LLM user-simulator) and record what
 its real environment actually returned.
 
-The committed corpus today is **tau²-bench** (`examples/tau2-bench.otel.jsonl`), captured live on
-Bedrock Opus 4.8. More benchmarks follow the same pattern.
+**tau²-bench (`examples/tau2-bench.otel.jsonl`) is the only captured benchmark so far** — it is the
+entire committed corpus, captured live on Bedrock Opus 4.8. A small honest corpus from the real
+benchmark beats a large one from an approximation. More benchmarks are added one at a time via the
+same isolated capture-tool pattern (see [Adding a new benchmark](#adding-a-new-benchmark)); each
+contributes its own `examples/<benchmark>.otel.jsonl`.
 
 ## The trace contract
 
