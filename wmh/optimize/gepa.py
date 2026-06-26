@@ -74,6 +74,8 @@ def predict_observation(
     state: EnvState,
     action: Action,
     demos: list[Step],
+    *,
+    temperature: float = 0.0,
 ) -> Observation:
     """Predict the observation for (state, action) under `prompt`, using only a Provider.
 
@@ -81,10 +83,13 @@ def predict_observation(
     shared `wmh.core.render.build_env_prompt` and parses the completion with the shared
     `parse_observation` — the exact assembly AND output contract the serving engine uses — so the
     predicted observation (content + is_error + state_note) matches what the world model produces.
+
+    `temperature` defaults to 0.0 (deterministic). Evaluation can raise it to sample multiple
+    rollouts per step (see `wmh.engine.replay`); GEPA leaves it at 0.0.
     """
     system, user = build_env_prompt(prompt, task, state, action, demos=demos)
     completion = provider.complete(
-        system, [Message(role="user", content=user)], temperature=0.0, max_tokens=1024
+        system, [Message(role="user", content=user)], temperature=temperature, max_tokens=1024
     )
     return parse_observation(completion.text)
 

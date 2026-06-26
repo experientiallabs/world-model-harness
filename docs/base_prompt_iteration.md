@@ -7,21 +7,29 @@ zero-/few-shot reconstruction fidelity before any evolution). We tune it by meas
 ## The measurement loop
 
 `wmh eval` (engine: `wmh/engine/eval.py` → `wmh/engine/replay.py`) replays each trace file's held-out
-split through a prompt and scores predicted vs. real observations with the `LLMJudge` (0..1
-functional equivalence) plus a deterministic is_error-flag check. Run:
+split through a prompt (teacher-forced, open-loop) and scores predicted vs. real observations. The
+default `--judge rubric` is a reference-grounded 5-dimension scorer (format / factuality /
+consistency / realism / quality, mean → 0..1) modeled on Qwen-AgentWorld, with a
+deterministic-vs-volatile content split (computed outputs must match; PIDs/timestamps judged on
+plausibility); `--judge match` is the simpler functional-equivalence `LLMJudge`. It reports per-file
+and overall fidelity as mean±std across steps. `--sample-turns sampled` scores 5 turns/trace (Qwen's
+protocol) instead of all. Run:
 
 ```bash
 AWS_REGION=us-east-1 uv run wmh eval \
-  examples/tau2-bench.otel.jsonl \
+  examples/tau2-bench.otel.jsonl examples/terminal-tasks.otel.jsonl \
   --out report.json
 ```
 
 `wmh eval` takes one or more trace files; pass every benchmark corpus you have captured. Today the
-committed corpus is `examples/tau2-bench.otel.jsonl` only (see [`benchmarks.md`](./benchmarks.md));
-add more files here as new benchmarks are captured via the `tools/<bench>-capture/` pattern.
+committed corpus is `examples/tau2-bench.otel.jsonl` and `examples/terminal-tasks.otel.jsonl` (see
+[`benchmarks.md`](./benchmarks.md)); add more files here as new benchmarks are captured via the
+`tools/<bench>-capture/` pattern.
 
-Inspect the lowest-scoring steps' critiques to find systematic failure modes, change the prompt,
-re-run on the same split, and keep changes that move fidelity without overfitting to one benchmark.
+Inspect the lowest-scoring steps' critiques (and per-dimension scores) to find systematic failure
+modes, change the prompt, re-run on the same split+seed, and keep changes that move fidelity without
+overfitting to one benchmark. This is open-loop; closed-loop task-success is a future direction
+(see [`closed_loop.md`](./closed_loop.md)).
 
 ## What the first baseline taught us
 

@@ -258,19 +258,25 @@ def eval_(  # noqa: A001 - `eval` is the user-facing command name; the builtin i
     train_split: float = typer.Option(0.7, help="Train/holdout ratio per file."),
     embed_dim: int = typer.Option(512, help="phi dimensionality for the offline embedder."),
     no_rag: bool = typer.Option(False, "--no-rag", help="Disable retrieval (zero-shot replay)."),
+    judge: str = typer.Option("rubric", help="Scorer: rubric (5-dim) | match (functional)."),
+    rollouts: int = typer.Option(1, help="World-model samples per step (use with --temperature)."),
+    temperature: float = typer.Option(0.0, help="World-model sampling temperature for rollouts."),
+    sample_turns: str = typer.Option("all", help="Turns scored per trace: all | sampled (5)."),
+    seed: int = typer.Option(0, help="Seed for reproducible turn sampling."),
     out: str = typer.Option(None, help="Optional path to write the full JSON report."),
 ) -> None:
     """Score reconstruction fidelity: replay held-out steps, judge predicted vs. real observations.
 
     For each trace file: split train/holdout, replay the holdout through the prompt (with leak-free
-    RAG unless --no-rag), and report per-file + overall fidelity. The measurement loop behind
+    RAG unless --no-rag), and report per-file + overall fidelity (mean±std). Use --rollouts N with
+    --temperature >0 to sample the world model multiple times per step. The measurement loop behind
     iterating on the env prompt (see docs/base_prompt_iteration.md).
     """
     from pathlib import Path
 
     from wmh.engine.eval import evaluate_files
     from wmh.engine.prompts import BASE_ENV_PROMPT
-    from wmh.optimize.judge import LLMJudge
+    from wmh.optimize.judge import LLMJudge, RubricJudge
     from wmh.providers import ProviderConfig, get_provider
     from wmh.retrieval import HashingEmbedder
 
@@ -278,20 +284,25 @@ def eval_(  # noqa: A001 - `eval` is the user-facing command name; the builtin i
     llm = get_provider(ProviderConfig(kind=serve_provider, model=model, region=region))
     prompt = Path(prompt_file).read_text(encoding="utf-8") if prompt_file else BASE_ENV_PROMPT
     embedder = None if no_rag else HashingEmbedder(dim=embed_dim)
+    scorer = RubricJudge(llm) if judge == "rubric" else LLMJudge(llm)
 
     report = evaluate_files(
         [Path(f) for f in files],
         prompt,
         llm,
-        LLMJudge(llm),
+        scorer,
         embedder=embedder,
         train_split=train_split,
+        rollouts=rollouts,
+        temperature=temperature,
+        sample_turns=sample_turns,
+        seed=seed,
     )
     for name, rep in report.per_file.items():
         _console.print(f"  {name:28} {rep.summary()}")
     _console.print(
-        f"[bold]OVERALL[/bold] fidelity={report.overall_fidelity:.3f} "
-        f"over {report.total_steps} held-out steps"
+        f"[bold]OVERALL[/bold] fidelity={report.overall_fidelity:.3f}±{report.overall_std:.3f} "
+        f"over {report.total_steps} held-out steps (rollouts={report.rollouts})"
     )
     if out:
         import json
