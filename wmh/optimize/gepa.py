@@ -26,6 +26,7 @@ import gepa
 from gepa.core.adapter import EvaluationBatch, GEPAAdapter
 from pydantic import BaseModel, Field
 
+from wmh.core.parsing import parse_observation
 from wmh.core.render import build_env_prompt, encode_state_action
 from wmh.core.types import Action, EnvState, JsonValue, Observation, Step, Trace
 from wmh.optimize.judge import Judge
@@ -70,17 +71,16 @@ def predict_observation(
 ) -> Observation:
     """Predict the observation for (state, action) under `prompt`, using only a Provider.
 
-    This is the single rollout primitive GEPA replays. It assembles the prompt with the shared
-    `wmh.core.render.build_env_prompt` — the exact assembly the serving engine uses — so GEPA
-    evolves prompts against what the world model actually serves. The output contract is plain
-    text: the model's completion *is* the observation content (it is parsed into structured
-    error/reward signals by the engine's `_parse_observation`, mirrored here only at serve time).
+    This is the single rollout primitive GEPA and replay use. It assembles the prompt with the
+    shared `wmh.core.render.build_env_prompt` and parses the completion with the shared
+    `parse_observation` — the exact assembly AND output contract the serving engine uses — so the
+    predicted observation (content + is_error + state_note) matches what the world model produces.
     """
     system, user = build_env_prompt(prompt, task, state, action, demos=demos)
     completion = provider.complete(
         system, [Message(role="user", content=user)], temperature=0.0, max_tokens=1024
     )
-    return Observation(content=completion.text.strip())
+    return parse_observation(completion.text)
 
 
 # --- GEPA adapter --------------------------------------------------------------------------------

@@ -123,7 +123,11 @@ def transcript_to_spans(transcript: Mapping[str, JsonValue], trace_id: str) -> l
             i += 1
             continue
         command = _extract_command(msg["content"])
-        if command is None:
+        nxt = messages[i + 1] if i + 1 < len(messages) else None
+        if command is None or nxt is None or nxt["role"] != "user":
+            # Only emit a step for an agent turn that HAS a following environment reply. A trailing
+            # turn with no reply (e.g. the final SIB_SUBMIT) has no ground-truth observation to
+            # reconstruct, so it would just be noise in replay/optimization — skip it.
             i += 1
             continue
 
@@ -148,29 +152,24 @@ def transcript_to_spans(transcript: Mapping[str, JsonValue], trace_id: str) -> l
         clock += 10
         seq += 1
 
-        # Pair with the next environment reply, if present (the final SUBMIT turn has none).
-        nxt = messages[i + 1] if i + 1 < len(messages) else None
-        if nxt is not None and nxt["role"] == "user":
-            output, is_error = _parse_env_reply(nxt["content"])
-            spans.append(
-                _span(
-                    trace_id=trace_id,
-                    span_id=f"{trace_id[:8]}{seq:04x}",
-                    name="execute_tool bash",
-                    start_nano=clock,
-                    attributes=[
-                        _string_attr("gen_ai.operation.name", "execute_tool"),
-                        _string_attr("gen_ai.tool.name", "bash"),
-                        _string_attr("gen_ai.tool.message", output),
-                    ],
-                    is_error=is_error,
-                )
+        output, is_error = _parse_env_reply(nxt["content"])
+        spans.append(
+            _span(
+                trace_id=trace_id,
+                span_id=f"{trace_id[:8]}{seq:04x}",
+                name="execute_tool bash",
+                start_nano=clock,
+                attributes=[
+                    _string_attr("gen_ai.operation.name", "execute_tool"),
+                    _string_attr("gen_ai.tool.name", "bash"),
+                    _string_attr("gen_ai.tool.message", output),
+                ],
+                is_error=is_error,
             )
-            clock += 10
-            seq += 1
-            i += 2
-        else:
-            i += 1
+        )
+        clock += 10
+        seq += 1
+        i += 2
     return spans
 
 

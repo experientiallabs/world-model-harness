@@ -42,9 +42,11 @@ def test_transcript_maps_turns_to_llm_and_tool_spans() -> None:
         ]
     }
     spans = transcript_to_spans(transcript, trace_id="a" * 32)
-    # 2 assistant turns -> 2 LLM spans; only the first has a following env reply -> 1 tool span.
+    # 2 assistant turns, but only the first has a following env reply, so only it becomes a paired
+    # (chat -> execute_tool) step. The trailing SIB_SUBMIT turn has no reply and is dropped (no
+    # ground-truth observation to reconstruct).
     kinds = [_attr(s, "gen_ai.operation.name") for s in spans]
-    assert kinds == ["chat", "execute_tool", "chat"]
+    assert kinds == ["chat", "execute_tool"]
     assert _attr(spans[0], "gen_ai.tool.call.arguments") == '{"command": "get_user u_kath"}'
     prompt = _attr(spans[0], "gen_ai.prompt")
     assert prompt is not None and prompt.startswith("Customer request")
