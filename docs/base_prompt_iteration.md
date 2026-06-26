@@ -6,13 +6,14 @@ zero-/few-shot reconstruction fidelity before any evolution). We tune it by meas
 
 ## The measurement loop
 
-`scripts/replay_eval.py` (engine: `wmh/engine/replay.py`) replays held-out steps from the
-`examples/` corpus through a prompt and scores predicted vs. real observations with the `LLMJudge`
-(0..1 functional equivalence) plus a deterministic is_error-flag check. Run:
+`wmh eval` (engine: `wmh/engine/eval.py` → `wmh/engine/replay.py`) replays each trace file's held-out
+split through a prompt and scores predicted vs. real observations with the `LLMJudge` (0..1
+functional equivalence) plus a deterministic is_error-flag check. Run:
 
 ```bash
-AWS_REGION=us-east-1 uv run python scripts/replay_eval.py \
-  --benchmarks tau2-bench,bird-sql,echo-bench,dabstep,terminal-bench --out report.json
+AWS_REGION=us-east-1 uv run wmh eval \
+  examples/tau2-bench.otel.jsonl examples/bird-sql.otel.jsonl examples/dabstep.otel.jsonl \
+  --out report.json
 ```
 
 Inspect the lowest-scoring steps' critiques to find systematic failure modes, change the prompt,
