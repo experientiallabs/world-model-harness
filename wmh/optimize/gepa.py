@@ -67,6 +67,11 @@ class Optimizer(Protocol):
 # --- prediction helper (provider-only; no engine import, to avoid an engine<->optimize cycle) ----
 
 
+# Default rollout temperature. T=0 is deterministic and serving-faithful — the historical default.
+# The research harness (docs/gepa_research.md) sweeps this to study train-vs-eval temperature.
+DEFAULT_ROLLOUT_TEMPERATURE = 0.0
+
+
 def predict_observation(
     provider: Provider,
     prompt: str,
@@ -74,6 +79,8 @@ def predict_observation(
     state: EnvState,
     action: Action,
     demos: list[Step],
+    *,
+    temperature: float = DEFAULT_ROLLOUT_TEMPERATURE,
 ) -> Observation:
     """Predict the observation for (state, action) under `prompt`, using only a Provider.
 
@@ -81,10 +88,14 @@ def predict_observation(
     shared `wmh.core.render.build_env_prompt` and parses the completion with the shared
     `parse_observation` — the exact assembly AND output contract the serving engine uses — so the
     predicted observation (content + is_error + state_note) matches what the world model produces.
+
+    `temperature` defaults to 0.0 (deterministic, the serving-faithful default) and should be left
+    alone by production callers; it is a knob for the GEPA research harness to sweep the rollout
+    temperature used during TRAINING/EVAL (see docs/gepa_research.md).
     """
     system, user = build_env_prompt(prompt, task, state, action, demos=demos)
     completion = provider.complete(
-        system, [Message(role="user", content=user)], temperature=0.0, max_tokens=1024
+        system, [Message(role="user", content=user)], temperature=temperature, max_tokens=1024
     )
     return parse_observation(completion.text)
 
@@ -130,11 +141,17 @@ class WorldModelGEPAAdapter(GEPAAdapter[_EvalStep, _StepTrajectory, Observation]
     """
 
     def __init__(
-        self, provider: Provider, judge: Judge, on_rollout: RolloutCallback | None = None
+        self,
+        provider: Provider,
+        judge: Judge,
+        on_rollout: RolloutCallback | None = None,
+        *,
+        temperature: float = DEFAULT_ROLLOUT_TEMPERATURE,
     ) -> None:
         self._provider = provider
         self._judge = judge
         self._on_rollout = on_rollout
+        self._temperature = temperature
         self._rollouts = 0
         self._best_score: float | None = None
 
@@ -158,6 +175,7 @@ class WorldModelGEPAAdapter(GEPAAdapter[_EvalStep, _StepTrajectory, Observation]
                     step.state_before,
                     step.action,
                     demos=item.demos,
+                    temperature=self._temperature,
                 )
                 result = self._judge.score(predicted, step.observation, step)
                 score, critique = result.score, result.critique
@@ -255,12 +273,20 @@ class GEPAOptimizer:
         judge: Judge,
         retriever: Retriever | None = None,
         on_rollout: RolloutCallback | None = None,
+        *,
+        temperature: float = DEFAULT_ROLLOUT_TEMPERATURE,
+        seed: int = 0,
     ) -> None:
         self._provider = provider
         self._judge = judge
         # Optional retriever for RAG-aware evaluation. When None, GEPA evaluates zero-shot.
         self._retriever = retriever
         self._on_rollout = on_rollout
+        # Research knobs (default to historical behavior): the rollout temperature GEPA evaluates
+        # candidates at, and the GEPA engine seed. The research harness sweeps both; see
+        # docs/gepa_research.md. Production builds leave them at the defaults.
+        self._temperature = temperature
+        self._seed = seed
 
     def optimize(
         self, train: list[Trace], test: list[Trace], base_prompt: str, budget: int
@@ -279,7 +305,9 @@ class GEPAOptimizer:
         demos = DemoRetriever(self._retriever, train_src)
         trainset = _eval_steps(train_src, demos)
         valset = _eval_steps(val_src, demos)
-        adapter = WorldModelGEPAAdapter(self._provider, self._judge, self._on_rollout)
+        adapter = WorldModelGEPAAdapter(
+            self._provider, self._judge, self._on_rollout, temperature=self._temperature
+        )
         result = gepa.optimize(
             seed_candidate={ENV_PROMPT_COMPONENT: base_prompt},
             trainset=trainset,
@@ -291,7 +319,7 @@ class GEPAOptimizer:
             reflection_minibatch_size=min(3, len(trainset)),
             display_progress_bar=False,
             raise_on_exception=False,
-            seed=0,
+            seed=self._seed,
         )
 
         best = _candidate_text(result.candidates[result.best_idx])
