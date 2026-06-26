@@ -1,0 +1,238 @@
+"""Tests for the terminal UX: the non-TTY build reporter and the play REPL (injected I/O)."""
+
+from __future__ import annotations
+
+import pytest
+from rich.console import Console
+
+from wmh.cli.ui import (
+    BuildParams,
+    RichBuildReporter,
+    models_table,
+    run_build_wizard,
+    run_play_repl,
+    select_model,
+)
+from wmh.config import ModelInfo
+from wmh.core.types import Action, ActionKind, Observation, Step, Trace
+from wmh.engine.world_model import WorldModel
+from wmh.providers.base import Completion, Message, ProviderConfig, ProviderKind
+from wmh.retrieval import EmbeddingRetriever, HashingEmbedder
+
+
+def _scripted_reader(answers: list[str]):  # noqa: ANN202 - returns a PromptReader
+    """A PromptReader that returns successive `answers`, ignoring the rendered prompt text."""
+    it = iter(answers)
+    return lambda _prompt: next(it)
+
+
+class FakeProvider:
+    def __init__(self) -> None:
+        self.config = ProviderConfig(kind=ProviderKind.BEDROCK, model="m")
+
+    def complete(
+        self,
+        system: str,
+        messages: list[Message],
+        *,
+        temperature: float = 0.7,
+        max_tokens: int = 2048,
+    ) -> Completion:
+        return Completion(
+            text='{"output": "found u1", "is_error": false, "state_note": "looked up u1"}'
+        )
+
+    def embed(self, texts: list[str]) -> list[list[float]]:
+        return [[0.0] for _ in texts]
+
+    def verify(self):  # noqa: ANN201
+        raise NotImplementedError
+
+
+def _world_model() -> WorldModel:
+    retriever = EmbeddingRetriever(HashingEmbedder(dim=32))
+    retriever.index(
+        [
+            Trace(
+                trace_id="t",
+                steps=[
+                    Step(
+                        action=Action(kind=ActionKind.TOOL_CALL, name="get_user", arguments={}),
+                        observation=Observation(content="found u0"),
+                    )
+                ],
+            )
+        ]
+    )
+    return WorldModel(FakeProvider(), retriever, top_k=3)
+
+
+def test_reporter_degrades_to_plain_lines_when_not_a_tty() -> None:
+    console = Console(force_terminal=False, no_color=True, width=100)
+    reporter = RichBuildReporter(console, "airline")
+    with console.capture() as cap:
+        reporter.ingest_done(3, 9)
+        reporter.split_done(2, 1)
+        reporter.index_done(9)
+        reporter.optimize_start(20)
+        reporter.rollout(1, 20, 0.4)
+        reporter.rollout(10, 20, 0.6)
+        reporter.optimize_done(0.6, 2, 20)
+    out = cap.get()
+    assert "ingested 3 traces" in out
+    assert "normalized 9 steps" in out
+    assert "2 train / 1 held-out" in out
+    assert "rollout 1/20" in out  # non-TTY heartbeat
+    assert "rollout 10/20" in out
+    assert "held-out 0.600" in out
+
+
+def test_models_table_renders_names() -> None:
+    console = Console(force_terminal=False, no_color=True, width=120)
+    table = models_table([ModelInfo(name="airline", serve_provider="bedrock", serve_model="opus")])
+    with console.capture() as cap:
+        console.print(table)
+    assert "airline" in cap.get()
+
+
+def test_play_repl_renders_observation_and_state_then_quits() -> None:
+    console = Console(force_terminal=False, no_color=True, width=100)
+    reader = _scripted_reader(['get_user {"id": "u1"}', ":state", ":quit"])
+    with console.capture() as cap:
+        run_play_repl(console, _world_model(), "airline", task="look up users", reader=reader)
+    out = cap.get()
+    assert "found u1" in out  # observation rendered
+    assert "looked up u1" in out  # scratchpad updated and shown by :state
+    assert "bye" in out
+
+
+def test_play_repl_reports_parse_errors_without_crashing() -> None:
+    console = Console(force_terminal=False, no_color=True, width=100)
+    reader = _scripted_reader(['get_user ["bad"]', ":quit"])
+    with console.capture() as cap:
+        run_play_repl(console, _world_model(), "airline", task=None, reader=reader)
+    assert "parse error" in cap.get()
+
+
+def test_play_repl_exits_cleanly_on_eof() -> None:
+    console = Console(force_terminal=False, no_color=True, width=100)
+
+    def eof(_prompt: str) -> str:
+        raise EOFError
+
+    with console.capture() as cap:
+        run_play_repl(console, _world_model(), "airline", task=None, reader=eof)
+    assert "bye" in cap.get()
+
+
+# --- creation wizard -----------------------------------------------------------------------------
+
+
+def test_build_wizard_collects_all_inputs() -> None:
+    console = Console(force_terminal=False, no_color=True, width=100)
+    # Prompts in order: name, file, provider, model, region, budget, embedder, embed_dim.
+    # (embed model is skipped because the embedder is the offline 'hashing' default.)
+    reader = _scripted_reader(
+        [
+            "tau2-airline",
+            "/tmp/traces.jsonl",
+            "bedrock",
+            "us.anthropic.claude-opus-4-8",
+            "us-east-1",
+            "8",
+            "hashing",
+            "512",
+        ]
+    )
+    params = run_build_wizard(console, BuildParams(name="default"), reader=reader)
+    assert params.name == "tau2-airline"
+    assert params.file == "/tmp/traces.jsonl"
+    assert params.provider == "bedrock"
+    assert params.region == "us-east-1"
+    assert params.gepa_budget == 8
+    assert params.embed_provider == "hashing"
+
+
+def test_build_wizard_collects_provider_embedder() -> None:
+    console = Console(force_terminal=False, no_color=True, width=100)
+    # Picking a provider-backed embedder adds an embeddings-model prompt.
+    reader = _scripted_reader(
+        ["m", "/tmp/t.jsonl", "bedrock", "opus", "us-east-1", "8", "bedrock", "titan-v2", "1024"]
+    )
+    params = run_build_wizard(console, BuildParams(name="default"), reader=reader)
+    assert params.embed_provider == "bedrock"
+    assert params.embed_model == "titan-v2"
+    assert params.embed_dim == 1024
+
+
+def test_build_wizard_accepts_defaults_with_blank_input() -> None:
+    console = Console(force_terminal=False, no_color=True, width=100)
+    # File provided (so that prompt is skipped); press Enter (blank) for every remaining prompt
+    # (name/provider/model/region/budget/embedder/embed_dim) to accept the suggested defaults.
+    reader = _scripted_reader(["", "", "", "", "", "", ""])
+    defaults = BuildParams(name="seeded", file="/tmp/t.jsonl", provider="bedrock", gepa_budget=50)
+    params = run_build_wizard(console, defaults, reader=reader)
+    assert params.name == "seeded"  # blank kept the default
+    assert params.provider == "bedrock"
+    assert params.gepa_budget == 50
+    assert params.region == "us-east-1"  # bedrock default suggested + accepted
+    assert params.embed_provider == "hashing"  # default embedder, no embed-model prompt
+
+
+def test_build_wizard_requires_a_trace_source() -> None:
+    console = Console(force_terminal=False, no_color=True, width=100)
+    reader = _scripted_reader(["mymodel", ""])  # name, then blank file
+    with pytest.raises(ValueError, match="traces file is required"):
+        run_build_wizard(console, BuildParams(name="default"), reader=reader)
+
+
+# --- selection picker ----------------------------------------------------------------------------
+
+
+def test_select_model_single_returns_without_prompting() -> None:
+    console = Console(force_terminal=False, no_color=True, width=100)
+    info = ModelInfo(name="only", serve_provider="bedrock", serve_model="opus")
+    # No reader needed: a single model is returned directly.
+    assert select_model(console, [info]) == "only"
+
+
+def test_select_model_picks_by_number() -> None:
+    console = Console(force_terminal=False, no_color=True, width=100)
+    infos = [
+        ModelInfo(name="airline", serve_provider="bedrock", serve_model="opus"),
+        ModelInfo(name="retail", serve_provider="bedrock", serve_model="opus"),
+    ]
+    assert select_model(console, infos, reader=_scripted_reader(["2"])) == "retail"
+
+
+def test_select_model_reprompts_then_accepts_name() -> None:
+    console = Console(force_terminal=False, no_color=True, width=100)
+    infos = [
+        ModelInfo(name="airline", serve_provider="bedrock", serve_model="opus"),
+        ModelInfo(name="retail", serve_provider="bedrock", serve_model="opus"),
+    ]
+    # First an out-of-range number (re-prompts), then the model name directly.
+    chosen = select_model(console, infos, reader=_scripted_reader(["9", "airline"]))
+    assert chosen == "airline"
+
+
+def test_select_model_survives_unicode_digit_input() -> None:
+    # '²' (superscript two): str.isdigit() is True but int() raises ValueError. The picker must
+    # treat it as invalid and re-prompt, not crash.
+    console = Console(force_terminal=False, no_color=True, width=100)
+    infos = [
+        ModelInfo(name="airline", serve_provider="bedrock", serve_model="opus"),
+        ModelInfo(name="retail", serve_provider="bedrock", serve_model="opus"),
+    ]
+    chosen = select_model(console, infos, reader=_scripted_reader(["²", "1"]))
+    assert chosen == "airline"
+
+
+def test_build_wizard_reprompts_on_unicode_digit_budget() -> None:
+    # Same unicode-digit footgun in the int prompt: must re-ask, not crash. With file provided the
+    # prompts are name/provider/model/region/budget/embedder/embed_dim; blanks accept defaults,
+    # '²' is a bad budget that must be rejected and re-asked.
+    console = Console(force_terminal=False, no_color=True, width=100)
+    reader = _scripted_reader(["", "", "", "", "²", "7", "", ""])
+    params = run_build_wizard(console, BuildParams(name="m", file="/tmp/t.jsonl"), reader=reader)
+    assert params.gepa_budget == 7
