@@ -60,9 +60,18 @@ def test_verify_embedder_ok_reports_dim(monkeypatch: pytest.MonkeyPatch) -> None
 
 def test_verify_embedder_reports_failure_without_raising(monkeypatch: pytest.MonkeyPatch) -> None:
     config = ProviderConfig(kind=ProviderKind.BEDROCK, model="opus")
-    monkeypatch.setattr(
-        "wmh.providers.registry.get_provider", lambda cfg: _BoomEmbedProvider(cfg)
-    )
+    monkeypatch.setattr("wmh.providers.registry.get_provider", lambda cfg: _BoomEmbedProvider(cfg))
     result = verify_embedder(config)
     assert result.ok is False
     assert "no creds" in result.detail
+
+
+def test_verify_embedder_empty_vector_is_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A call that returns a zero-width vector ([[]]) didn't actually produce usable phi.
+    config = ProviderConfig(kind=ProviderKind.BEDROCK, model="opus", embed_model="titan")
+    monkeypatch.setattr(
+        "wmh.providers.registry.get_provider", lambda cfg: _FakeEmbedProvider(cfg, [])
+    )
+    result = verify_embedder(config)
+    assert result.ok is False
+    assert "no vector" in result.detail

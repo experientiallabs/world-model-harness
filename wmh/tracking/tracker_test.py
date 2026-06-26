@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from wmh.providers.base import TokenUsage
 from wmh.tracking.tracker import Phase, RunTracker
 
@@ -29,8 +31,8 @@ def test_totals_sum_tokens_and_cost_across_events() -> None:
     assert total.input_tokens == 1500
     assert total.output_tokens == 300
     assert total.total_tokens == 1800
-    # 1500*5/1e6 + 300*25/1e6 = 0.0075 + 0.0075 = 0.015
-    assert total.cost_usd == 0.015
+    # 1500*5/1e6 + 300*25/1e6 = 0.0075 + 0.0075 = 0.015 (float division → approx)
+    assert total.cost_usd == pytest.approx(0.015)
 
 
 def test_by_phase_buckets_events() -> None:

@@ -77,6 +77,22 @@ def test_embed_is_recorded_under_embed_phase() -> None:
     assert tracker.by_phase()[Phase.EMBED].calls == 1
 
 
+def test_embed_event_is_attributed_to_embed_model_not_completion_model() -> None:
+    provider = FakeProvider()
+    provider.config = ProviderConfig(
+        kind=ProviderKind.BEDROCK,
+        model="claude-opus-4-8",
+        embed_model="amazon.titan-embed-text-v2:0",
+    )
+    tracker = RunTracker(run_id="r", kind="build")
+    MeteredProvider(provider, tracker).embed(["a"])
+
+    # The EMBED event must carry the embeddings model, not the completion model.
+    embed_events = [e for e in tracker.events if e.phase is Phase.EMBED]
+    assert len(embed_events) == 1
+    assert embed_events[0].model == "amazon.titan-embed-text-v2:0"
+
+
 def test_config_is_forwarded() -> None:
     provider = FakeProvider()
     metered = MeteredProvider(provider, RunTracker(run_id="r", kind="serve"))

@@ -69,8 +69,24 @@ def build(
     from wmh.retrieval import get_embedder
     from wmh.tracking import MeteredProvider, Phase, RunTracker, classify_build_call, save_run
 
-    serve_provider = ProviderKind(provider)
-    embed_kind = EmbedderKind(embed_provider)
+    try:
+        serve_provider = ProviderKind(provider)
+    except ValueError:
+        kinds = ", ".join(k.value for k in ProviderKind)
+        raise typer.BadParameter(f"unknown provider {provider!r}; choose one of: {kinds}") from None
+    try:
+        embed_kind = EmbedderKind(embed_provider)
+    except ValueError:
+        kinds = ", ".join(k.value for k in EmbedderKind)
+        raise typer.BadParameter(
+            f"unknown embed provider {embed_provider!r}; choose one of: {kinds}"
+        ) from None
+    # A provider-backed embedder needs an embeddings model; fail fast, not deep inside embed().
+    if embed_kind is not EmbedderKind.HASHING and not embed_model:
+        raise typer.BadParameter(
+            f"--embed-provider {embed_kind.value} requires --embed-model "
+            "(the embeddings model id / Azure embedding deployment)"
+        )
     providers = [ProviderConfig(kind=serve_provider, model=model, region=region)]
     # A provider-backed embedder needs its own ProviderConfig (creds/model). Reuse the serve config
     # when it's the same backend; otherwise add a minimal one carrying the embed model + region.
@@ -78,7 +94,7 @@ def build(
         providers.append(
             ProviderConfig(
                 kind=embed_kind.provider_kind(),
-                model=embed_model or "",
+                model=embed_model,
                 embed_model=embed_model,
                 region=region,
             )

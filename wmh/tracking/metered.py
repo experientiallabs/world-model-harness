@@ -80,9 +80,11 @@ class MeteredProvider:
 
     def embed(self, texts: list[str]) -> list[list[float]]:
         # Embeddings carry no token usage from our providers; record a zero-usage event for the
-        # call count so EMBED still shows up in the breakdown.
+        # call count so EMBED shows up in the breakdown. Attribute it to the embeddings model
+        # (`embed_model`), not the completion model, so any future embed pricing is keyed right.
         vectors = self._provider.embed(texts)
-        self._tracker.record(Phase.EMBED, self._provider.config.model, TokenUsage())
+        embed_model = self._provider.config.embed_model or self._provider.config.model
+        self._tracker.record(Phase.EMBED, embed_model, TokenUsage())
         return vectors
 
     def verify(self) -> VerifyResult:

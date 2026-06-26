@@ -70,7 +70,14 @@ class WorldModel:
         return session
 
     def session_usage(self, session_id: str) -> RunRecord:
-        """Return the running token/cost/time record for `session_id` (DreamGym serve metering)."""
+        """Return the running token/cost/time record for `session_id` (DreamGym serve metering).
+
+        The tracker is started at `new_session` and intentionally left running for the life of the
+        session (serve sessions have no explicit end), so `duration_seconds` is live wall-clock
+        since the session was created — not just time spent inside `step`. Raises `KeyError` if
+        `session_id` is unknown (callers that take session ids from clients should validate first,
+        as the serving API does).
+        """
         return self._trackers[session_id].record_summary()
 
     def get_session(self, session_id: str) -> Session:

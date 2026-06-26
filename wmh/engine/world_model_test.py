@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from wmh.core.types import Action, ActionKind, EnvState, Observation, Step, Trace
 from wmh.engine.world_model import WorldModel
 from wmh.providers.base import Completion, Message, ProviderConfig, ProviderKind
@@ -122,8 +124,8 @@ def test_step_meters_usage_per_session() -> None:
     assert usage.total.calls == 2
     assert usage.total.input_tokens == 240
     assert usage.total.output_tokens == 60
-    # 240*5/1e6 + 60*25/1e6 = 0.0012 + 0.0015 = 0.0027
-    assert usage.total.cost_usd == 0.0027
+    # 240*5/1e6 + 60*25/1e6 = 0.0012 + 0.0015 = 0.0027 (float division → approx)
+    assert usage.total.cost_usd == pytest.approx(0.0027)
 
 
 def test_load_reads_artifact(tmp_path) -> None:  # noqa: ANN001 - pytest fixture
