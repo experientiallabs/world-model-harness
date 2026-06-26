@@ -34,11 +34,22 @@ class FakeProvider:
 
 
 class FakeJudge:
-    def __init__(self, score: float) -> None:
+    def __init__(self, score: float, dimensions: dict[str, float] | None = None) -> None:
         self._score = score
+        self._dimensions = dimensions or {}
+        self.calls = 0
 
     def score(self, predicted: Observation, actual: Observation, context: Step) -> JudgeResult:
-        return JudgeResult(score=self._score, critique="ok")
+        self.calls += 1
+        return JudgeResult(score=self._score, critique="ok", dimensions=dict(self._dimensions))
+
+
+class PerActionJudge:
+    """Scores by tool-call arg `i` (lets a trace produce a spread of per-step scores)."""
+
+    def score(self, predicted: Observation, actual: Observation, context: Step) -> JudgeResult:
+        i = context.action.arguments.get("i", 0)
+        return JudgeResult(score=1.0 if i == 0 else 0.0, critique="ok")
 
 
 def _trace(tid: str, n: int = 2) -> Trace:
@@ -93,3 +104,37 @@ def test_replay_empty_is_safe() -> None:
     report = replay("BASE", [], FakeProvider("{}"), FakeJudge(1.0))
     assert report.n_steps == 0
     assert report.mean_score == 0.0
+
+
+def test_replay_reports_std_across_steps() -> None:
+    # Two steps scored 1.0 and 0.0 -> mean 0.5, population std 0.5 across steps.
+    report = replay("BASE", [_trace("h", n=2)], FakeProvider('{"output": "x"}'), PerActionJudge())
+    assert report.n_steps == 2
+    assert report.mean_score == 0.5
+    assert report.score_std == 0.5
+
+
+def test_replay_carries_rubric_dimensions() -> None:
+    dims = {"format": 1.0, "factuality": 0.6, "consistency": 0.8, "realism": 1.0, "quality": 0.7}
+    report = replay(
+        "BASE", [_trace("h", n=1)], FakeProvider('{"output": "x"}'), FakeJudge(0.82, dims)
+    )
+    assert report.results[0].dimensions == dims
+
+
+def test_replay_sampled_turns_scores_five_for_long_traces() -> None:
+    judge = FakeJudge(0.5)
+    report = replay("BASE", [_trace("h", n=10)], FakeProvider('{"output": "x"}'),
+                    judge, sample_turns="sampled", seed=0)
+    assert report.n_steps == 5  # first, last, 3 middle
+    # Deterministic under a fixed seed.
+    judge2 = FakeJudge(0.5)
+    report2 = replay("BASE", [_trace("h", n=10)], FakeProvider('{"output": "x"}'),
+                     judge2, sample_turns="sampled", seed=0)
+    assert [r.action for r in report.results] == [r.action for r in report2.results]
+
+
+def test_replay_sample_turns_all_scores_every_step() -> None:
+    report = replay("BASE", [_trace("h", n=10)], FakeProvider('{"output": "x"}'),
+                    FakeJudge(0.5), sample_turns="all")
+    assert report.n_steps == 10

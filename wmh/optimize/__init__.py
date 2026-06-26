@@ -1,7 +1,7 @@
 """GEPA prompt optimization + the LLM judge that scores predictions."""
 
 from wmh.optimize.gepa import GEPAOptimizer, OptimizeMetrics, Optimizer, OptimizeResult
-from wmh.optimize.judge import Judge, JudgeResult, LLMJudge
+from wmh.optimize.judge import Judge, JudgeResult, LLMJudge, RubricJudge
 
 __all__ = [
     "GEPAOptimizer",
@@ -11,4 +11,5 @@ __all__ = [
     "Judge",
     "JudgeResult",
     "LLMJudge",
+    "RubricJudge",
 ]
