@@ -79,6 +79,5 @@ def get_embedder(config: HarnessConfig) -> Embedder:
 
     from wmh.providers import get_provider
 
-    provider_config = config.provider_config(config.embed_provider.provider_kind())
-    # Stamp the requested embedding dimension onto the provider config so the backend asks for it.
-    return get_provider(provider_config.model_copy(update={"embed_dim": config.embed_dim}))
+    # `embed_provider_config` resolves the backing provider and stamps `embed_dim` on it.
+    return get_provider(config.embed_provider_config())

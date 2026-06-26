@@ -11,7 +11,7 @@ import typer
 from rich.console import Console
 
 from wmh.config import ARTIFACT_DIR, HarnessConfig, load_config
-from wmh.providers import ProviderConfig, ProviderKind, verify_all, verify_embedder
+from wmh.providers import ProviderKind, verify_all, verify_embedder
 from wmh.providers.base import EmbedderKind
 
 app = typer.Typer(help="World Model Harness: a frontier LLM acts as your agent's environment.")
@@ -32,10 +32,7 @@ def providers_verify(root: str = typer.Option(ARTIFACT_DIR, help="Artifact dir."
         _console.print(f"{mark} {result.kind.value} ({result.model}) {result.detail}")
     # Verify the phi embed path too, unless it's the offline (creds-free) hashing embedder.
     if config.embed_provider is not EmbedderKind.HASHING:
-        embed_cfg = config.provider_config(config.embed_provider.provider_kind()).model_copy(
-            update={"embed_dim": config.embed_dim}
-        )
-        result = verify_embedder(embed_cfg)
+        result = verify_embedder(config.embed_provider_config())
         mark = "[green]ok[/green]" if result.ok else "[red]fail[/red]"
         _console.print(f"{mark} embed:{result.kind.value} ({result.model}) {result.detail}")
 
@@ -87,24 +84,13 @@ def build(
             f"--embed-provider {embed_kind.value} requires --embed-model "
             "(the embeddings model id / Azure embedding deployment)"
         )
-    providers = [ProviderConfig(kind=serve_provider, model=model, region=region)]
-    # A provider-backed embedder needs its own ProviderConfig (creds/model). Reuse the serve config
-    # when it's the same backend; otherwise add a minimal one carrying the embed model + region.
-    if embed_kind is not EmbedderKind.HASHING and embed_kind.provider_kind() != serve_provider:
-        providers.append(
-            ProviderConfig(
-                kind=embed_kind.provider_kind(),
-                model=embed_model,
-                embed_model=embed_model,
-                region=region,
-            )
-        )
-    elif embed_kind is not EmbedderKind.HASHING:
-        providers[0] = providers[0].model_copy(update={"embed_model": embed_model})
-    config = HarnessConfig(
-        providers=providers,
+    # Provider wiring (reuse-vs-separate embed config) lives in HarnessConfig.for_build, not here.
+    config = HarnessConfig.for_build(
         serve_provider=serve_provider,
+        serve_model=model,
+        region=region,
         embed_provider=embed_kind,
+        embed_model=embed_model,
         embed_dim=embed_dim,
         gepa_budget=gepa_budget,
     )
