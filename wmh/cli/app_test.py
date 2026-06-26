@@ -150,6 +150,36 @@ def test_play_repl_steps_and_quits(patched_provider, tmp_path) -> None:  # noqa:
     assert "user u1 found" in result.output
 
 
+def test_play_loads_bundled_only_model(patched_provider, monkeypatch, tmp_path) -> None:  # noqa: ANN001
+    """A model that exists ONLY in the bundled dir (no writable copy) must load for play/demo.
+
+    Regression: `_load_model` once used the writable-only `model_dir`, so a bundled model resolved
+    by name but then failed to load from a nonexistent `.wmh/models/<name>` path.
+    """
+    import shutil
+
+    from wmh.config.store import BUNDLED_DIR_ENV
+
+    # Build a model into a scratch writable root, then relocate it into the bundled layout
+    # (`bundled/<name>/`, no `models/` subdir) and point the store's bundled search there.
+    scratch = tmp_path / "scratch"
+    _build(scratch, "tau-bundled", tmp_path)
+    bundled = tmp_path / "world-models"
+    bundled.mkdir()
+    shutil.copytree(scratch / "models" / "tau-bundled", bundled / "tau-bundled")
+    monkeypatch.setenv(BUNDLED_DIR_ENV, str(bundled))
+
+    # Empty writable root: the model is only discoverable via the bundled search path.
+    empty_root = tmp_path / "empty"
+    result = runner.invoke(
+        app,
+        ["play", "--root", str(empty_root), "--name", "tau-bundled", "--task", "look up users"],
+        input='get_user {"id": "u1"}\n:quit\n',
+    )
+    assert result.exit_code == 0, result.output
+    assert "user u1 found" in result.output
+
+
 def test_build_interactive_wizard_creates_model(patched_provider, tmp_path) -> None:  # noqa: ANN001
     root = tmp_path / ".wmh"
     # --interactive forces the wizard even under CliRunner (non-TTY); feed each answer line in

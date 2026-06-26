@@ -372,7 +372,9 @@ def _load_model(name: str | None, root: str):  # noqa: ANN202 - (WorldModel, nam
 
     store = WorldModelStore(root)
     resolved_name = _resolve_name(store, name)
-    world_model, provider = load_world_model(store.model_dir(resolved_name))
+    # `resolve` (not `model_dir`) so a bundled model loads from `world-models/`; `model_dir` is the
+    # writable-only build target and would point at a nonexistent `.wmh/` dir for bundled models.
+    world_model, provider = load_world_model(store.resolve(resolved_name))
     return world_model, resolved_name, provider
 
 

@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 
-from wmh.core.types import Trace
+from wmh.core.types import JsonValue, Trace
 from wmh.optimize.judge import Judge
 from wmh.providers.base import Embedder, Provider
 from wmh.research.ablation import Condition
@@ -110,8 +110,8 @@ class TemperatureAblation:
         )
 
 
-def _as_float(value: object) -> float:
-    """Coerce a Condition param (JsonValue) to float, rejecting bools and non-numerics."""
+def _as_float(value: JsonValue) -> float:
+    """Coerce a Condition param to float, rejecting bools and non-numerics."""
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise TypeError(f"temperature param must be a number, got {value!r}")
     return float(value)

@@ -14,4 +14,6 @@ import os
 from wmh.config.store import BUNDLED_DIR_ENV
 
 # Set before any test imports/constructs a store; a nonexistent path -> no bundled models.
-os.environ.setdefault(BUNDLED_DIR_ENV, os.path.join(os.devnull, "wmh-no-bundled"))
+# Assigned unconditionally (not setdefault) so a value inherited from the developer's/CI shell can't
+# leak the real bundled dir into the suite and break the exact-name-list assertions.
+os.environ[BUNDLED_DIR_ENV] = os.path.join(os.devnull, "wmh-no-bundled")
