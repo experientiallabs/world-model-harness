@@ -20,20 +20,31 @@ class ModelPrice(BaseModel):
     output_per_mtok: float
 
 
-# Keyed by normalized model id (see `_normalize`). USD / 1M tokens.
-# Sources: Claude API pricing (Opus 4.8 $5/$25, Sonnet 4.6 $3/$15, Haiku 4.5 $1/$5); OpenAI
-# GPT-5.x and embedding list prices; Bedrock Titan v2 embeddings.
+# Keyed by normalized model id (see `_normalize`). USD per 1M tokens.
+#
+# Completion prices verified 2026-06-25 against the live vendor pricing pages:
+#   - Claude: platform.claude.com/docs/en/about-claude/models/overview
+#   - OpenAI GPT-5.x: developers.openai.com/api/docs/pricing (Standard tier, short context)
+# Embedding prices are long-stable list prices NOT re-fetched in that pass (the OpenAI pricing
+# page no longer surfaces them); treat as approximate and re-verify if embed cost matters.
 _PRICES: dict[str, ModelPrice] = {
+    # --- Anthropic / Bedrock (Claude) ---
+    "claude-fable-5": ModelPrice(input_per_mtok=10.0, output_per_mtok=50.0),
+    "claude-mythos-5": ModelPrice(input_per_mtok=10.0, output_per_mtok=50.0),
     "claude-opus-4-8": ModelPrice(input_per_mtok=5.0, output_per_mtok=25.0),
     "claude-opus-4-7": ModelPrice(input_per_mtok=5.0, output_per_mtok=25.0),
     "claude-opus-4-6": ModelPrice(input_per_mtok=5.0, output_per_mtok=25.0),
+    "claude-opus-4-5": ModelPrice(input_per_mtok=5.0, output_per_mtok=25.0),
+    "claude-opus-4-1": ModelPrice(input_per_mtok=15.0, output_per_mtok=75.0),
     "claude-sonnet-4-6": ModelPrice(input_per_mtok=3.0, output_per_mtok=15.0),
     "claude-haiku-4-5": ModelPrice(input_per_mtok=1.0, output_per_mtok=5.0),
-    "gpt-5.5": ModelPrice(input_per_mtok=5.0, output_per_mtok=25.0),
-    "gpt-5.2": ModelPrice(input_per_mtok=5.0, output_per_mtok=25.0),
-    "gpt-5.1": ModelPrice(input_per_mtok=5.0, output_per_mtok=25.0),
-    "gpt-5": ModelPrice(input_per_mtok=5.0, output_per_mtok=25.0),
-    # Embeddings (output tokens are always 0 for embed calls).
+    # --- OpenAI / Azure OpenAI (GPT-5.x; Azure deployments reuse the base model's price) ---
+    "gpt-5.5": ModelPrice(input_per_mtok=5.0, output_per_mtok=30.0),
+    "gpt-5.5-pro": ModelPrice(input_per_mtok=30.0, output_per_mtok=180.0),
+    "gpt-5.4": ModelPrice(input_per_mtok=2.5, output_per_mtok=15.0),
+    "gpt-5.4-mini": ModelPrice(input_per_mtok=0.75, output_per_mtok=4.5),
+    "gpt-5.4-nano": ModelPrice(input_per_mtok=0.2, output_per_mtok=1.25),
+    # --- Embeddings (output tokens are always 0 for embed calls) ---
     "text-embedding-3-small": ModelPrice(input_per_mtok=0.02, output_per_mtok=0.0),
     "text-embedding-3-large": ModelPrice(input_per_mtok=0.13, output_per_mtok=0.0),
     "amazon.titan-embed-text-v2:0": ModelPrice(input_per_mtok=0.02, output_per_mtok=0.0),
