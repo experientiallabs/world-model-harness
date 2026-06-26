@@ -170,7 +170,7 @@ def eval_(  # noqa: A001 - `eval` is the user-facing command name; the builtin i
     from wmh.engine.eval import evaluate_files
     from wmh.engine.prompts import BASE_ENV_PROMPT
     from wmh.optimize.judge import LLMJudge
-    from wmh.providers import get_provider
+    from wmh.providers import ProviderConfig, get_provider
     from wmh.retrieval import HashingEmbedder
 
     serve_provider = ProviderKind(provider)
