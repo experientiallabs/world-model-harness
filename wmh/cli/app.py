@@ -26,11 +26,19 @@ from wmh.providers.base import EmbedderKind
 app = typer.Typer(help="World Model Harness: a frontier LLM acts as your agent's environment.")
 providers_app = typer.Typer(help="Manage and verify LLM providers.")
 app.add_typer(providers_app, name="providers")
+bench_app = typer.Typer(
+    help="Run benchmarks (open-loop fidelity) and view the leaderboard.",
+    invoke_without_command=True,
+)
+app.add_typer(bench_app, name="bench")
 _console = Console()
 _CHECK = "[green]✓[/green]"
 
 # Module-level singleton: a typer.Argument call can't be a default inline (ruff B008).
 _EVAL_FILES = typer.Argument(..., help="OTel trace files to score (one corpus each).")
+
+# Where committed benchmark definitions live ("filesystem as DB"); shared with the infra chat.
+BENCHMARKS_DIR = "benchmarks"
 
 
 @providers_app.command("verify")
@@ -388,6 +396,165 @@ def play(
 
     wm, resolved_name, _provider = _load_model(name, root)
     run_play_repl(_console, wm, resolved_name, task)
+
+
+@bench_app.callback()
+def bench(
+    ctx: typer.Context,
+    benchmarks: str = typer.Option(BENCHMARKS_DIR, "--benchmarks", help="Benchmark defs dir."),
+) -> None:
+    """With no subcommand, render the leaderboard over all persisted benchmark runs."""
+    if ctx.invoked_subcommand is not None:
+        return
+    from wmh.bench import build_leaderboard, discover_benchmarks, load_runs, results_dir_for
+    from wmh.cli.ui import leaderboard_table
+
+    defs = discover_benchmarks(benchmarks)
+    if not defs:
+        _console.print(
+            f"[yellow]no benchmarks under {benchmarks}/[/yellow]; "
+            "add one as benchmarks/<name>/benchmark.toml"
+        )
+        return
+    runs = [run for d in defs for run in load_runs(results_dir_for(d.dir))]
+    rows = build_leaderboard(runs)
+    if not rows:
+        _console.print(
+            "[yellow]no benchmark runs yet[/yellow]; score one with `wmh bench run <name>`"
+        )
+        return
+    _console.print(leaderboard_table(rows))
+
+
+@bench_app.command("list")
+def bench_list(
+    benchmarks: str = typer.Option(BENCHMARKS_DIR, "--benchmarks", help="Benchmark defs dir."),
+) -> None:
+    """List every committed benchmark definition and its eval config."""
+    from wmh.bench import discover_benchmarks
+    from wmh.cli.ui import benchmarks_table
+
+    defs = discover_benchmarks(benchmarks)
+    if not defs:
+        _console.print(
+            f"[yellow]no benchmarks under {benchmarks}/[/yellow]; "
+            "add one as benchmarks/<name>/benchmark.toml"
+        )
+        return
+    _console.print(benchmarks_table(defs))
+
+
+@bench_app.command("run")
+def bench_run(
+    name: str = typer.Argument(..., help="Benchmark name (benchmarks/<name>/benchmark.toml)."),
+    model: str = typer.Option(
+        None, "--model", help="Built world model whose optimized prompt to score (under --root)."
+    ),
+    prompt_file: str = typer.Option(None, "--prompt", help="Prompt file to score; default=BASE."),
+    benchmarks: str = typer.Option(BENCHMARKS_DIR, "--benchmarks", help="Benchmark defs dir."),
+    root: str = typer.Option(ARTIFACT_DIR, help="Project dir (for --model)."),
+) -> None:
+    """Score a world-model prompt against a benchmark, persist the run, and print mean±std.
+
+    The prompt comes from `--model` (a built model's optimized prompt), `--prompt` (a file), or the
+    bundled `BASE_ENV_PROMPT`. The benchmark's own `benchmark.toml` fixes the eval config — sample
+    turns, rollouts, seeds, judge — so a run is reproducible. Results land under
+    `benchmarks/<name>/results/` for the leaderboard.
+    """
+    import uuid
+    from datetime import UTC, datetime
+    from pathlib import Path
+
+    from wmh.bench import (
+        BenchmarkDef,
+        evaluate_files_once,
+        load_benchmark,
+        results_dir_for,
+        run_benchmark,
+        save_run,
+    )
+
+    bench_dir = Path(benchmarks) / name
+    try:
+        bench_def: BenchmarkDef = load_benchmark(bench_dir)
+    except (FileNotFoundError, ValueError) as exc:
+        raise typer.BadParameter(str(exc)) from exc
+
+    missing = bench_def.missing_traces()
+    if missing:
+        raise typer.BadParameter(
+            f"benchmark {name!r} references missing trace files: "
+            + ", ".join(str(p) for p in missing)
+        )
+
+    prompt, prompt_label = _resolve_prompt(model, prompt_file, root)
+
+    def on_seed(seed: int, done: int, total: int) -> None:
+        _console.print(f"  [dim]scored seed {seed} ({done}/{total})[/dim]")
+
+    _console.print(
+        f"[bold]running[/bold] {name} (v{bench_def.version}) "
+        f"against [cyan]{prompt_label}[/cyan]: "
+        f"{len(bench_def.eval.seeds)} seed(s) × {bench_def.eval.rollouts} rollout(s)"
+    )
+
+    def score_once(  # noqa: ANN202 - returns wmh.bench.RolloutScore; signature matches ScoreOnce
+        files,  # noqa: ANN001
+        prompt: str,
+        *,
+        sample_turns,  # noqa: ANN001
+        rollouts: int,
+        temperature: float,
+        seed: int,
+    ):
+        return evaluate_files_once(
+            files,
+            prompt,
+            bench_def.eval.judge,
+            sample_turns=sample_turns,
+            rollouts=rollouts,
+            temperature=temperature,
+            seed=seed,
+            train_split=bench_def.eval.train_split,
+            top_k=bench_def.eval.top_k,
+            no_rag=bench_def.eval.no_rag,
+            embed_dim=bench_def.eval.embed_dim,
+        )
+
+    run = run_benchmark(bench_def, prompt, prompt_label, score_once, on_seed=on_seed)
+    run.run_id = uuid.uuid4().hex
+    run.created_at = datetime.now(UTC).isoformat(timespec="seconds")
+    out = save_run(run, results_dir_for(bench_def.dir))
+
+    _console.print(
+        f"[bold]{name}[/bold] fidelity={run.fidelity_mean:.3f} ± {run.fidelity_std:.3f} "
+        f"over {len(run.seeds)} seed(s), {run.total_steps} held-out steps"
+    )
+    _console.print(f"[dim]wrote run {run.run_id[:8]} -> {out}[/dim]")
+
+
+def _resolve_prompt(model: str | None, prompt_file: str | None, root: str) -> tuple[str, str]:
+    """Resolve the prompt to score + a human label, from --model, --prompt, or the base prompt."""
+    from pathlib import Path
+
+    from wmh.config import ArtifactPaths
+    from wmh.engine.prompts import BASE_ENV_PROMPT
+
+    if model is not None and prompt_file is not None:
+        raise typer.BadParameter("pass at most one of --model / --prompt")
+    if model is not None:
+        store = WorldModelStore(root)
+        try:
+            model_dir = store.resolve(model)
+        except (FileNotFoundError, ValueError) as exc:
+            raise typer.BadParameter(str(exc)) from exc
+        optimized = ArtifactPaths(model_dir).optimized_prompt
+        if not optimized.exists():
+            raise typer.BadParameter(f"model {model!r} has no optimized prompt at {optimized}")
+        return optimized.read_text(encoding="utf-8"), model
+    if prompt_file is not None:
+        return Path(prompt_file).read_text(encoding="utf-8"), Path(prompt_file).stem
+    return BASE_ENV_PROMPT, "base"
 
 
 def _resolve_name(store: WorldModelStore, name: str | None) -> str:

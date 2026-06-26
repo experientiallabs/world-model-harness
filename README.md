@@ -27,6 +27,8 @@ wmh build                                  # guided creation wizard (prompts for
 wmh build --name airline --file traces.jsonl   # …or fully scriptable with flags -> .wmh/models/airline/
 wmh list                                   # show every built world model
 wmh eval traces.jsonl                      # score reconstruction fidelity (replay + LLM judge)
+wmh bench run tau-bench                     # score a prompt against a committed benchmark (mean ± std)
+wmh bench                                   # leaderboard across all persisted benchmark runs
 wmh serve                                  # local backend on :8000 (serves all built models)
 wmh demo                                   # watch an LLM agent step against the world model
 wmh play                                   # step into the environment yourself (interactive REPL)
