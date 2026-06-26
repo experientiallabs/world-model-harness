@@ -9,6 +9,7 @@ overall scorecard. Keeping it here (not in the CLI) keeps the command thin and t
 from __future__ import annotations
 
 from pathlib import Path
+from statistics import fmean, pstdev
 
 from pydantic import BaseModel, Field
 
@@ -21,10 +22,16 @@ from wmh.retrieval import EmbeddingRetriever
 
 
 class EvalReport(BaseModel):
-    """Per-file fidelity reports plus the step-weighted overall mean."""
+    """Per-file fidelity reports plus the step-weighted overall mean ± std.
+
+    This is the frozen contract the reporting/leaderboard layer consumes: `per_file` maps a trace
+    file's clean name to its `ReplayReport` (per-step `StepResult`s), and
+    `overall_fidelity`/`overall_std` are the step-weighted aggregates across files.
+    """
 
     per_file: dict[str, ReplayReport] = Field(default_factory=dict)
-    overall_fidelity: float = 0.0
+    overall_fidelity: float = 0.0  # step-weighted mean of per-step scores across all files
+    overall_std: float = 0.0  # std of per-step scores across all files
     total_steps: int = 0
 
 
@@ -37,12 +44,15 @@ def evaluate_files(
     embedder: Embedder | None = None,
     train_split: float = 0.7,
     top_k: int = 5,
+    sample_turns: str = "all",
+    seed: int = 0,
     adapter_name: str = "otel-genai",
 ) -> EvalReport:
     """Replay-score each trace file's held-out split. `embedder=None` -> zero-shot (no retrieval).
 
     Each file is split deterministically; tiny corpora with no held-out trace fall back to scoring
     every trace. RAG, when enabled, retrieves from that file's own train split only (leak-free).
+    `sample_turns`/`seed` are forwarded to `replay` (see its docstring).
     """
     adapter = get_adapter(adapter_name)
     per_file: dict[str, ReplayReport] = {}
@@ -64,12 +74,17 @@ def evaluate_files(
             retriever=retriever,
             train=train if embedder is not None else None,
             top_k=top_k,
+            sample_turns=sample_turns,
+            seed=seed,
         )
 
-    total_steps = sum(r.n_steps for r in per_file.values())
-    overall = (
-        sum(r.mean_score * r.n_steps for r in per_file.values()) / total_steps
-        if total_steps
-        else 0.0
+    # Step-weighted aggregate over every scored step across files.
+    step_scores = [r.score for rep in per_file.values() for r in rep.results]
+    overall = fmean(step_scores) if step_scores else 0.0
+    overall_std = pstdev(step_scores) if len(step_scores) > 1 else 0.0
+    return EvalReport(
+        per_file=per_file,
+        overall_fidelity=overall,
+        overall_std=overall_std,
+        total_steps=len(step_scores),
     )
-    return EvalReport(per_file=per_file, overall_fidelity=overall, total_steps=total_steps)

@@ -2,13 +2,18 @@
 
 from __future__ import annotations
 
+import pytest
+
 from wmh.core.types import Action, ActionKind, Observation, Step
 from wmh.optimize.judge import (
     JUDGE_MARKER,
     JUDGE_SYSTEM,
+    RUBRIC_JUDGE_MARKER,
+    RUBRIC_JUDGE_SYSTEM,
     Judge,
     JudgeResult,
     LLMJudge,
+    RubricJudge,
     _parse_judgement,
 )
 from wmh.providers.base import Completion, Message, ProviderConfig, ProviderKind
@@ -122,3 +127,47 @@ def test_score_uses_zero_temperature() -> None:
         Observation(content="a"), Observation(content="b"), _ctx()
     )
     assert isinstance(result, JudgeResult)
+
+
+# --- RubricJudge ---------------------------------------------------------------------------------
+
+
+def test_rubric_judge_satisfies_protocol() -> None:
+    assert isinstance(RubricJudge(FakeProvider("{}")), Judge)
+
+
+def test_rubric_judge_marker_in_system() -> None:
+    # Same cost-attribution requirement as LLMJudge: the rubric prompt must carry the judge marker.
+    assert RUBRIC_JUDGE_MARKER in RUBRIC_JUDGE_SYSTEM
+    assert JUDGE_MARKER in RUBRIC_JUDGE_SYSTEM
+
+
+def test_rubric_score_is_mean_of_dimensions() -> None:
+    reply = (
+        '{"format": 1.0, "factuality": 0.0, "consistency": 0.5, '
+        '"realism": 1.0, "quality": 0.5, "critique": "partial"}'
+    )
+    result = RubricJudge(FakeProvider(reply)).score(
+        Observation(content="p"), Observation(content="a"), _ctx()
+    )
+    assert set(result.dimensions) == {"format", "factuality", "consistency", "realism", "quality"}
+    assert result.score == pytest.approx((1.0 + 0.0 + 0.5 + 1.0 + 0.5) / 5)
+    assert result.dimensions["factuality"] == 0.0
+    assert result.critique == "partial"
+
+
+def test_rubric_clamps_and_defaults_missing_dims() -> None:
+    # Out-of-range clamps to [0,1]; a missing dimension defaults to 0.0 (penalized, not crash).
+    result = RubricJudge(FakeProvider('{"format": 1.7, "factuality": 0.8}')).score(
+        Observation(content="p"), Observation(content="a"), _ctx()
+    )
+    assert result.dimensions["format"] == 1.0
+    assert result.dimensions["realism"] == 0.0
+
+
+def test_rubric_unparseable_falls_back_to_zero() -> None:
+    result = RubricJudge(FakeProvider("not json at all")).score(
+        Observation(content="p"), Observation(content="a"), _ctx()
+    )
+    assert result.score == 0.0
+    assert "Unparseable" in result.critique
