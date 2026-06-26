@@ -62,9 +62,52 @@ def test_complete_builds_anthropic_body_and_parses(monkeypatch: pytest.MonkeyPat
     assert "temperature" not in body  # Claude 4.8 rejects sampling params
 
 
-def test_embed_not_implemented() -> None:
-    with pytest.raises(NotImplementedError, match="OpenAI embed provider"):
-        BedrockProvider(_config()).embed(["x"])
+class _FakeEmbedClient:
+    """Fakes bedrock-runtime for Titan embeddings: one invoke_model call per input text."""
+
+    def __init__(self, vector: list[float]) -> None:
+        self._vector = vector
+        self.calls: list[dict[str, object]] = []
+
+    def invoke_model(self, **kwargs: object) -> dict[str, object]:
+        self.calls.append(kwargs)
+        return {"body": _FakeBody({"embedding": self._vector})}
+
+
+def test_embed_invokes_titan_per_text_and_parses(monkeypatch: pytest.MonkeyPatch) -> None:
+    fake = _FakeEmbedClient([0.1, 0.2, 0.3])
+    config = ProviderConfig(
+        kind=ProviderKind.BEDROCK,
+        model="us.anthropic.claude-opus-4-8",
+        embed_model="amazon.titan-embed-text-v2:0",
+        embed_dim=3,
+        region="us-east-1",
+    )
+    provider = BedrockProvider(config)
+    monkeypatch.setattr(provider, "_get_client", lambda: fake)
+
+    vectors = provider.embed(["a", "b"])
+
+    assert vectors == [[0.1, 0.2, 0.3], [0.1, 0.2, 0.3]]
+    assert len(fake.calls) == 2  # Titan embeds one text per call
+    assert fake.calls[0]["modelId"] == "amazon.titan-embed-text-v2:0"
+    body = json.loads(cast("str", fake.calls[0]["body"]))
+    assert body == {"inputText": "a", "dimensions": 3, "normalize": True}
+
+
+def test_embed_defaults_model_and_omits_dimensions_when_unset(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake = _FakeEmbedClient([1.0])
+    # No embed_model / embed_dim: default Titan model, and no `dimensions` (model's native size).
+    provider = BedrockProvider(_config())
+    monkeypatch.setattr(provider, "_get_client", lambda: fake)
+
+    provider.embed(["x"])
+
+    assert fake.calls[0]["modelId"] == "amazon.titan-embed-text-v2:0"
+    body = json.loads(cast("str", fake.calls[0]["body"]))
+    assert body == {"inputText": "x"}  # no dimensions/normalize when embed_dim is unset
 
 
 def test_verify_reports_failure_without_raising(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -100,3 +143,27 @@ def test_live_verify() -> None:  # pragma: no cover - network
         )
     )
     assert provider.verify().ok is True
+
+
+@pytest.mark.skipif(
+    "AWS_REGION" not in __import__("os").environ,
+    reason="no AWS_REGION; skipping live Titan embeddings test",
+)
+def test_live_titan_embed() -> None:  # pragma: no cover - network
+    import os
+
+    # Real Titan embeddings: returns one 256-dim L2-normalized vector per input text.
+    provider = BedrockProvider(
+        ProviderConfig(
+            kind=ProviderKind.BEDROCK,
+            model="us.anthropic.claude-opus-4-8",
+            embed_model="amazon.titan-embed-text-v2:0",
+            embed_dim=256,
+            region=os.environ["AWS_REGION"],
+        )
+    )
+    vectors = provider.embed(["hello world", "a different sentence"])
+    assert len(vectors) == 2
+    assert all(len(v) == 256 for v in vectors)
+    # Distinct inputs should not produce identical embeddings.
+    assert vectors[0] != vectors[1]
