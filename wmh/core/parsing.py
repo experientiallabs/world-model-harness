@@ -81,9 +81,7 @@ def parse_observation(text: str) -> Observation:
             metadata: JsonObject = {}
             if parsed.state_note:
                 metadata["state_note"] = parsed.state_note
-            return Observation(
-                content=parsed.output, is_error=parsed.is_error, metadata=metadata
-            )
+            return Observation(content=parsed.output, is_error=parsed.is_error, metadata=metadata)
     return Observation(content=text.strip())
 
 

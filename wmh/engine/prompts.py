@@ -82,9 +82,7 @@ def build_env_prompt(
 
 def build_demo_agent_prompt(task: str, examples: list[Step]) -> str:
     """Prompt for the throwaway LLM-as-agent used by `wmh demo` (no GEPA, just examples)."""
-    example_block = (
-        "\n\n".join(render_demo(e) for e in examples) if examples else "(no examples)"
-    )
+    example_block = "\n\n".join(render_demo(e) for e in examples) if examples else "(no examples)"
     return (
         "You are role-playing the agent in a traced environment. Based on the task and the example "
         "interactions below, emit a SINGLE next tool call as a JSON object and nothing else:\n"

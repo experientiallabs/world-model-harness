@@ -46,9 +46,7 @@ _SPANS = [
             {"key": "gen_ai.operation.name", "value": {"stringValue": "execute_tool"}},
             {
                 "key": "gen_ai.tool.message",
-                "value": {
-                    "stringValue": '{"membership": "silver", "name": "Katherine Johnson"}'
-                },
+                "value": {"stringValue": '{"membership": "silver", "name": "Katherine Johnson"}'},
             },
         ],
     },
