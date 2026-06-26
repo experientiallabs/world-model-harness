@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 
@@ -88,6 +89,75 @@ def test_from_file_skips_corrupt_jsonl_lines(tmp_path: Path) -> None:
     assert len(traces) == 1
     assert traces[0].trace_id == "cccc"
     assert len(traces[0].steps) == 2  # both valid lines parsed; the corrupt one skipped
+
+
+def test_state_and_metadata_attributes_populate_step_and_trace(tmp_path: Path) -> None:
+    # An action span enriched with wmh.* attributes: state-before snapshot + trace metadata.
+    span_llm = {
+        "traceId": "dddd",
+        "spanId": "01",
+        "name": "chat",
+        "startTimeUnixNano": 1,
+        "attributes": [
+            {"key": "gen_ai.operation.name", "value": {"stringValue": "chat"}},
+            {"key": "gen_ai.tool.name", "value": {"stringValue": "cancel_reservation"}},
+            {"key": "gen_ai.tool.call.arguments", "value": {"stringValue": '{"id": "r1"}'}},
+            {"key": "gen_ai.prompt", "value": {"stringValue": "cancel r1"}},
+            {
+                "key": "wmh.state.structured",
+                "value": {"stringValue": '{"reservations": {"r1": {"status": "confirmed"}}}'},
+            },
+            {"key": "wmh.state.scratchpad", "value": {"stringValue": "logged in as u1"}},
+            {
+                "key": "wmh.trace.metadata",
+                "value": {
+                    "stringValue": '{"benchmark": "tau2-bench", "task_id": "tau-train-1", '
+                    '"gold": {"assertions": [{"path": "reservations.r1.status", '
+                    '"equals": "cancelled"}]}}'
+                },
+            },
+        ],
+    }
+    span_tool = {
+        "traceId": "dddd",
+        "spanId": "02",
+        "name": "execute_tool",
+        "startTimeUnixNano": 2,
+        "attributes": [
+            {"key": "gen_ai.operation.name", "value": {"stringValue": "execute_tool"}},
+            {"key": "gen_ai.tool.message", "value": {"stringValue": '{"ok": true}'}},
+        ],
+    }
+    path = tmp_path / "enriched.jsonl"
+    path.write_text(
+        json.dumps(span_llm) + "\n" + json.dumps(span_tool) + "\n", encoding="utf-8"
+    )
+
+    traces = OtelGenAIAdapter().from_file(str(path))
+
+    assert len(traces) == 1
+    trace = traces[0]
+    # Trace metadata carries benchmark name + gold (gold rides along for closed-loop later).
+    assert trace.metadata["benchmark"] == "tau2-bench"
+    assert trace.metadata["gold"] == {
+        "assertions": [{"path": "reservations.r1.status", "equals": "cancelled"}]
+    }
+    # The action span's wmh.state.* snapshot becomes the step's state_before.
+    step = trace.steps[0]
+    assert step.state_before.structured == {"reservations": {"r1": {"status": "confirmed"}}}
+    assert step.state_before.scratchpad == "logged in as u1"
+    assert step.action.name == "cancel_reservation"
+    assert step.observation.content == '{"ok": true}'
+
+
+def test_traces_without_wmh_attributes_keep_empty_state_and_metadata() -> None:
+    # Backward-compat: the bare-semconv corpus has no wmh.* attrs -> empty state/metadata, no error.
+    traces = OtelGenAIAdapter().from_file(str(_TESTDATA / "sample_otlp.json"))
+
+    assert traces[0].metadata == {}
+    for step in traces[0].steps:
+        assert step.state_before.structured == {}
+        assert step.state_before.scratchpad == ""
 
 
 def test_from_vendor_without_endpoint_raises_friendly_error() -> None:
