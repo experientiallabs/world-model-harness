@@ -73,6 +73,11 @@ class ArtifactPaths:
         return self.root / "index"
 
     @property
+    def runs(self) -> Path:
+        """Directory of persisted run records (build + serve), one JSON per run."""
+        return self.root / "runs"
+
+    @property
     def base_prompt(self) -> Path:
         return self.root / "prompts" / "base.txt"
 

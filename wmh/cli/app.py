@@ -57,9 +57,14 @@ def build(
     Creates `.wmh/` if absent, then: ingest -> normalize -> split(train/test) -> embed/index ->
     GEPA optimize -> write the artifact.
     """
+    import uuid
+
+    from wmh.config import ArtifactPaths
     from wmh.engine.build import build as run_build
     from wmh.ingest import VendorPull
+    from wmh.providers import get_provider
     from wmh.retrieval import get_embedder
+    from wmh.tracking import MeteredProvider, Phase, RunTracker, classify_build_call, save_run
 
     serve_provider = ProviderKind(provider)
     embed_kind = EmbedderKind(embed_provider)
@@ -84,18 +89,44 @@ def build(
         embed_dim=embed_dim,
         gepa_budget=gepa_budget,
     )
-    result = run_build(
-        config,
-        file=file,
-        vendor=VendorPull() if vendor else None,
-        root=root,
-        embedder=get_embedder(config),
+    # Meter the build at the provider boundary: the one serve provider drives GEPA rollouts,
+    # reflection, and the judge, so wrapping it captures all build LLM cost/tokens without touching
+    # the optimizer. `classify_build_call` splits judge vs GEPA by system prompt.
+    tracker = RunTracker(run_id=uuid.uuid4().hex, kind="build")
+    metered = MeteredProvider(
+        get_provider(config.serve_provider_config()),
+        tracker,
+        classify=classify_build_call,
     )
+    with tracker.timed():
+        result = run_build(
+            config,
+            file=file,
+            vendor=VendorPull() if vendor else None,
+            root=root,
+            serve_provider=metered,
+            embedder=get_embedder(config),
+        )
+    record = tracker.record_summary()
+    save_run(record, ArtifactPaths(root).runs)
+
     _console.print(
         f"[green]built[/green] {root}: held_out_accuracy="
         f"{result.metrics.held_out_accuracy:.3f}, frontier={len(result.frontier)}, "
         f"rollouts={result.metrics.rollouts_used}"
     )
+    _console.print(
+        f"[bold]run[/bold] {record.run_id[:8]}: {record.duration_seconds:.1f}s, "
+        f"{record.total.total_tokens} tokens, ${record.total.cost_usd:.4f} "
+        f"({record.total.calls} calls)"
+    )
+    for phase in (Phase.GEPA, Phase.JUDGE):
+        bucket = record.by_phase.get(phase)
+        if bucket is not None:
+            _console.print(
+                f"  {phase.value}: {bucket.total_tokens} tokens, "
+                f"${bucket.cost_usd:.4f} ({bucket.calls} calls)"
+            )
 
 
 @app.command("serve")
