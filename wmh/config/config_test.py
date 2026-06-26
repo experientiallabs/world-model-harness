@@ -101,3 +101,63 @@ def test_provider_config_missing_kind_raises() -> None:
     config = HarnessConfig(providers=[], serve_provider=ProviderKind.BEDROCK)
     with pytest.raises(ValueError, match="no provider config for bedrock"):
         config.serve_provider_config()
+
+
+def test_embed_provider_config_stamps_embed_dim() -> None:
+    config = HarnessConfig(
+        providers=[ProviderConfig(kind=ProviderKind.OPENAI, model="gpt", embed_model="te3")],
+        embed_provider=EmbedderKind.OPENAI,
+        embed_dim=256,
+    )
+    embed_cfg = config.embed_provider_config()
+    assert embed_cfg.embed_model == "te3"
+    assert embed_cfg.embed_dim == 256  # stamped from HarnessConfig.embed_dim
+
+
+def test_for_build_reuses_serve_config_when_embed_backend_matches() -> None:
+    # Bedrock serves AND embeds -> one provider config carrying both model + embed_model.
+    config = HarnessConfig.for_build(
+        serve_provider=ProviderKind.BEDROCK,
+        serve_model="us.anthropic.claude-opus-4-8",
+        region="us-east-1",
+        embed_provider=EmbedderKind.BEDROCK,
+        embed_model="amazon.titan-embed-text-v2:0",
+        embed_dim=256,
+        gepa_budget=10,
+    )
+    assert len(config.providers) == 1
+    only = config.providers[0]
+    assert only.model == "us.anthropic.claude-opus-4-8"
+    assert only.embed_model == "amazon.titan-embed-text-v2:0"
+    assert config.embed_dim == 256
+
+
+def test_for_build_adds_separate_config_for_cross_backend_embedder() -> None:
+    # Bedrock serves, OpenAI embeds -> two provider configs.
+    config = HarnessConfig.for_build(
+        serve_provider=ProviderKind.BEDROCK,
+        serve_model="opus",
+        region=None,
+        embed_provider=EmbedderKind.OPENAI,
+        embed_model="text-embedding-3-small",
+        embed_dim=512,
+        gepa_budget=10,
+    )
+    kinds = {pc.kind for pc in config.providers}
+    assert kinds == {ProviderKind.BEDROCK, ProviderKind.OPENAI}
+    openai_cfg = config.provider_config(ProviderKind.OPENAI)
+    assert openai_cfg.embed_model == "text-embedding-3-small"
+
+
+def test_for_build_hashing_embedder_needs_no_embed_provider_config() -> None:
+    config = HarnessConfig.for_build(
+        serve_provider=ProviderKind.BEDROCK,
+        serve_model="opus",
+        region=None,
+        embed_provider=EmbedderKind.HASHING,
+        embed_model=None,
+        embed_dim=512,
+        gepa_budget=10,
+    )
+    assert [pc.kind for pc in config.providers] == [ProviderKind.BEDROCK]
+    assert config.embed_provider is EmbedderKind.HASHING
