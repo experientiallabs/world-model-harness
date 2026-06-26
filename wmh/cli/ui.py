@@ -1,7 +1,12 @@
-"""Terminal UX for the `wmh` CLI: an animated build pipeline and the interactive play REPL.
+"""Terminal UX for the `wmh` CLI: guided creation/selection flows, an animated build pipeline, and
+the interactive play REPL.
 
-Everything that talks to `rich` lives here so the engine stays headless. Two responsibilities:
+Everything that talks to `rich` lives here so the engine stays headless. Responsibilities:
 
+- `run_build_wizard` interactively fills in any missing `wmh build` inputs (name, traces, provider,
+  region, budget), so a bare `wmh build` becomes a guided creation flow.
+- `select_model` shows a numbered picker so a user can choose which built world model to run when
+  `--name` is omitted and several exist.
 - `RichBuildReporter` implements `wmh.engine.reporting.BuildReporter`, turning build events into a
   guided, animated pipeline (stage lines + a live GEPA rollout progress bar) on a TTY, and into
   plain one-line-per-event output when piped (non-TTY), so logs stay legible.
@@ -13,6 +18,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
+from pydantic import BaseModel
 from rich.console import Console
 from rich.panel import Panel
 from rich.progress import (
@@ -26,13 +32,125 @@ from rich.progress import (
 )
 from rich.table import Table
 
-from wmh.config import ModelInfo
+from wmh.config import ModelInfo, validate_name
 from wmh.core.types import Action, ActionKind, Session
 from wmh.engine.play import PlayTurn, parse_action, play_turn
 from wmh.engine.world_model import WorldModel
 
+# A reader takes a fully-rendered prompt string and returns the user's typed line.
+PromptReader = Callable[[str], str]
+
 # Stage glyphs reused by the animated and plain reporters.
 _CHECK = "[green]✓[/green]"
+
+# Provider-specific defaults the creation wizard suggests.
+_DEFAULT_MODELS: dict[str, str] = {
+    "bedrock": "us.anthropic.claude-opus-4-8",
+    "anthropic": "claude-opus-4-8",
+    "openai": "gpt-5.5",
+    "azure_openai": "gpt-5.5",
+}
+_DEFAULT_REGIONS: dict[str, str] = {"bedrock": "us-east-1"}
+
+
+class BuildParams(BaseModel):
+    """The fully-resolved inputs for a build, as collected by the creation wizard."""
+
+    name: str
+    file: str | None = None
+    vendor: str | None = None
+    provider: str = "bedrock"
+    model: str = "us.anthropic.claude-opus-4-8"
+    region: str | None = None
+    gepa_budget: int = 50
+
+
+def run_build_wizard(
+    console: Console, defaults: BuildParams, reader: PromptReader | None = None
+) -> BuildParams:
+    """Guided creation flow: prompt for each build input, pre-filled with `defaults`.
+
+    Returns a resolved `BuildParams`. Any value already set in `defaults` (i.e. passed as a flag)
+    becomes the suggested default the user can accept with Enter. Raises `ValueError` if no trace
+    source (file or vendor) is provided.
+    """
+    ask = reader if reader is not None else (lambda text: console.input(text))
+    console.print(
+        Panel(
+            "Let's create a world model. Press Enter to accept the [dim]default[/dim] in brackets.",
+            title="[bold cyan]wmh build[/bold cyan]",
+            border_style="cyan",
+        )
+    )
+
+    name = _prompt_text(console, ask, "Name this world model", defaults.name)
+    validate_name(name)
+
+    file = defaults.file
+    vendor = defaults.vendor
+    if not file and not vendor:
+        file = _prompt_text(console, ask, "Path to exported traces (OTLP-JSON / JSONL)", None)
+        if not file:
+            raise ValueError("a traces file is required to build (or pass --vendor)")
+
+    provider = _prompt_text(console, ask, "Serve provider", defaults.provider)
+    model_default = defaults.model or _DEFAULT_MODELS.get(provider, defaults.model)
+    model = _prompt_text(console, ask, "Serve model id", model_default)
+    region_default = defaults.region or _DEFAULT_REGIONS.get(provider)
+    region = _prompt_text(console, ask, "Region (blank for default)", region_default) or None
+    gepa_budget = _prompt_int(console, ask, "GEPA rollout budget", defaults.gepa_budget)
+
+    return BuildParams(
+        name=name,
+        file=file,
+        vendor=vendor,
+        provider=provider,
+        model=model,
+        region=region,
+        gepa_budget=gepa_budget,
+    )
+
+
+def select_model(
+    console: Console, infos: list[ModelInfo], reader: PromptReader | None = None
+) -> str:
+    """Show a numbered picker and return the chosen model name.
+
+    Re-prompts on invalid input. With a single model it returns that name without prompting.
+    """
+    if len(infos) == 1:
+        return infos[0].name
+    ask = reader if reader is not None else (lambda text: console.input(text))
+    console.print("[bold]Select a world model:[/bold]")
+    for i, info in enumerate(infos, start=1):
+        acc = info.held_out_accuracy
+        score = "" if acc is None else f"  [dim](held-out {acc:.2f})[/dim]"
+        console.print(f"  [cyan]{i}[/cyan]. {info.name}{score}")
+    while True:
+        raw = ask("> ").strip()
+        if raw.isdigit() and 1 <= int(raw) <= len(infos):
+            return infos[int(raw) - 1].name
+        # Allow typing the name directly too.
+        for info in infos:
+            if raw == info.name:
+                return info.name
+        console.print(f"[red]pick 1-{len(infos)} or a model name[/red]")
+
+
+def _prompt_text(console: Console, ask: PromptReader, label: str, default: str | None) -> str:
+    suffix = f" [dim][{default}][/dim]" if default else ""
+    value = ask(f"[bold]{label}[/bold]{suffix}: ").strip()
+    return value or (default or "")
+
+
+def _prompt_int(console: Console, ask: PromptReader, label: str, default: int) -> int:
+    while True:
+        raw = ask(f"[bold]{label}[/bold] [dim][{default}][/dim]: ").strip()
+        if not raw:
+            return default
+        if raw.isdigit():
+            return int(raw)
+        console.print("[red]enter a whole number[/red]")
 
 
 class RichBuildReporter:

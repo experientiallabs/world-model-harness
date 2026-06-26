@@ -150,6 +150,25 @@ def test_play_repl_steps_and_quits(patched_provider, tmp_path) -> None:  # noqa:
     assert "user u1 found" in result.output
 
 
+def test_build_interactive_wizard_creates_model(patched_provider, tmp_path) -> None:  # noqa: ANN001
+    root = tmp_path / ".wmh"
+    # --interactive forces the wizard even under CliRunner (non-TTY); feed each answer line.
+    answers = "\n".join(
+        ["wizard-built", _traces_file(tmp_path), "bedrock", "opus", "us-east-1", "4"]
+    )
+    result = runner.invoke(
+        app, ["build", "--interactive", "--root", str(root)], input=answers + "\n"
+    )
+    assert result.exit_code == 0, result.output
+    assert (root / "models" / "wizard-built" / "config.toml").exists()
+
+
+def test_build_non_interactive_without_source_errors(tmp_path) -> None:  # noqa: ANN001
+    # No --file/--vendor and --no-interactive: should fail fast rather than hang on input.
+    result = runner.invoke(app, ["build", "--no-interactive", "--root", str(tmp_path / ".wmh")])
+    assert result.exit_code != 0
+
+
 def test_play_unknown_model_errors(tmp_path) -> None:  # noqa: ANN001
     result = runner.invoke(app, ["play", "--name", "nope", "--root", str(tmp_path / ".wmh")])
     assert result.exit_code != 0

@@ -2,14 +2,28 @@
 
 from __future__ import annotations
 
+import pytest
 from rich.console import Console
 
-from wmh.cli.ui import RichBuildReporter, models_table, run_play_repl
+from wmh.cli.ui import (
+    BuildParams,
+    RichBuildReporter,
+    models_table,
+    run_build_wizard,
+    run_play_repl,
+    select_model,
+)
 from wmh.config import ModelInfo
 from wmh.core.types import Action, ActionKind, Observation, Step, Trace
 from wmh.engine.world_model import WorldModel
 from wmh.providers.base import Completion, Message, ProviderConfig, ProviderKind
 from wmh.retrieval import EmbeddingRetriever, HashingEmbedder
+
+
+def _scripted_reader(answers: list[str]):  # noqa: ANN202 - returns a PromptReader
+    """A PromptReader that returns successive `answers`, ignoring the rendered prompt text."""
+    it = iter(answers)
+    return lambda _prompt: next(it)
 
 
 class FakeProvider:
@@ -112,3 +126,76 @@ def test_play_repl_exits_cleanly_on_eof() -> None:
     with console.capture() as cap:
         run_play_repl(console, _world_model(), "airline", task=None, read_line=eof)
     assert "bye" in cap.get()
+
+
+# --- creation wizard -----------------------------------------------------------------------------
+
+
+def test_build_wizard_collects_all_inputs() -> None:
+    console = Console(force_terminal=False, no_color=True, width=100)
+    reader = _scripted_reader(
+        [
+            "tau2-airline",
+            "/tmp/traces.jsonl",
+            "bedrock",
+            "us.anthropic.claude-opus-4-8",
+            "us-east-1",
+            "8",
+        ]
+    )
+    params = run_build_wizard(console, BuildParams(name="default"), reader=reader)
+    assert params.name == "tau2-airline"
+    assert params.file == "/tmp/traces.jsonl"
+    assert params.provider == "bedrock"
+    assert params.region == "us-east-1"
+    assert params.gepa_budget == 8
+
+
+def test_build_wizard_accepts_defaults_with_blank_input() -> None:
+    console = Console(force_terminal=False, no_color=True, width=100)
+    # File provided (so that prompt is skipped); press Enter (blank) for name/provider/model/
+    # region/budget to accept every suggested default.
+    reader = _scripted_reader(["", "", "", "", ""])
+    defaults = BuildParams(name="seeded", file="/tmp/t.jsonl", provider="bedrock", gepa_budget=50)
+    params = run_build_wizard(console, defaults, reader=reader)
+    assert params.name == "seeded"  # blank kept the default
+    assert params.provider == "bedrock"
+    assert params.gepa_budget == 50
+    assert params.region == "us-east-1"  # bedrock default suggested + accepted
+
+
+def test_build_wizard_requires_a_trace_source() -> None:
+    console = Console(force_terminal=False, no_color=True, width=100)
+    reader = _scripted_reader(["mymodel", ""])  # name, then blank file
+    with pytest.raises(ValueError, match="traces file is required"):
+        run_build_wizard(console, BuildParams(name="default"), reader=reader)
+
+
+# --- selection picker ----------------------------------------------------------------------------
+
+
+def test_select_model_single_returns_without_prompting() -> None:
+    console = Console(force_terminal=False, no_color=True, width=100)
+    info = ModelInfo(name="only", serve_provider="bedrock", serve_model="opus")
+    # No reader needed: a single model is returned directly.
+    assert select_model(console, [info]) == "only"
+
+
+def test_select_model_picks_by_number() -> None:
+    console = Console(force_terminal=False, no_color=True, width=100)
+    infos = [
+        ModelInfo(name="airline", serve_provider="bedrock", serve_model="opus"),
+        ModelInfo(name="retail", serve_provider="bedrock", serve_model="opus"),
+    ]
+    assert select_model(console, infos, reader=_scripted_reader(["2"])) == "retail"
+
+
+def test_select_model_reprompts_then_accepts_name() -> None:
+    console = Console(force_terminal=False, no_color=True, width=100)
+    infos = [
+        ModelInfo(name="airline", serve_provider="bedrock", serve_model="opus"),
+        ModelInfo(name="retail", serve_provider="bedrock", serve_model="opus"),
+    ]
+    # First an out-of-range number (re-prompts), then the model name directly.
+    chosen = select_model(console, infos, reader=_scripted_reader(["9", "airline"]))
+    assert chosen == "airline"

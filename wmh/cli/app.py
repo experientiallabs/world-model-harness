@@ -57,7 +57,7 @@ def providers_verify(
 
 @app.command("build")
 def build(
-    name: str = typer.Option(DEFAULT_MODEL_NAME, "--name", help="Name for this world model."),
+    name: str = typer.Option(None, "--name", help="Name for this world model."),
     file: str = typer.Option(None, "--file", help="Path to exported traces (OTLP-JSON / JSONL)."),
     vendor: str = typer.Option(None, "--vendor", help="Vendor name to pull traces via SDK."),
     root: str = typer.Option(ARTIFACT_DIR, help="Project dir holding all world models."),
@@ -65,35 +65,62 @@ def build(
     model: str = typer.Option("us.anthropic.claude-opus-4-8", help="Serve provider model id."),
     region: str = typer.Option(None, help="AWS region (Bedrock)."),
     gepa_budget: int = typer.Option(50, help="GEPA rollout budget."),
+    interactive: bool = typer.Option(
+        None,
+        "--interactive/--no-interactive",
+        help="Guided creation wizard. Default: on at a TTY when inputs are missing.",
+    ),
 ) -> None:
     """Ingest traces (file upload or vendor SDK pull) and build a named world model.
 
     Stores the artifact under `<root>/models/<name>/`: ingest -> normalize -> split(train/test) ->
     embed/index -> GEPA optimize -> write. Re-running with the same `--name` rebuilds it.
+
+    With no `--name`/`--file` on an interactive terminal, this launches a guided creation wizard;
+    pass `--no-interactive` (or any of those flags) to stay fully scriptable.
     """
-    from wmh.cli.ui import RichBuildReporter, build_summary_panel
+    from wmh.cli.ui import BuildParams, RichBuildReporter, build_summary_panel, run_build_wizard
     from wmh.engine.build import build as run_build
     from wmh.ingest import VendorPull
 
-    validate_name(name)
-    store = WorldModelStore(root)
-    model_dir = str(store.model_dir(name))
+    # Decide whether to run the wizard: explicit flag wins; otherwise auto when at a TTY and the
+    # essential inputs (a name and a trace source) were not supplied.
+    needs_input = name is None or (file is None and vendor is None)
+    use_wizard = interactive if interactive is not None else (_console.is_terminal and needs_input)
 
-    serve_provider = ProviderKind(provider)
-    config = HarnessConfig(
-        providers=[ProviderConfig(kind=serve_provider, model=model, region=region)],
-        serve_provider=serve_provider,
+    params = BuildParams(
+        name=name or DEFAULT_MODEL_NAME,
+        file=file,
+        vendor=vendor,
+        provider=provider,
+        model=model,
+        region=region,
         gepa_budget=gepa_budget,
     )
-    reporter = RichBuildReporter(_console, name)
+    if use_wizard:
+        params = run_build_wizard(_console, params)
+    elif name is None and file is None and vendor is None:
+        raise typer.BadParameter("provide --file (or --vendor), or run `wmh build` interactively")
+
+    validate_name(params.name)
+    store = WorldModelStore(root)
+    model_dir = str(store.model_dir(params.name))
+
+    serve_provider = ProviderKind(params.provider)
+    config = HarnessConfig(
+        providers=[ProviderConfig(kind=serve_provider, model=params.model, region=params.region)],
+        serve_provider=serve_provider,
+        gepa_budget=params.gepa_budget,
+    )
+    reporter = RichBuildReporter(_console, params.name)
     run_build(
         config,
-        file=file,
-        vendor=VendorPull() if vendor else None,
+        file=params.file,
+        vendor=VendorPull() if params.vendor else None,
         root=model_dir,
         reporter=reporter,
     )
-    _console.print(build_summary_panel(store.info(name), model_dir))
+    _console.print(build_summary_panel(store.info(params.name), model_dir))
 
 
 @app.command("list")
@@ -139,7 +166,7 @@ def demo(
     from wmh.providers import get_provider
 
     wm, resolved_name = _load_model(name, root)
-    config = load_config(str(WorldModelStore(root).resolve(name)))
+    config = load_config(str(WorldModelStore(root).model_dir(resolved_name)))
     provider = get_provider(config.serve_provider_config())
     # Seed the demo agent from whatever steps the index holds.
     examples = wm.sample_steps(3)
@@ -162,14 +189,32 @@ def play(
     run_play_repl(_console, wm, resolved_name, task)
 
 
+def _resolve_name(store: WorldModelStore, name: str | None) -> str:
+    """Resolve which model to run: explicit `--name`, an interactive picker, or the sole model.
+
+    With `--name`, validate it exists. Otherwise, when several models are built on an interactive
+    terminal, show a numbered picker; on a non-TTY (or a single model) defer to `store.resolve`,
+    which returns the lone model or raises a helpful "pass --name" error.
+    """
+    if name is not None:
+        store.resolve(name)  # validates existence, raising a friendly error if missing
+        return name
+    infos = store.list_info()
+    if _console.is_terminal and len(infos) > 1:
+        from wmh.cli.ui import select_model
+
+        return select_model(_console, infos)
+    return store.resolve(None).name
+
+
 def _load_model(name: str | None, root: str):  # noqa: ANN202 - returns (WorldModel, resolved name)
     """Resolve + load a named world model (or the single built one) with its serve provider."""
     from wmh.engine.world_model import WorldModel
     from wmh.providers import get_provider
 
     store = WorldModelStore(root)
-    model_dir = store.resolve(name)
-    resolved_name = name if name is not None else model_dir.name
+    resolved_name = _resolve_name(store, name)
+    model_dir = store.model_dir(resolved_name)
     config = load_config(str(model_dir))
     provider = get_provider(config.serve_provider_config())
     return WorldModel.load(str(model_dir), provider), resolved_name

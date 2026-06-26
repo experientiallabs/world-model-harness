@@ -22,13 +22,17 @@ prompt optimization on a frontier model. See [`DESIGN.md`](./DESIGN.md) for the 
 ```bash
 uv sync
 wmh providers verify                       # confirm Anthropic / Bedrock / Azure OpenAI / OpenAI creds
-wmh build --name airline --file traces.jsonl   # ingest + index + GEPA optimize -> .wmh/models/airline/
-                                           #   (or: wmh build --name airline --vendor <vendor>)
+wmh build                                  # guided creation wizard (prompts for name, traces, provider…)
+wmh build --name airline --file traces.jsonl   # …or fully scriptable with flags -> .wmh/models/airline/
 wmh list                                   # show every built world model
 wmh serve                                  # local backend on :8000 (serves all built models)
-wmh demo --name airline                    # watch an LLM agent step against the world model
-wmh play --name airline                    # step into the environment yourself (interactive REPL)
+wmh demo                                   # watch an LLM agent step against the world model
+wmh play                                   # step into the environment yourself (interactive REPL)
 ```
+
+`wmh build` with no flags launches a **creation wizard** on an interactive terminal; pass `--file`
+(and friends) or `--no-interactive` to stay scriptable. Commands that run a model (`play`/`serve`/
+`demo`) take `--name`; omit it and — if several models exist — you get an interactive **picker**.
 
 World models are **named** and stored under `.wmh/models/<name>/`, so one project can hold several
 (e.g. `airline`, `retail`). Commands that read a model take `--name`; if only one is built, `--name`

@@ -39,9 +39,7 @@ def run(
     use_rag: bool,
     embed_dim: int,
 ) -> dict[str, ReplayReport]:
-    provider = get_provider(
-        ProviderConfig(kind=ProviderKind.BEDROCK, model=model, region=region)
-    )
+    provider = get_provider(ProviderConfig(kind=ProviderKind.BEDROCK, model=model, region=region))
     judge = LLMJudge(provider)
     adapter = get_adapter("otel-genai")
     reports: dict[str, ReplayReport] = {}

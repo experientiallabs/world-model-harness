@@ -149,7 +149,11 @@ class WorldModelGEPAAdapter(GEPAAdapter[_EvalStep, _StepTrajectory, Observation]
             step = item.step
             try:
                 predicted = predict_observation(
-                    self._provider, prompt, step.task, step.state_before, step.action,
+                    self._provider,
+                    prompt,
+                    step.task,
+                    step.state_before,
+                    step.action,
                     demos=item.demos,
                 )
                 result = self._judge.score(predicted, step.observation, step)
