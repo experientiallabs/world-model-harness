@@ -1,4 +1,4 @@
-"""Tests for the FastAPI serving layer, with an injected in-process WorldModel (no network)."""
+"""Tests for the FastAPI serving layer, with injected in-process WorldModels (no network)."""
 
 from __future__ import annotations
 
@@ -32,7 +32,7 @@ class FakeProvider:
         raise NotImplementedError
 
 
-def _client() -> TestClient:
+def _world_model() -> WorldModel:
     retriever = EmbeddingRetriever(HashingEmbedder(dim=32))
     retriever.index(
         [
@@ -49,36 +49,60 @@ def _client() -> TestClient:
             )
         ]
     )
-    wm = WorldModel(FakeProvider(), retriever, top_k=3)
-    return TestClient(create_app(world_model=wm))
+    return WorldModel(FakeProvider(), retriever, top_k=3)
+
+
+def _client(world_models: dict[str, WorldModel] | None = None) -> TestClient:
+    models = world_models or {"airline": _world_model()}
+    return TestClient(create_app(world_models=models))
 
 
 def test_healthz() -> None:
     assert _client().get("/healthz").json() == {"status": "ok"}
 
 
-def test_session_lifecycle_and_step() -> None:
+def test_lists_world_models_by_name() -> None:
+    client = _client({"airline": _world_model(), "retail": _world_model()})
+    assert client.get("/world_models").json() == {"world_models": ["airline", "retail"]}
+
+
+def test_session_lifecycle_and_step_are_namespaced() -> None:
     client = _client()
-    resp = client.post("/sessions", json={"task": "look up a user"})
+    resp = client.post("/world_models/airline/sessions", json={"task": "look up a user"})
     assert resp.status_code == 200
     session_id = resp.json()["session_id"]
 
     step = client.post(
-        f"/sessions/{session_id}/step",
+        f"/world_models/airline/sessions/{session_id}/step",
         json={"action": {"kind": "tool_call", "name": "get_user", "arguments": {"id": "u2"}}},
     )
     assert step.status_code == 200
     assert step.json()["observation"]["content"] == "user found"
 
-    got = client.get(f"/sessions/{session_id}")
+    got = client.get(f"/world_models/airline/sessions/{session_id}")
     assert got.status_code == 200
     assert len(got.json()["history"]) == 1
+
+
+def test_unknown_world_model_is_404() -> None:
+    client = _client()
+    resp = client.post("/world_models/nope/sessions", json={"task": "x"})
+    assert resp.status_code == 404
 
 
 def test_step_on_missing_session_is_404() -> None:
     client = _client()
     resp = client.post(
-        "/sessions/nope/step",
+        "/world_models/airline/sessions/nope/step",
         json={"action": {"kind": "message", "content": "hi"}},
     )
     assert resp.status_code == 404
+
+
+def test_sessions_are_isolated_between_named_models() -> None:
+    client = _client({"airline": _world_model(), "retail": _world_model()})
+    created = client.post("/world_models/airline/sessions", json={"task": "x"})
+    session_id = created.json()["session_id"]
+    # A session created on `airline` is not visible under `retail`.
+    miss = client.get(f"/world_models/retail/sessions/{session_id}")
+    assert miss.status_code == 404

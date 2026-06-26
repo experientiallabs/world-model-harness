@@ -21,12 +21,18 @@ prompt optimization on a frontier model. See [`DESIGN.md`](./DESIGN.md) for the 
 
 ```bash
 uv sync
-wmh providers verify                # confirm Anthropic / Bedrock / Azure OpenAI / OpenAI creds
-wmh build --file traces.jsonl       # ingest + index + GEPA optimize -> .wmh/ artifact
-                                    #   (or: wmh build --vendor <vendor>; build creates .wmh/ itself)
-wmh serve                           # local backend on :8000
-wmh demo                            # watch an LLM agent step against the world model
+wmh providers verify                       # confirm Anthropic / Bedrock / Azure OpenAI / OpenAI creds
+wmh build --name airline --file traces.jsonl   # ingest + index + GEPA optimize -> .wmh/models/airline/
+                                           #   (or: wmh build --name airline --vendor <vendor>)
+wmh list                                   # show every built world model
+wmh serve                                  # local backend on :8000 (serves all built models)
+wmh demo --name airline                    # watch an LLM agent step against the world model
+wmh play --name airline                    # step into the environment yourself (interactive REPL)
 ```
+
+World models are **named** and stored under `.wmh/models/<name>/`, so one project can hold several
+(e.g. `airline`, `retail`). Commands that read a model take `--name`; if only one is built, `--name`
+is optional.
 
 ## Use it as an API
 
@@ -43,7 +49,8 @@ obs = wm.step(session.id, Action(kind=ActionKind.TOOL_CALL, name="add_to_cart",
 print(obs.content)
 ```
 
-Or over HTTP (same code path): `POST /sessions`, then `POST /sessions/{id}/step`.
+Or over HTTP (same code path), namespaced by model name: `GET /world_models` to list, then
+`POST /world_models/{name}/sessions` and `POST /world_models/{name}/sessions/{id}/step`.
 
 ## Providers
 
@@ -74,6 +81,6 @@ Conventions live in [AGENTS.md](./AGENTS.md). Tests are inline next to the code 
 
 ## Status
 
-This is a **skeleton**: interfaces, types, CLI, and HTTP routes are wired and importable; the heavy
-internals (embedding/index, GEPA loop, judge prompts, provider request mapping, vendor pulls) are
-stubbed with `NotImplementedError`.
+The full pipeline works end-to-end: ingest → split → index → GEPA optimize → persist → serve/step,
+verified on real Bedrock Opus 4.8 (see [`docs/tau2_runbook.md`](./docs/tau2_runbook.md)). Vendor SDK
+pulls are the main stub remaining.

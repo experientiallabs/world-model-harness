@@ -18,7 +18,7 @@ so the optimizer evolves against the exact prompt the world model serves.
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
@@ -35,6 +35,9 @@ from wmh.retrieval import Retriever
 
 # The single named component GEPA evolves: the specialized env (system) prompt.
 ENV_PROMPT_COMPONENT = "env_prompt"
+
+# Called once per judged rollout: (rollouts_done, best_score_so_far). Used to drive build progress.
+RolloutCallback = Callable[[int, float | None], None]
 
 
 class OptimizeMetrics(BaseModel):
@@ -123,9 +126,14 @@ class WorldModelGEPAAdapter(GEPAAdapter[_EvalStep, _StepTrajectory, Observation]
     precomputed once (see `GEPAOptimizer._eval_steps`) and reused across every candidate.
     """
 
-    def __init__(self, provider: Provider, judge: Judge) -> None:
+    def __init__(
+        self, provider: Provider, judge: Judge, on_rollout: RolloutCallback | None = None
+    ) -> None:
         self._provider = provider
         self._judge = judge
+        self._on_rollout = on_rollout
+        self._rollouts = 0
+        self._best_score: float | None = None
 
     def evaluate(
         self,
@@ -151,6 +159,7 @@ class WorldModelGEPAAdapter(GEPAAdapter[_EvalStep, _StepTrajectory, Observation]
                 score, critique = 0.0, f"Rollout failed: {exc}"
             outputs.append(predicted)
             scores.append(score)
+            self._note_rollout(score)
             if trajectories is not None:
                 trajectories.append(
                     _StepTrajectory(step=step, predicted=predicted, score=score, critique=critique)
@@ -182,6 +191,14 @@ class WorldModelGEPAAdapter(GEPAAdapter[_EvalStep, _StepTrajectory, Observation]
             )
         # GEPA only ever asks us to update the components it selected; we own a single one.
         return {component: records for component in components_to_update}
+
+    def _note_rollout(self, score: float) -> None:
+        """Tick the rollout counter + running best score and notify the callback, if any."""
+        self._rollouts += 1
+        if self._best_score is None or score > self._best_score:
+            self._best_score = score
+        if self._on_rollout is not None:
+            self._on_rollout(self._rollouts, self._best_score)
 
 
 # --- reflection LM adapter -----------------------------------------------------------------------
@@ -226,12 +243,17 @@ class GEPAOptimizer:
     """Reflective prompt evolution against the held-out trace split (drives the `gepa` engine)."""
 
     def __init__(
-        self, provider: Provider, judge: Judge, retriever: Retriever | None = None
+        self,
+        provider: Provider,
+        judge: Judge,
+        retriever: Retriever | None = None,
+        on_rollout: RolloutCallback | None = None,
     ) -> None:
         self._provider = provider
         self._judge = judge
         # Optional retriever for RAG-aware evaluation. When None, GEPA evaluates zero-shot.
         self._retriever = retriever
+        self._on_rollout = on_rollout
 
     def optimize(
         self, train: list[Trace], test: list[Trace], base_prompt: str, budget: int
@@ -250,7 +272,7 @@ class GEPAOptimizer:
             self._retriever.index(train_src)
         trainset = self._eval_steps(train_src, corpus=train_src)
         valset = self._eval_steps(val_src, corpus=train_src)
-        adapter = WorldModelGEPAAdapter(self._provider, self._judge)
+        adapter = WorldModelGEPAAdapter(self._provider, self._judge, self._on_rollout)
         result = gepa.optimize(
             seed_candidate={ENV_PROMPT_COMPONENT: base_prompt},
             trainset=trainset,
