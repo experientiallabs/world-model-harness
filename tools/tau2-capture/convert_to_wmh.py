@@ -52,12 +52,14 @@ def _gold(task: dict[str, Any]) -> dict[str, Any]:
     return crit if isinstance(crit, dict) else {}
 
 
-def _as_task_text(value: Any) -> str:  # noqa: ANN401 - tau2 fields are loosely typed JSON
-    """Render a task field as a JSON-clean string: pass plain strings through, JSON-encode dicts.
+def _as_text(value: Any) -> str:  # noqa: ANN401 - tau2 fields are loosely typed JSON
+    """Render a loosely-typed value as a JSON-clean string: strings pass through, else JSON-encode.
 
-    tau2's `user_scenario.instructions` may be a plain string OR a structured dict
-    (domain/reason_for_call/known_info/...). Encoding the dict with json.dumps keeps the trace
-    JSON-clean end to end, so downstream can json.loads it (vs. a Python-repr needing literal_eval).
+    Used for both the task field and tool observations. tau2's `user_scenario.instructions` may be a
+    plain string OR a structured dict (domain/reason_for_call/known_info/...), and a tool result's
+    content is usually a string but is not guaranteed to be. Encoding non-strings with json.dumps
+    keeps the trace JSON-clean end to end, so downstream can json.loads it (vs. a Python `repr()` with
+    single quotes, which needs ast.literal_eval).
     """
     if isinstance(value, str):
         return value
@@ -68,9 +70,9 @@ def _task_text(task: dict[str, Any]) -> str:
     """The agent-visible request: the user-scenario instructions, else the ticket."""
     scenario = task.get("user_scenario")
     if isinstance(scenario, dict) and scenario.get("instructions"):
-        return _as_task_text(scenario["instructions"])
+        return _as_text(scenario["instructions"])
     if task.get("ticket"):
-        return _as_task_text(task["ticket"])
+        return _as_text(task["ticket"])
     return ""
 
 
@@ -110,7 +112,7 @@ def _spans_for_simulation(
 
             # The authoritative observation is what the agent actually saw (recorded ToolMessage).
             recorded = tool_obs.get(str(tc.get("id")))
-            obs_content = "" if recorded is None else str(recorded.get("content", ""))
+            obs_content = "" if recorded is None else _as_text(recorded.get("content", ""))
             obs_error = bool(recorded.get("error", False)) if recorded is not None else False
 
             action_attrs = [
