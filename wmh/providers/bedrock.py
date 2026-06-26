@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING, TypedDict, cast
 
+from wmh.core.types import JsonValue
 from wmh.providers.base import (
     Completion,
     Message,
@@ -20,6 +21,9 @@ if TYPE_CHECKING:
 # Bedrock speaks the same Anthropic Messages schema as the direct API, pinned by this version tag.
 _ANTHROPIC_BEDROCK_VERSION = "bedrock-2023-05-31"
 
+# Default Titan text-embeddings model (confirmed reachable; v2 supports `dimensions` 256/512/1024).
+_DEFAULT_EMBED_MODEL = "amazon.titan-embed-text-v2:0"
+
 
 class _ContentBlock(TypedDict):
     type: str
@@ -34,6 +38,10 @@ class _Usage(TypedDict):
 class _BedrockResponse(TypedDict):
     content: list[_ContentBlock]
     usage: _Usage
+
+
+class _TitanEmbedResponse(TypedDict):
+    embedding: list[float]
 
 
 class BedrockProvider:
@@ -77,11 +85,24 @@ class BedrockProvider:
         return Completion(text=text, usage=usage)
 
     def embed(self, texts: list[str]) -> list[list[float]]:
-        # Embeddings on Bedrock (Titan / Cohere) are a separate model surface, not yet wired up;
-        # use an OpenAI embed provider for retrieval (phi) in the meantime.
-        raise NotImplementedError(
-            "BedrockProvider embeddings are not implemented; use an OpenAI embed provider."
-        )
+        """Embed via Amazon Titan text embeddings on Bedrock (phi for retrieval).
+
+        Titan's InvokeModel embeds one text per call (no batch input), so we loop. `embed_model`
+        selects the Titan model (defaults to titan-embed-text-v2); `embed_dim`, when set, requests a
+        specific output dimension (v2 supports 256/512/1024) so the index and query vectors match.
+        """
+        model = self.config.embed_model or _DEFAULT_EMBED_MODEL
+        client = self._get_client()
+        vectors: list[list[float]] = []
+        for text in texts:
+            body: dict[str, JsonValue] = {"inputText": text}
+            if self.config.embed_dim is not None:
+                body["dimensions"] = self.config.embed_dim
+                body["normalize"] = True
+            raw = client.invoke_model(modelId=model, body=json.dumps(body))
+            data = cast("_TitanEmbedResponse", json.loads(raw["body"].read()))
+            vectors.append(data["embedding"])
+        return vectors
 
     def verify(self) -> VerifyResult:
         return verify_via_ping(self)

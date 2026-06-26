@@ -11,7 +11,8 @@ import typer
 from rich.console import Console
 
 from wmh.config import ARTIFACT_DIR, HarnessConfig, load_config
-from wmh.providers import ProviderConfig, ProviderKind, verify_all
+from wmh.providers import ProviderConfig, ProviderKind, verify_all, verify_embedder
+from wmh.providers.base import EmbedderKind
 
 app = typer.Typer(help="World Model Harness: a frontier LLM acts as your agent's environment.")
 providers_app = typer.Typer(help="Manage and verify LLM providers.")
@@ -21,11 +22,19 @@ _console = Console()
 
 @providers_app.command("verify")
 def providers_verify(root: str = typer.Option(ARTIFACT_DIR, help="Artifact dir.")) -> None:
-    """Ping every configured provider (Anthropic/Bedrock/Azure/OpenAI) and report status."""
+    """Ping every configured provider (completion + embed path) and report status."""
     config = load_config(root)
     for result in verify_all(config.providers):
         mark = "[green]ok[/green]" if result.ok else "[red]fail[/red]"
         _console.print(f"{mark} {result.kind.value} ({result.model}) {result.detail}")
+    # Verify the phi embed path too, unless it's the offline (creds-free) hashing embedder.
+    if config.embed_provider is not EmbedderKind.HASHING:
+        embed_cfg = config.provider_config(config.embed_provider.provider_kind()).model_copy(
+            update={"embed_dim": config.embed_dim}
+        )
+        result = verify_embedder(embed_cfg)
+        mark = "[green]ok[/green]" if result.ok else "[red]fail[/red]"
+        _console.print(f"{mark} embed:{result.kind.value} ({result.model}) {result.detail}")
 
 
 @app.command("build")
@@ -37,6 +46,11 @@ def build(
     model: str = typer.Option("us.anthropic.claude-opus-4-8", help="Serve provider model id."),
     region: str = typer.Option(None, help="AWS region (Bedrock)."),
     gepa_budget: int = typer.Option(50, help="GEPA rollout budget."),
+    embed_provider: str = typer.Option(
+        "hashing", help="phi embedder: hashing (offline) | bedrock | openai | azure_openai."
+    ),
+    embed_model: str = typer.Option(None, help="Embeddings model id / Azure embedding deployment."),
+    embed_dim: int = typer.Option(512, help="phi dimensionality (index + query must agree)."),
 ) -> None:
     """Ingest traces (file upload or vendor SDK pull) and build the `.wmh/` artifact.
 
@@ -45,15 +59,37 @@ def build(
     """
     from wmh.engine.build import build as run_build
     from wmh.ingest import VendorPull
+    from wmh.retrieval import get_embedder
 
     serve_provider = ProviderKind(provider)
+    embed_kind = EmbedderKind(embed_provider)
+    providers = [ProviderConfig(kind=serve_provider, model=model, region=region)]
+    # A provider-backed embedder needs its own ProviderConfig (creds/model). Reuse the serve config
+    # when it's the same backend; otherwise add a minimal one carrying the embed model + region.
+    if embed_kind is not EmbedderKind.HASHING and embed_kind.provider_kind() != serve_provider:
+        providers.append(
+            ProviderConfig(
+                kind=embed_kind.provider_kind(),
+                model=embed_model or "",
+                embed_model=embed_model,
+                region=region,
+            )
+        )
+    elif embed_kind is not EmbedderKind.HASHING:
+        providers[0] = providers[0].model_copy(update={"embed_model": embed_model})
     config = HarnessConfig(
-        providers=[ProviderConfig(kind=serve_provider, model=model, region=region)],
+        providers=providers,
         serve_provider=serve_provider,
+        embed_provider=embed_kind,
+        embed_dim=embed_dim,
         gepa_budget=gepa_budget,
     )
     result = run_build(
-        config, file=file, vendor=VendorPull() if vendor else None, root=root
+        config,
+        file=file,
+        vendor=VendorPull() if vendor else None,
+        root=root,
+        embedder=get_embedder(config),
     )
     _console.print(
         f"[green]built[/green] {root}: held_out_accuracy="

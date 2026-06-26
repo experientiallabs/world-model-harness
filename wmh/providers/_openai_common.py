@@ -26,7 +26,9 @@ class _ChatCompletions(Protocol):
 
 
 class _Embeddings(Protocol):
-    def create(self, *, model: str, input: list[str]) -> CreateEmbeddingResponse: ...
+    def create(
+        self, *, model: str, input: list[str], dimensions: int = ...
+    ) -> CreateEmbeddingResponse: ...
 
 
 def to_messages(system: str, messages: list[Message]) -> list[ChatCompletionMessageParam]:
@@ -70,7 +72,17 @@ def complete(
     return Completion(text=text, usage=token_usage)
 
 
-def embed(embeddings: _Embeddings, model: str, texts: list[str]) -> list[list[float]]:
-    """Embed `texts` against `model` (an OpenAI model id, or an Azure embedding deployment)."""
-    response = embeddings.create(model=model, input=texts)
+def embed(
+    embeddings: _Embeddings, model: str, texts: list[str], dim: int | None = None
+) -> list[list[float]]:
+    """Embed `texts` against `model` (an OpenAI model id, or an Azure embedding deployment).
+
+    `dim`, when set, requests a specific output dimension via the `dimensions` param (supported by
+    text-embedding-3-* and their Azure deployments) so the index and query vectors match.
+    """
+    response = (
+        embeddings.create(model=model, input=texts, dimensions=dim)
+        if dim is not None
+        else embeddings.create(model=model, input=texts)
+    )
     return [item.embedding for item in response.data]

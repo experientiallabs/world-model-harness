@@ -37,11 +37,11 @@ class WorldModel:
         """Construct from a built `.wmh/` artifact (optimized prompt + indexed replay buffer).
 
         `provider` serves the live world model (generation). `embedder` supplies phi for retrieval;
-        when omitted we use the offline `HashingEmbedder` (the default build embedder), so loading
-        needs no embedding credentials.
+        when omitted we reconstruct the configured embedder (`embed_provider` + `embed_dim`), which
+        defaults to the offline `HashingEmbedder` so loading needs no embedding credentials.
         """
         from wmh.config import ArtifactPaths, load_config
-        from wmh.retrieval.embedders import HashingEmbedder
+        from wmh.retrieval.embedders import get_embedder
 
         config = load_config(artifact_dir)
         paths = ArtifactPaths(artifact_dir)
@@ -50,9 +50,9 @@ class WorldModel:
             if paths.optimized_prompt.exists()
             else BASE_ENV_PROMPT
         )
-        # Reconstruct the *same* embedder the build used (dim is persisted in config), so the
+        # Reconstruct the *same* embedder the build used (provider + dim persisted in config), so
         # query vectors match the stored matrix. A caller-supplied embedder overrides.
-        retriever = EmbeddingRetriever(embedder or HashingEmbedder(dim=config.embed_dim))
+        retriever = EmbeddingRetriever(embedder or get_embedder(config))
         if paths.index.exists():
             retriever.load(paths.index)
         return cls(provider, retriever, env_prompt=env_prompt, top_k=config.top_k)

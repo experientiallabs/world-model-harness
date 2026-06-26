@@ -12,7 +12,7 @@ import tomli_w
 from pydantic import BaseModel, Field, JsonValue, ValidationError
 
 from wmh.core.types import JsonObject
-from wmh.providers.base import ProviderConfig, ProviderKind
+from wmh.providers.base import EmbedderKind, ProviderConfig, ProviderKind
 
 ARTIFACT_DIR = ".wmh"
 
@@ -30,8 +30,10 @@ class HarnessConfig(BaseModel):
 
     providers: list[ProviderConfig] = Field(default_factory=list)
     serve_provider: ProviderKind = ProviderKind.ANTHROPIC  # serves the live world model
-    embed_provider: ProviderKind = ProviderKind.OPENAI  # supplies phi for retrieval
-    embed_dim: int = 512  # phi dimensionality; the offline HashingEmbedder's vector size
+    # Which embedder supplies phi for retrieval. Defaults to the offline HashingEmbedder (no creds);
+    # set to a provider-backed kind (bedrock/openai/azure_openai) for semantic phi.
+    embed_provider: EmbedderKind = EmbedderKind.HASHING
+    embed_dim: int = 512  # phi dimensionality; index + query embedder must agree on this
     top_k: int = 5  # demos retrieved per step (DreamGym k)
     train_split: float = 0.8  # train/held-out ratio for GEPA
     gepa_budget: int = 50  # rollout budget for prompt evolution

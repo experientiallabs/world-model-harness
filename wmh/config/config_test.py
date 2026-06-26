@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from wmh.config.config import HarnessConfig, load_config, save_config
-from wmh.providers.base import ProviderConfig, ProviderKind
+from wmh.providers.base import EmbedderKind, ProviderConfig, ProviderKind
 
 
 def test_save_then_load_round_trips(tmp_path: Path) -> None:
@@ -18,13 +18,15 @@ def test_save_then_load_round_trips(tmp_path: Path) -> None:
                 kind=ProviderKind.AZURE_OPENAI,
                 model="gpt-5.5",
                 embed_model="text-embedding-3-large",
+                embed_dim=1024,
                 endpoint="https://example.openai.azure.com",
                 deployment="gpt-55",
                 api_version="2024-02-01",
             ),
         ],
         serve_provider=ProviderKind.ANTHROPIC,
-        embed_provider=ProviderKind.AZURE_OPENAI,
+        embed_provider=EmbedderKind.AZURE_OPENAI,
+        embed_dim=1024,
         top_k=8,
         train_split=0.7,
         gepa_budget=120,

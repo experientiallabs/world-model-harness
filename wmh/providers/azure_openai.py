@@ -65,7 +65,9 @@ class AzureOpenAIProvider:
         # embedding model, not a base OpenAI model id, or the call 404s.
         if self.config.embed_model is None:
             raise ValueError("AzureOpenAIProvider.embed requires config.embed_model (deployment).")
-        return _openai_common.embed(self._get_client().embeddings, self.config.embed_model, texts)
+        return _openai_common.embed(
+            self._get_client().embeddings, self.config.embed_model, texts, self.config.embed_dim
+        )
 
     def verify(self) -> VerifyResult:
         return verify_via_ping(self)
