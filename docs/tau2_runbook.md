@@ -7,33 +7,22 @@ and verified on 2026-06-25 with **Bedrock Opus 4.8** for generation and the offl
 
 ## 0. Source data
 
-The traces come from `self-improvement-bench`'s tau2 benchmark — saved agent transcripts at
-`self-improvement-bench/results/baseline_cache/tau2-bench/train/traces/*.json`. They are
-OpenInference-shaped message logs (`system`/`user`/`assistant`) where each agent turn is a
-` ```sib_bash``` ` command and the environment reply wraps `<returncode>`/`<output>`. The point is
-to reuse data we already have, not to couple to SIB.
+A ready-to-use OTel GenAI trace corpus ships in `examples/` (one `*.otel.jsonl` per benchmark),
+including `examples/tau2-bench.otel.jsonl`. These were derived from `self-improvement-bench`'s saved
+agent transcripts (OpenInference message logs where each agent turn is a ` ```sib_bash``` ` command
+and the environment reply wraps `<returncode>`/`<output>`) and converted into the bare OTel `gen_ai.*`
+span shape the `otel-genai` ingestion adapter reads: each agent bash turn → an LLM `bash` tool-call
+span, each following env reply → an `execute_tool` span (error status on non-zero return code), the
+first request → the trace `gen_ai.prompt` (tau). Only turns with a paired env reply become steps.
 
-## 1. Convert SIB transcripts → OTel GenAI JSONL
+The one-off conversion tooling is intentionally NOT committed (it's coupled to the SIB repo layout);
+the committed `examples/` corpus is the reusable artifact.
 
-The merged `otel-genai` ingestion adapter parses OTel `gen_ai.*` spans, not OpenInference message
-logs, so we transform first:
-
-```bash
-uv run python scripts/sib_to_otel.py \
-  /path/to/self-improvement-bench/results/baseline_cache/tau2-bench/train/traces \
-  /tmp/tau2_otel.jsonl
-```
-
-Each assistant bash turn becomes an LLM span (a `bash` tool call,
-`arguments={"command": ...}`); each following env reply becomes an `execute_tool` span carrying the
-output and an error status when the return code is non-zero. The first customer request becomes the
-trace `gen_ai.prompt` (tau).
-
-## 2. Build the world model (ingest → split → index → GEPA → persist)
+## 1. Build the world model (ingest → split → index → GEPA → persist)
 
 ```bash
 AWS_REGION=us-east-1 uv run wmh build \
-  --file /tmp/tau2_otel.jsonl \
+  --file examples/tau2-bench.otel.jsonl \
   --root /tmp/tau2_wmh \
   --provider bedrock --model us.anthropic.claude-opus-4-8 --region us-east-1 \
   --gepa-budget 6
@@ -56,7 +45,7 @@ index/embeddings.npy     # phi(s,a) matrix for the replay buffer
 index/steps.jsonl        # the parallel Steps
 ```
 
-## 3. Load the stored model and step against it
+## 2. Load the stored model and step against it
 
 ```python
 from wmh.engine.world_model import WorldModel
@@ -78,7 +67,7 @@ Observed:
 - `get_reservation r_999` → `Error: reservation r_999 not found`, `is_error=True` — the model
   *simulates* environment behavior (errors on a missing id) rather than echoing a demo.
 
-## 4. Serve it over HTTP (same code path)
+## 3. Serve it over HTTP (same code path)
 
 ```bash
 AWS_REGION=us-east-1 uv run wmh serve --root /tmp/tau2_wmh

@@ -24,9 +24,9 @@ Initial overall fidelity was ~0.43, but inspecting results surfaced two distinct
 
 1. **A data artifact, not a model failure.** Half the held-out steps had *empty* ground truth —
    they were the agent's final `SIB_SUBMIT` turn, which has no environment reply. Scoring against a
-   non-existent observation dragged the number down. Fix: `scripts/sib_to_otel.py` now only emits a
-   step for an agent turn that HAS a following environment reply (unpaired trailing turns are
-   dropped). On steps with a real observation, fidelity was already ~0.62.
+   non-existent observation dragged the number down. Fix: trace ingestion only emits a step for an
+   agent turn that HAS a following environment reply (unpaired trailing turns are dropped). On steps
+   with a real observation, fidelity was already ~0.62.
 
 2. **Real, fixable model failure modes** (drove the prompt rewrite):
    - *Fabricating concrete data* the environment alone knows (e.g. inventing SQL result rows instead
