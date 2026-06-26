@@ -259,8 +259,6 @@ def eval_(  # noqa: A001 - `eval` is the user-facing command name; the builtin i
     embed_dim: int = typer.Option(512, help="phi dimensionality for the offline embedder."),
     no_rag: bool = typer.Option(False, "--no-rag", help="Disable retrieval (zero-shot replay)."),
     judge: str = typer.Option("rubric", help="Scorer: rubric (5-dim) | match (functional)."),
-    rollouts: int = typer.Option(1, help="World-model samples per step (use with --temperature)."),
-    temperature: float = typer.Option(0.0, help="World-model sampling temperature for rollouts."),
     sample_turns: str = typer.Option("all", help="Turns scored per trace: all | sampled (5)."),
     seed: int = typer.Option(0, help="Seed for reproducible turn sampling."),
     out: str = typer.Option(None, help="Optional path to write the full JSON report."),
@@ -268,9 +266,8 @@ def eval_(  # noqa: A001 - `eval` is the user-facing command name; the builtin i
     """Score reconstruction fidelity: replay held-out steps, judge predicted vs. real observations.
 
     For each trace file: split train/holdout, replay the holdout through the prompt (with leak-free
-    RAG unless --no-rag), and report per-file + overall fidelity (mean±std). Use --rollouts N with
-    --temperature >0 to sample the world model multiple times per step. The measurement loop behind
-    iterating on the env prompt (see docs/base_prompt_iteration.md).
+    RAG unless --no-rag), and report per-file + overall fidelity (mean±std across steps). The
+    measurement loop behind iterating on the env prompt (see docs/base_prompt_iteration.md).
     """
     from pathlib import Path
 
@@ -293,8 +290,6 @@ def eval_(  # noqa: A001 - `eval` is the user-facing command name; the builtin i
         scorer,
         embedder=embedder,
         train_split=train_split,
-        rollouts=rollouts,
-        temperature=temperature,
         sample_turns=sample_turns,
         seed=seed,
     )
@@ -302,7 +297,7 @@ def eval_(  # noqa: A001 - `eval` is the user-facing command name; the builtin i
         _console.print(f"  {name:28} {rep.summary()}")
     _console.print(
         f"[bold]OVERALL[/bold] fidelity={report.overall_fidelity:.3f}±{report.overall_std:.3f} "
-        f"over {report.total_steps} held-out steps (rollouts={report.rollouts})"
+        f"over {report.total_steps} held-out steps"
     )
     if out:
         import json

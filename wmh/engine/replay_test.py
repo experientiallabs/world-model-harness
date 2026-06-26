@@ -44,17 +44,12 @@ class FakeJudge:
         return JudgeResult(score=self._score, critique="ok", dimensions=dict(self._dimensions))
 
 
-class CyclingJudge:
-    """Returns a different score on each call, to exercise rollout mean/std aggregation."""
-
-    def __init__(self, scores: list[float]) -> None:
-        self._scores = scores
-        self.calls = 0
+class PerActionJudge:
+    """Scores by tool-call arg `i` (lets a trace produce a spread of per-step scores)."""
 
     def score(self, predicted: Observation, actual: Observation, context: Step) -> JudgeResult:
-        s = self._scores[self.calls % len(self._scores)]
-        self.calls += 1
-        return JudgeResult(score=s, critique="ok")
+        i = context.action.arguments.get("i", 0)
+        return JudgeResult(score=1.0 if i == 0 else 0.0, critique="ok")
 
 
 def _trace(tid: str, n: int = 2) -> Trace:
@@ -111,17 +106,12 @@ def test_replay_empty_is_safe() -> None:
     assert report.mean_score == 0.0
 
 
-def test_replay_rollouts_sample_each_step_and_report_std() -> None:
-    # 2 rollouts per step at temperature>0; judge alternates 1.0/0.0 -> per-step mean 0.5, std 0.5.
-    judge = CyclingJudge([1.0, 0.0])
-    report = replay("BASE", [_trace("h", n=1)], FakeProvider('{"output": "x"}'),
-                    judge, rollouts=2, temperature=1.0)
-    assert judge.calls == 2  # one trace × one step × two rollouts
-    step = report.results[0]
-    assert step.scores == [1.0, 0.0]
-    assert step.score == 0.5
-    assert step.score_std == 0.5
-    assert report.rollouts == 2
+def test_replay_reports_std_across_steps() -> None:
+    # Two steps scored 1.0 and 0.0 -> mean 0.5, population std 0.5 across steps.
+    report = replay("BASE", [_trace("h", n=2)], FakeProvider('{"output": "x"}'), PerActionJudge())
+    assert report.n_steps == 2
+    assert report.mean_score == 0.5
+    assert report.score_std == 0.5
 
 
 def test_replay_carries_rubric_dimensions() -> None:
