@@ -20,7 +20,7 @@ def test_aggregates_rollouts_as_mean_and_std(monkeypatch) -> None:  # noqa: ANN0
         return EvalReport(overall_fidelity=next(fidelities), total_steps=12)
 
     monkeypatch.setattr(scoring, "get_provider", lambda config: object())
-    monkeypatch.setattr(scoring, "LLMJudge", lambda provider: object())
+    monkeypatch.setattr(scoring, "RubricJudge", lambda provider: object())
     monkeypatch.setattr(scoring, "evaluate_files", fake_evaluate)
 
     score = evaluate_files_once(
@@ -40,7 +40,7 @@ def test_aggregates_rollouts_as_mean_and_std(monkeypatch) -> None:  # noqa: ANN0
 
 def test_single_rollout_has_zero_std(monkeypatch) -> None:  # noqa: ANN001
     monkeypatch.setattr(scoring, "get_provider", lambda config: object())
-    monkeypatch.setattr(scoring, "LLMJudge", lambda provider: object())
+    monkeypatch.setattr(scoring, "RubricJudge", lambda provider: object())
     monkeypatch.setattr(
         scoring,
         "evaluate_files",
@@ -67,7 +67,7 @@ def test_no_rag_skips_embedder(monkeypatch) -> None:  # noqa: ANN001
         return EvalReport(overall_fidelity=0.5, total_steps=3)
 
     monkeypatch.setattr(scoring, "get_provider", lambda config: object())
-    monkeypatch.setattr(scoring, "LLMJudge", lambda provider: object())
+    monkeypatch.setattr(scoring, "RubricJudge", lambda provider: object())
     monkeypatch.setattr(scoring, "evaluate_files", fake_evaluate)
 
     evaluate_files_once(

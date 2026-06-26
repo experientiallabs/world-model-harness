@@ -6,9 +6,9 @@ benchmark, persists the result, and `wmh bench` renders a leaderboard over every
 
 This sits on top of the open-loop eval scorer (`wmh.engine.eval`): for each held-out step it feeds
 the recorded `(state, action)` teacher-forced, has the world model predict the observation, and
-scores it against the *real* recorded observation with a reference-grounded LLM judge. Because the
-world model runs at temperature > 0, a step yields a distribution of scores across rollouts — we
-report **mean ± std**.
+scores it against the *real* recorded observation with the reference-grounded 5-dimension
+`RubricJudge`. We report **mean ± std** — across seeds, and (once a sampling temperature is
+plumbed through the providers) across rollouts.
 
 ## The definition ("filesystem as DB")
 
@@ -29,14 +29,14 @@ description = "tau2-bench tool transitions; reconstruction fidelity (open-loop).
 traces = ["../../examples/tau2-bench.otel.jsonl"]   # resolved relative to this dir
 
 [eval]
-sample_turns = "all"   # "all" | "sampled" (Qwen-AgentWorld's 5-turn protocol)
-rollouts = 1           # world-model samples per scored turn -> mean ± std
-temperature = 0.0      # raise with rollouts to measure variance
-seeds = [0]            # one scoring pass per seed (across-seed std = reproducibility)
+sample_turns = "sampled"  # "all" | "sampled" (Qwen-AgentWorld's 5-turn protocol)
+rollouts = 1              # reserved variance knob (inert until temperature is plumbed)
+temperature = 0.0         # reserved; the scorer is deterministic today
+seeds = [0]               # one scoring pass per seed (across-seed std = reproducibility)
 train_split = 0.7
 top_k = 5
 
-[eval.judge]           # pinned grader, for reproducibility
+[eval.judge]              # pinned RubricJudge grader, for reproducibility
 provider = "bedrock"
 model = "us.anthropic.claude-opus-4-8"
 region = "us-east-1"
@@ -56,14 +56,16 @@ wmh bench run tau-bench --prompt my_prompt.txt
 wmh bench                           # leaderboard over all persisted runs
 ```
 
-`bench run` scores once per seed (the scorer draws `rollouts` samples per step internally),
-aggregates to a benchmark-level **mean ± std**, and writes a `BenchRun` JSON under
-`benchmarks/<name>/results/`. Runs are comparable over time; the leaderboard shows the *latest* run
-per (benchmark, prompt), ranked by fidelity.
+`bench run` scores once per seed (looping `rollouts` samples per pass), aggregates to a
+benchmark-level **mean ± std**, and writes a `BenchRun` JSON under `benchmarks/<name>/results/`.
+Runs are comparable over time; the leaderboard shows the *latest* run per (benchmark, prompt),
+ranked by fidelity.
 
 ## Aggregation
 
-- **Within a seed**: mean ± std over the seed's rollouts (the scorer's rollout distribution).
+- **Within a seed**: mean ± std over the seed's `rollouts`. The scorer is deterministic today (no
+  sampling temperature is plumbed through the providers), so this std is 0 until temperature lands;
+  the loop is wired so it becomes a real distribution the moment it does.
 - **Across seeds**: the benchmark `fidelity_mean` is the step-weighted mean of per-seed means;
   `fidelity_std` is the population std of the per-seed means — a seed-to-seed reproducibility signal
   distinct from the within-seed rollout std.

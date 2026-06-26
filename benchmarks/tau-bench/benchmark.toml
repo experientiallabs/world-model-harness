@@ -14,11 +14,11 @@ description = "tau2-bench airline/retail tool transitions; reconstruction fideli
 traces = ["../../examples/tau2-bench.otel.jsonl"]
 
 [eval]
-# "all" scores every held-out step; "sampled" uses Qwen-AgentWorld's 5-turn protocol.
-sample_turns = "all"
-# Multiple world-model samples per step; with temperature > 0 this yields a score distribution
-# (reported as mean ± std). Kept at 1/0.0 here so the committed default run is deterministic and
-# cheap; raise both to measure variance.
+# "all" scores every held-out step; "sampled" uses Qwen-AgentWorld's 5-turn protocol (cheaper,
+# and what the committed reference fidelity ~0.47 was measured with).
+sample_turns = "sampled"
+# Rollouts/temperature are a reserved variance knob — the scorer is deterministic until the
+# providers forward a sampling temperature, so 1/0.0 keeps the committed run reproducible and cheap.
 rollouts = 1
 temperature = 0.0
 seeds = [0]
@@ -26,7 +26,8 @@ train_split = 0.7
 top_k = 5
 
 [eval.judge]
-# Reference-grounded multi-dimension LLM judge. Pinned for reproducibility (Bedrock Opus 4.8).
+# Reference-grounded 5-dimension rubric judge (wmh.optimize.judge.RubricJudge). Pinned for
+# reproducibility (Bedrock Opus 4.8).
 provider = "bedrock"
 model = "us.anthropic.claude-opus-4-8"
 region = "us-east-1"
