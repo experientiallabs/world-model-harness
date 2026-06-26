@@ -19,6 +19,19 @@ def test_bedrock_prefix_normalizes_to_same_price() -> None:
     assert cost_usd("us.anthropic.claude-opus-4-8", usage) == 5.0
 
 
+def test_gpt_5_5_output_is_30_per_mtok() -> None:
+    # Verified 2026-06-25 against OpenAI's live pricing page: gpt-5.5 is $5 in / $30 out.
+    price = price_for("gpt-5.5")
+    assert price is not None
+    assert (price.input_per_mtok, price.output_per_mtok) == (5.0, 30.0)
+
+
+def test_fable_5_is_10_in_50_out() -> None:
+    price = price_for("claude-fable-5")
+    assert price is not None
+    assert (price.input_per_mtok, price.output_per_mtok) == (10.0, 50.0)
+
+
 def test_titan_embedding_keeps_amazon_prefix() -> None:
     # `amazon.` is part of the Titan model id, not a routing prefix — it must still resolve.
     assert price_for("amazon.titan-embed-text-v2:0") is not None
