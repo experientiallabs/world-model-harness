@@ -1,0 +1,191 @@
+"""Tests for the GEPAOptimizer (drives the `gepa` engine via WorldModelGEPAAdapter).
+
+A deterministic fake Provider + fake Judge stand in for the real models: the provider returns a
+fixed env prediction and a fixed improved prompt on reflection; the judge returns a fixed score and
+critique. We assert the optimizer runs a bounded loop and returns a valid frontier — no network.
+"""
+
+from __future__ import annotations
+
+from wmh.core.types import Action, ActionKind, EnvState, Observation, Step, Trace
+from wmh.optimize.gepa import (
+    ENV_PROMPT_COMPONENT,
+    GEPAOptimizer,
+    Optimizer,
+    OptimizeResult,
+    WorldModelGEPAAdapter,
+    _eval_steps,
+    _EvalStep,
+    predict_observation,
+)
+from wmh.optimize.judge import JudgeResult
+from wmh.providers.base import Completion, Message, ProviderConfig, ProviderKind
+
+
+class FakeProvider:
+    """Distinguishes reflection calls (system mentions improving the prompt) from rollouts."""
+
+    def __init__(self, *, prediction: str = "predicted obs", mutation: str = "IMPROVED") -> None:
+        self.config = ProviderConfig(kind=ProviderKind.ANTHROPIC, model="m")
+        self._prediction = prediction
+        self._mutation = mutation
+        self.reflection_calls = 0
+        self.rollout_calls = 0
+
+    def complete(
+        self,
+        system: str,
+        messages: list[Message],
+        *,
+        temperature: float = 0.7,
+        max_tokens: int = 2048,
+    ) -> Completion:
+        if "improve the system prompt" in system:
+            self.reflection_calls += 1
+            return Completion(text=self._mutation)
+        self.rollout_calls += 1
+        return Completion(text=self._prediction)
+
+    def embed(self, texts: list[str]) -> list[list[float]]:
+        return [[0.0] for _ in texts]
+
+    def verify(self):  # noqa: ANN201
+        raise NotImplementedError
+
+
+class FakeJudge:
+    """Constant score + critique; counts calls so we can assert the loop is bounded."""
+
+    def __init__(self, score: float = 0.5) -> None:
+        self._score = score
+        self.calls = 0
+
+    def score(self, predicted: Observation, actual: Observation, context: Step) -> JudgeResult:
+        self.calls += 1
+        return JudgeResult(score=self._score, critique="add the item total to the response")
+
+
+def _trace(tid: str, n: int = 2) -> Trace:
+    steps = [
+        Step(
+            action=Action(kind=ActionKind.TOOL_CALL, name="f", arguments={"i": i}),
+            observation=Observation(content=f"real-{i}"),
+            state_before=EnvState(structured={"loc": "shop"}),
+            task="check out",
+        )
+        for i in range(n)
+    ]
+    return Trace(trace_id=tid, steps=steps)
+
+
+def test_predict_observation_uses_provider() -> None:
+    provider = FakeProvider(prediction="the cart now has 1 item")
+    obs = predict_observation(
+        provider,
+        "PROMPT",
+        task="t",
+        state=EnvState(),
+        action=Action(kind=ActionKind.MESSAGE, content="hi"),
+        demos=[],
+    )
+    assert obs.content == "the cart now has 1 item"
+
+
+def test_optimizer_satisfies_protocol() -> None:
+    assert isinstance(GEPAOptimizer(FakeProvider(), FakeJudge()), Optimizer)
+
+
+def test_optimize_runs_bounded_loop_and_returns_valid_frontier() -> None:
+    provider = FakeProvider()
+    judge = FakeJudge(score=0.5)
+    opt = GEPAOptimizer(provider, judge)
+    budget = 12
+
+    result = opt.optimize([_trace("tr1"), _trace("tr2")], [_trace("te1")], "BASE", budget)
+
+    assert isinstance(result, OptimizeResult)
+    assert result.prompt  # a non-empty winning prompt
+    assert len(result.frontier) >= 1
+    assert all(isinstance(p, str) and p for p in result.frontier)
+    # The loop terminates and stays near the budget. GEPA treats max_metric_calls as a *soft* cap:
+    # it finishes the in-flight iteration, so it can overshoot by up to a minibatch + valset eval.
+    assert 0 < result.metrics.rollouts_used <= budget * 2
+    assert 0.0 <= result.metrics.held_out_accuracy <= 1.0
+    # The judge was actually consulted, and the loop terminated (didn't run forever).
+    assert judge.calls > 0
+
+
+def test_optimize_with_zero_budget_returns_base_prompt() -> None:
+    result = GEPAOptimizer(FakeProvider(), FakeJudge()).optimize(
+        [_trace("tr1")], [_trace("te1")], "BASE", budget=0
+    )
+    assert result.prompt == "BASE"
+    assert result.frontier == ["BASE"]
+
+
+def test_optimize_with_no_traces_returns_base_prompt() -> None:
+    result = GEPAOptimizer(FakeProvider(), FakeJudge()).optimize([], [], "BASE", budget=10)
+    assert result.prompt == "BASE"
+    assert result.frontier == ["BASE"]
+
+
+def _eval_batch(trace: Trace) -> list[_EvalStep]:
+    return [_EvalStep(step=s, demos=[]) for s in trace.steps]
+
+
+def test_adapter_evaluate_scores_and_captures_traces() -> None:
+    adapter = WorldModelGEPAAdapter(FakeProvider(), FakeJudge(score=0.7))
+    out = adapter.evaluate(_eval_batch(_trace("t", n=2)), {ENV_PROMPT_COMPONENT: "P"}, True)
+    assert out.scores == [0.7, 0.7]
+    assert out.trajectories is not None and len(out.trajectories) == 2
+
+    reflective = adapter.make_reflective_dataset(
+        {ENV_PROMPT_COMPONENT: "P"}, out, [ENV_PROMPT_COMPONENT]
+    )
+    records = reflective[ENV_PROMPT_COMPONENT]
+    assert len(records) == 2
+    assert "Feedback" in records[0] and "Generated Outputs" in records[0]
+
+
+def test_adapter_evaluate_survives_rollout_failure() -> None:
+    class BoomJudge(FakeJudge):
+        def score(self, predicted: Observation, actual: Observation, context: Step) -> JudgeResult:
+            raise RuntimeError("judge exploded")
+
+    adapter = WorldModelGEPAAdapter(FakeProvider(), BoomJudge())
+    out = adapter.evaluate(_eval_batch(_trace("t", n=1)), {ENV_PROMPT_COMPONENT: "P"}, True)
+    # Per-example failure -> fallback score, never an exception.
+    assert out.scores == [0.0]
+    assert out.trajectories is not None and "failed" in out.trajectories[0].critique
+
+
+def test_eval_steps_retrieves_demos_without_same_trace_leakage() -> None:
+    from wmh.retrieval import EmbeddingRetriever, HashingEmbedder
+    from wmh.retrieval.leakfree import DemoRetriever
+
+    # Two train traces. Each step's nearest neighbor is its own sibling (same trace) — which must be
+    # excluded — so the demo it actually gets must come from the OTHER trace.
+    train = [_trace("trace-A", n=2), _trace("trace-B", n=2)]
+    # Make trace-B lexically distinct so retrieval has a real choice.
+    for s in train[1].steps:
+        s.action.arguments = {"other": "zzz"}
+        s.state_before.structured = {"loc": "warehouse"}
+
+    demos = DemoRetriever(EmbeddingRetriever(HashingEmbedder(dim=128)), train, top_k=2)
+    eval_steps = _eval_steps(train, demos)
+
+    assert len(eval_steps) == 4
+    a_ids = {id(s) for s in train[0].steps}
+    for es in eval_steps:
+        if id(es.step) in a_ids:  # a trace-A step
+            # None of its demos may be from trace-A (no self/sibling leakage).
+            assert all(id(d) not in a_ids for d in es.demos)
+
+
+def test_eval_steps_zero_shot_without_retriever() -> None:
+    from wmh.retrieval.leakfree import DemoRetriever
+
+    traces = [_trace("t", n=2)]
+    eval_steps = _eval_steps(traces, DemoRetriever(None, traces))  # no retriever -> zero-shot
+    assert len(eval_steps) == 2
+    assert all(es.demos == [] for es in eval_steps)

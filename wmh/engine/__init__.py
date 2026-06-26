@@ -2,6 +2,16 @@
 
 from wmh.engine.build import build, ingest, split_traces
 from wmh.engine.demo import DemoResult, run_demo
+from wmh.engine.eval import EvalReport, evaluate_files
 from wmh.engine.world_model import WorldModel
 
-__all__ = ["build", "ingest", "split_traces", "DemoResult", "run_demo", "WorldModel"]
+__all__ = [
+    "build",
+    "ingest",
+    "split_traces",
+    "DemoResult",
+    "run_demo",
+    "EvalReport",
+    "evaluate_files",
+    "WorldModel",
+]
