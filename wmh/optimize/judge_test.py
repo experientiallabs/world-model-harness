@@ -3,8 +3,22 @@
 from __future__ import annotations
 
 from wmh.core.types import Action, ActionKind, Observation, Step
-from wmh.optimize.judge import Judge, JudgeResult, LLMJudge, _parse_judgement
+from wmh.optimize.judge import (
+    JUDGE_MARKER,
+    JUDGE_SYSTEM,
+    Judge,
+    JudgeResult,
+    LLMJudge,
+    _parse_judgement,
+)
 from wmh.providers.base import Completion, Message, ProviderConfig, ProviderKind
+
+
+def test_judge_system_contains_marker() -> None:
+    # Run-cost attribution (wmh.tracking.metered.classify_build_call) recognizes judge calls by
+    # JUDGE_MARKER. If the prompt is edited to no longer contain it, judge cost is silently
+    # misattributed to GEPA — pin the coupling here.
+    assert JUDGE_MARKER in JUDGE_SYSTEM
 
 
 class FakeProvider:

@@ -65,8 +65,15 @@ def play_turn(world_model: WorldModel, session_id: str, action: Action) -> PlayT
 
 
 def _looks_like_tool_name(token: str) -> bool:
-    """A tool name is an identifier-ish token: letters/digits/._- starting with a letter."""
-    return bool(token) and token[0].isalpha() and all(c.isalnum() or c in "._-" for c in token)
+    """A tool name is an ASCII identifier-ish token: [A-Za-z][A-Za-z0-9._-]*.
+
+    ASCII-only on purpose: `str.isalpha()`/`isalnum()` accept Unicode letters/digits, so without
+    this a non-ASCII first word (e.g. "café ..." or "日本 ...") would be misread as a tool call
+    instead of a prose message.
+    """
+    if not token or not ("a" <= token[0].lower() <= "z"):
+        return False
+    return all(c.isascii() and (c.isalnum() or c in "._-") for c in token)
 
 
 def _parse_arguments(rest: str) -> JsonObject:
