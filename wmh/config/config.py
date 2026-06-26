@@ -31,10 +31,25 @@ class HarnessConfig(BaseModel):
     providers: list[ProviderConfig] = Field(default_factory=list)
     serve_provider: ProviderKind = ProviderKind.ANTHROPIC  # serves the live world model
     embed_provider: ProviderKind = ProviderKind.OPENAI  # supplies phi for retrieval
+    embed_dim: int = 512  # phi dimensionality; the offline HashingEmbedder's vector size
     top_k: int = 5  # demos retrieved per step (DreamGym k)
     train_split: float = 0.8  # train/held-out ratio for GEPA
     gepa_budget: int = 50  # rollout budget for prompt evolution
     trace_adapter: str = "otel-genai"
+
+    def provider_config(self, kind: ProviderKind) -> ProviderConfig:
+        """Return the configured ProviderConfig for `kind` (model + backend knobs)."""
+        for pc in self.providers:
+            if pc.kind == kind:
+                return pc
+        raise ValueError(
+            f"no provider config for {kind.value}; configure it before building/serving "
+            f"(have: {[pc.kind.value for pc in self.providers]})"
+        )
+
+    def serve_provider_config(self) -> ProviderConfig:
+        """The ProviderConfig that serves the live world model."""
+        return self.provider_config(self.serve_provider)
 
 
 class ArtifactPaths:

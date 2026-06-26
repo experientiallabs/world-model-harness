@@ -58,6 +58,17 @@ class ProviderConfig(BaseModel):
 
 
 @runtime_checkable
+class Embedder(Protocol):
+    """The embedding half of a provider (phi in DreamGym).
+
+    Retrieval depends only on this narrower capability, so it accepts either a full `Provider` or a
+    standalone local embedder (`wmh.retrieval.embedders.HashingEmbedder`) without requiring creds.
+    """
+
+    def embed(self, texts: list[str]) -> list[list[float]]: ...
+
+
+@runtime_checkable
 class Provider(Protocol):
     """The single interface all four backends implement."""
 
