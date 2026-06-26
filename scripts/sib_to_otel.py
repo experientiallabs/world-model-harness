@@ -6,7 +6,7 @@ that `wmh.ingest.otel_genai` already ingests. One transcript -> one trace; each 
 an LLM span (a `bash` tool call), each following environment reply -> an `execute_tool` span.
 
 Usage:
-    python scripts/sib_to_otel.py <sib_traces_dir> <out.jsonl>
+    python scripts/sib_to_otel.py <sib_traces_dir> <out.jsonl> [label]
 
 where <sib_traces_dir> holds SIB transcript files like:
     {"messages": [{"role": "system"|"user"|"assistant", "content": "..."}], "exit_status": ...}
@@ -17,6 +17,7 @@ is a `user` message wrapping `<returncode>N</returncode>` and `<output>...</outp
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import sys
@@ -173,32 +174,40 @@ def transcript_to_spans(transcript: Mapping[str, JsonValue], trace_id: str) -> l
     return spans
 
 
-def _trace_id_for(path: Path, index: int) -> str:
-    """Deterministic 32-hex trace id derived from the file stem (stable across runs)."""
-    stem = path.stem
-    digest = "".join(f"{ord(c):02x}" for c in stem)[:24]
-    return f"{digest:0<24}{index:08x}"[:32]
+def _trace_id_for(path: Path, label: str) -> str:
+    """Deterministic 32-hex trace id from `label` + file stem (stable, no cross-bench collisions).
+
+    `label` (e.g. the benchmark name) is folded into the hash so the same task stem in two different
+    benchmarks does not collide into one trace.
+    """
+    key = f"{label}/{path.stem}".encode()
+    return hashlib.blake2b(key, digest_size=16).hexdigest()
 
 
-def convert_dir(traces_dir: Path) -> list[JsonObject]:
-    """Convert every transcript in `traces_dir` into a flat list of spans across all traces."""
+def convert_dir(traces_dir: Path, label: str | None = None) -> list[JsonObject]:
+    """Convert every transcript in `traces_dir` into a flat list of spans across all traces.
+
+    `label` namespaces the trace ids (defaults to the directory's parent name, e.g. the benchmark).
+    """
+    label = label or traces_dir.parent.name or traces_dir.name
     all_spans: list[JsonObject] = []
-    for index, path in enumerate(sorted(traces_dir.glob("*.json"))):
+    for path in sorted(traces_dir.glob("*.json")):
         transcript = json.loads(path.read_text(encoding="utf-8"))
         if not isinstance(transcript, dict):
             continue
-        trace_id = _trace_id_for(path, index)
+        trace_id = _trace_id_for(path, label)
         all_spans.extend(transcript_to_spans(transcript, trace_id))
     return all_spans
 
 
 def main(argv: list[str]) -> int:
-    if len(argv) != 3:
+    if len(argv) not in (3, 4):
         print(__doc__)
         return 2
     traces_dir = Path(argv[1])
     out_path = Path(argv[2])
-    spans = convert_dir(traces_dir)
+    label = argv[3] if len(argv) == 4 else None
+    spans = convert_dir(traces_dir, label)
     with out_path.open("w", encoding="utf-8") as fh:
         for span in spans:
             fh.write(json.dumps(span) + "\n")

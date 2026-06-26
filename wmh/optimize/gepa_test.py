@@ -14,6 +14,7 @@ from wmh.optimize.gepa import (
     Optimizer,
     OptimizeResult,
     WorldModelGEPAAdapter,
+    _EvalStep,
     predict_observation,
 )
 from wmh.optimize.judge import JudgeResult
@@ -127,10 +128,13 @@ def test_optimize_with_no_traces_returns_base_prompt() -> None:
     assert result.frontier == ["BASE"]
 
 
+def _eval_batch(trace: Trace) -> list[_EvalStep]:
+    return [_EvalStep(step=s, demos=[]) for s in trace.steps]
+
+
 def test_adapter_evaluate_scores_and_captures_traces() -> None:
     adapter = WorldModelGEPAAdapter(FakeProvider(), FakeJudge(score=0.7))
-    batch = _trace("t", n=2).steps
-    out = adapter.evaluate(batch, {ENV_PROMPT_COMPONENT: "P"}, capture_traces=True)
+    out = adapter.evaluate(_eval_batch(_trace("t", n=2)), {ENV_PROMPT_COMPONENT: "P"}, True)
     assert out.scores == [0.7, 0.7]
     assert out.trajectories is not None and len(out.trajectories) == 2
 
@@ -148,7 +152,38 @@ def test_adapter_evaluate_survives_rollout_failure() -> None:
             raise RuntimeError("judge exploded")
 
     adapter = WorldModelGEPAAdapter(FakeProvider(), BoomJudge())
-    out = adapter.evaluate(_trace("t", n=1).steps, {ENV_PROMPT_COMPONENT: "P"}, capture_traces=True)
+    out = adapter.evaluate(_eval_batch(_trace("t", n=1)), {ENV_PROMPT_COMPONENT: "P"}, True)
     # Per-example failure -> fallback score, never an exception.
     assert out.scores == [0.0]
     assert out.trajectories is not None and "failed" in out.trajectories[0].critique
+
+
+def test_eval_steps_retrieves_demos_without_same_trace_leakage() -> None:
+    from wmh.retrieval import EmbeddingRetriever, HashingEmbedder
+
+    # Two train traces. Each step's nearest neighbor is its own sibling (same trace) — which must be
+    # excluded — so the demo it actually gets must come from the OTHER trace.
+    train = [_trace("trace-A", n=2), _trace("trace-B", n=2)]
+    # Make trace-B lexically distinct so retrieval has a real choice.
+    for s in train[1].steps:
+        s.action.arguments = {"other": "zzz"}
+        s.state_before.structured = {"loc": "warehouse"}
+
+    retriever = EmbeddingRetriever(HashingEmbedder(dim=128))
+    optimizer = GEPAOptimizer(FakeProvider(), FakeJudge(), retriever=retriever)
+    retriever.index(train)
+    eval_steps = optimizer._eval_steps(train, corpus=train, top_k=2)
+
+    assert len(eval_steps) == 4
+    a_ids = {id(s) for s in train[0].steps}
+    for es in eval_steps:
+        if id(es.step) in a_ids:  # a trace-A step
+            # None of its demos may be from trace-A (no self/sibling leakage).
+            assert all(id(d) not in a_ids for d in es.demos)
+
+
+def test_eval_steps_zero_shot_without_retriever() -> None:
+    optimizer = GEPAOptimizer(FakeProvider(), FakeJudge())  # no retriever
+    eval_steps = optimizer._eval_steps([_trace("t", n=2)], corpus=[_trace("t", n=2)])
+    assert len(eval_steps) == 2
+    assert all(es.demos == [] for es in eval_steps)

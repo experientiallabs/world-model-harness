@@ -71,12 +71,14 @@ def build(
     provider = serve_provider or get_provider(config.serve_provider_config())
     embed = embedder or HashingEmbedder(dim=config.embed_dim)
 
-    # Retrieval index over the full corpus: at serve time we retrieve from everything we have seen.
+    # Serving index over the full corpus: at serve time we retrieve from everything we have seen.
     retriever = EmbeddingRetriever(embed)
     retriever.index(traces)
 
-    # GEPA evolves the env prompt on the held-out split; fall back to train if the split is empty.
-    optimizer = GEPAOptimizer(provider, LLMJudge(provider))
+    # GEPA evolves the env prompt under serving conditions: it retrieves demos the same way the
+    # world model will, but from a SEPARATE retriever it re-indexes over train-only (so held-out
+    # steps never retrieve themselves). The embedder is stateless, so it's safe to share.
+    optimizer = GEPAOptimizer(provider, LLMJudge(provider), retriever=EmbeddingRetriever(embed))
     result = optimizer.optimize(train, test or train, BASE_ENV_PROMPT, config.gepa_budget)
 
     _persist(paths, config, retriever, result)
