@@ -52,5 +52,11 @@ def verify_embedder(config: ProviderConfig) -> VerifyResult:
         vectors = get_provider(config).embed(["ping"])
     except Exception as exc:  # noqa: BLE001 - verification must not crash startup
         return VerifyResult(ok=False, kind=config.kind, model=embed_model, detail=str(exc))
-    dim = len(vectors[0]) if vectors and vectors[0] else 0
+    # A successful call must return one non-empty vector; an empty result or a zero-width vector
+    # means the embed path didn't actually produce usable phi — report that as a failure, not ok.
+    dim = len(vectors[0]) if vectors else 0
+    if dim == 0:
+        return VerifyResult(
+            ok=False, kind=config.kind, model=embed_model, detail="embed returned no vector"
+        )
     return VerifyResult(ok=True, kind=config.kind, model=embed_model, detail=f"dim={dim}")

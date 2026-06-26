@@ -107,9 +107,7 @@ class RunTracker:
 
     def record(self, phase: Phase, model: str, usage: TokenUsage) -> UsageEvent:
         """Record one metered LLM call, pricing it via the model pricing table."""
-        event = UsageEvent(
-            phase=phase, model=model, usage=usage, cost_usd=cost_usd(model, usage)
-        )
+        event = UsageEvent(phase=phase, model=model, usage=usage, cost_usd=cost_usd(model, usage))
         self._events.append(event)
         return event
 
