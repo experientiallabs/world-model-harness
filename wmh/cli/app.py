@@ -523,7 +523,9 @@ def bench_run(
 
     run = run_benchmark(bench_def, prompt, prompt_label, score_once, on_seed=on_seed)
     run.run_id = uuid.uuid4().hex
-    run.created_at = datetime.now(UTC).isoformat(timespec="seconds")
+    # Microsecond precision so two runs of the same prompt seconds apart still order by recency on
+    # the leaderboard (created_at is the primary "latest" key; see wmh.bench.leaderboard._newer).
+    run.created_at = datetime.now(UTC).isoformat(timespec="microseconds")
     out = save_run(run, results_dir_for(bench_def.dir))
 
     _console.print(

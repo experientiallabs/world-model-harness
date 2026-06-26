@@ -9,10 +9,11 @@ harness.
 
 from __future__ import annotations
 
-import math
 from pathlib import Path
 
 from pydantic import BaseModel, Field
+
+from wmh.bench._stats import pop_std
 
 RESULTS_DIRNAME = "results"
 
@@ -87,7 +88,7 @@ class BenchRun(BaseModel):
             sample_turns=sample_turns,
             rollouts=rollouts,
             fidelity_mean=mean,
-            fidelity_std=_pop_std([s.fidelity_mean for s in seeds]),
+            fidelity_std=pop_std([s.fidelity_mean for s in seeds]),
             total_steps=total_steps,
             seeds=seeds,
         )
@@ -116,15 +117,6 @@ def load_runs(results_dir: str | Path) -> list[BenchRun]:
         BenchRun.model_validate_json(p.read_text(encoding="utf-8"))
         for p in sorted(path.glob("*.json"))
     ]
-
-
-def _pop_std(values: list[float]) -> float:
-    """Population standard deviation; 0.0 for fewer than two values."""
-    if len(values) < 2:
-        return 0.0
-    mean = sum(values) / len(values)
-    variance = sum((v - mean) ** 2 for v in values) / len(values)
-    return math.sqrt(variance)
 
 
 __all__ = [

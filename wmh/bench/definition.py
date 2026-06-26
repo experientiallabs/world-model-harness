@@ -19,7 +19,7 @@ import tomllib
 from pathlib import Path
 from typing import Literal
 
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, Field, ValidationError, field_validator
 
 # How many held-out turns to score per trace. Matches the eval scorer's contract
 # (`wmh.engine.replay`): "all" scores every step; "sampled" takes Qwen-AgentWorld's 5-turn protocol
@@ -67,6 +67,15 @@ class BenchmarkDef(BaseModel):
     traces: list[str] = Field(default_factory=list)  # paths relative to the benchmark dir
     eval: EvalConfig = Field(default_factory=EvalConfig)
     dir: Path = Field(exclude=True)  # the benchmark directory; not serialized back to TOML
+
+    @field_validator("traces")
+    @classmethod
+    def _non_blank_traces(cls, traces: list[str]) -> list[str]:
+        # A blank path resolves to the benchmark dir itself, which exists — so `missing_traces`
+        # would not flag it and the benchmark would silently score nothing. Reject it at load.
+        if any(not t.strip() for t in traces):
+            raise ValueError("trace paths must be non-empty")
+        return traces
 
     def trace_files(self) -> list[Path]:
         """Resolve the configured trace paths against the benchmark directory."""

@@ -19,9 +19,9 @@ reproducible contract and flow through unchanged until that scorer merges.
 
 from __future__ import annotations
 
-import math
 from pathlib import Path
 
+from wmh.bench._stats import pop_std
 from wmh.bench.definition import JudgeConfig, SampleTurns
 from wmh.bench.runner import RolloutScore
 from wmh.engine.eval import evaluate_files
@@ -79,17 +79,10 @@ def evaluate_files_once(
     _ = (sample_turns, temperature, seed)  # forwarded to the open-loop scorer on merge (see TODO)
     return RolloutScore(
         fidelity_mean=sum(fidelities) / len(fidelities),
-        fidelity_std=_pop_std(fidelities),
+        fidelity_std=pop_std(fidelities),
         n_steps=total_steps,
         rollouts=len(fidelities),
     )
-
-
-def _pop_std(values: list[float]) -> float:
-    if len(values) < 2:
-        return 0.0
-    mean = sum(values) / len(values)
-    return math.sqrt(sum((v - mean) ** 2 for v in values) / len(values))
 
 
 __all__ = ["evaluate_files_once"]

@@ -82,6 +82,14 @@ def test_rejects_invalid_sample_turns(tmp_path) -> None:  # noqa: ANN001
         load_benchmark(bench_dir)
 
 
+def test_rejects_blank_trace_path(tmp_path) -> None:  # noqa: ANN001
+    # A blank path would resolve to the benchmark dir itself (which exists), so missing_traces()
+    # would not flag it — reject it at load instead of silently scoring nothing.
+    bench_dir = _write_benchmark(tmp_path, "tau", 'traces = ["", "a.jsonl"]\n')
+    with pytest.raises(ValueError, match="schema"):
+        load_benchmark(bench_dir)
+
+
 def test_rejects_malformed_toml(tmp_path) -> None:  # noqa: ANN001
     bench_dir = _write_benchmark(tmp_path, "tau", "this is = = not toml\n")
     with pytest.raises(ValueError, match="not valid TOML"):
