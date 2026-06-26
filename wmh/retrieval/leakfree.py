@@ -32,9 +32,7 @@ class DemoRetriever:
     is empty, it yields no demos (zero-shot) — callers get the same interface either way.
     """
 
-    def __init__(
-        self, retriever: Retriever | None, corpus: list[Trace], *, top_k: int = 5
-    ) -> None:
+    def __init__(self, retriever: Retriever | None, corpus: list[Trace], *, top_k: int = 5) -> None:
         self._retriever = retriever
         self._top_k = top_k
         self._enabled = retriever is not None and any(t.steps for t in corpus)
@@ -42,9 +40,7 @@ class DemoRetriever:
             assert retriever is not None  # for type-checkers; guarded by _enabled
             retriever.index(corpus)
             # id(step) -> originating trace_id, to exclude a query's own trace from its demos.
-            self._origin: dict[int, str] = {
-                id(s): t.trace_id for t in corpus for s in t.steps
-            }
+            self._origin: dict[int, str] = {id(s): t.trace_id for t in corpus for s in t.steps}
 
     def demos_for(self, trace_id: str, step: Step) -> list[Step]:
         """Return up to top_k demos for `step`, excluding any from `trace_id`'s own trace."""
