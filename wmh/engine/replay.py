@@ -13,18 +13,15 @@ from the query step's own trace.
 
 from __future__ import annotations
 
-from collections.abc import Callable
-
 from pydantic import BaseModel, Field
 
-from wmh.core.types import Step, Trace
+from wmh.core.render import render_action
+from wmh.core.types import Trace
 from wmh.optimize.gepa import predict_observation
 from wmh.optimize.judge import Judge
 from wmh.providers.base import Provider
 from wmh.retrieval import Retriever
-
-# (trace_id, step) -> demos retrieved for that step (leak-free).
-DemoLookup = Callable[[str, Step], list[Step]]
+from wmh.retrieval.leakfree import DemoRetriever
 
 
 class StepResult(BaseModel):
@@ -71,20 +68,24 @@ def replay(
     `retriever` + `train` enable RAG (retrieve demos from the train corpus, leak-free). When either
     is None, replay is zero-shot. Returns a `ReplayReport` with per-step results and aggregates.
     """
-    demos_for = _demo_lookup(held_out, retriever, train, top_k)
+    demos = DemoRetriever(retriever, train or [], top_k=top_k)
     results: list[StepResult] = []
     for trace in held_out:
         for step in trace.steps:
-            demos = demos_for(trace.trace_id, step)
             predicted = predict_observation(
-                provider, prompt, step.task, step.state_before, step.action, demos=demos
+                provider,
+                prompt,
+                step.task,
+                step.state_before,
+                step.action,
+                demos=demos.demos_for(trace.trace_id, step),
             )
             verdict = judge.score(predicted, step.observation, step)
             results.append(
                 StepResult(
                     trace_id=trace.trace_id,
                     task=step.task,
-                    action=_render_action(step),
+                    action=render_action(step.action),
                     predicted=predicted.content,
                     actual=step.observation.content,
                     score=verdict.score,
@@ -94,33 +95,6 @@ def replay(
                 )
             )
     return _aggregate(results)
-
-
-def _render_action(step: Step) -> str:
-    a = step.action
-    return a.name or a.content or "(none)"
-
-
-def _demo_lookup(
-    held_out: list[Trace],
-    retriever: Retriever | None,
-    train: list[Trace] | None,
-    top_k: int,
-) -> DemoLookup:
-    """Build a leak-free demo lookup: retrieve from `train` only, never the query's own trace."""
-    if retriever is None or not train:
-        return lambda _trace_id, _step: []
-    retriever.index(train)
-    origin = {id(s): t.trace_id for t in train for s in t.steps}
-
-    def lookup(trace_id: str, step: Step) -> list[Step]:
-        candidates = retriever.topk(step.state_before, step.action, top_k + _SLACK)
-        return [d for d in candidates if origin.get(id(d)) != trace_id][:top_k]
-
-    return lookup
-
-
-_SLACK = 5
 
 
 def _aggregate(results: list[StepResult]) -> ReplayReport:

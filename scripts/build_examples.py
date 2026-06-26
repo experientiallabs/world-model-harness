@@ -20,6 +20,7 @@ import sys
 from pathlib import Path
 
 from scripts.sib_to_otel import convert_dir
+from wmh.core.types import JsonObject
 
 # Benchmarks to include. swebench is intentionally excluded (per project decision).
 BENCHMARKS = (
@@ -49,7 +50,7 @@ def build_examples(sib_root: Path, out_dir: Path) -> dict[str, int]:
     out_dir.mkdir(parents=True, exist_ok=True)
     counts: dict[str, int] = {}
     for benchmark in BENCHMARKS:
-        spans: list[dict] = []
+        spans: list[JsonObject] = []
         for traces_dir in _trace_dirs(sib_root, benchmark):
             spans.extend(convert_dir(traces_dir, label=benchmark))
         if not spans:

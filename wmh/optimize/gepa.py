@@ -32,6 +32,7 @@ from wmh.core.types import Action, EnvState, JsonValue, Observation, Step, Trace
 from wmh.optimize.judge import Judge
 from wmh.providers.base import Message, Provider
 from wmh.retrieval import Retriever
+from wmh.retrieval.leakfree import DemoRetriever
 
 # The single named component GEPA evolves: the specialized env (system) prompt.
 ENV_PROMPT_COMPONENT = "env_prompt"
@@ -245,11 +246,11 @@ class GEPAOptimizer:
             # Nothing to optimize against (or no budget): the base prompt is the only candidate.
             return OptimizeResult(prompt=base_prompt, frontier=[base_prompt])
 
-        # The retrieval corpus is always the train traces (never held-out), for both splits.
-        if self._retriever is not None:
-            self._retriever.index(train_src)
-        trainset = self._eval_steps(train_src, corpus=train_src)
-        valset = self._eval_steps(val_src, corpus=train_src)
+        # RAG-aware, leak-free: retrieve demos from the train corpus only, never a step's own trace.
+        # Built once and reused for both splits (retrieval is independent of the candidate prompt).
+        demos = DemoRetriever(self._retriever, train_src)
+        trainset = _eval_steps(train_src, demos)
+        valset = _eval_steps(val_src, demos)
         adapter = WorldModelGEPAAdapter(self._provider, self._judge)
         result = gepa.optimize(
             seed_candidate={ENV_PROMPT_COMPONENT: base_prompt},
@@ -278,36 +279,13 @@ class GEPAOptimizer:
             ),
         )
 
-    def _eval_steps(
-        self, traces: list[Trace], *, corpus: list[Trace], top_k: int = 5
-    ) -> list[_EvalStep]:
-        """Bundle each step in `traces` with the demos the serving model would retrieve for it.
-
-        RAG-aware evaluation that matches serving WITHOUT leaking the answer:
-        - Retrieval is over the TRAIN `corpus` only (never the held-out/val steps).
-        - A step never retrieves a demo from its OWN trace (which would surface the very
-          observation we are asking the model to predict, or its immediate neighbors).
-        Retrieval is independent of the candidate prompt, so we compute demos once here and reuse
-        them across every GEPA candidate. With no retriever configured, demos are empty (zero-shot).
-
-        The caller is responsible for `retriever.index(corpus)` before calling this.
-        """
-        if self._retriever is None:
-            return [_EvalStep(step=s, demos=[]) for t in traces for s in t.steps]
-
-        origin: dict[int, str] = {id(s): t.trace_id for t in corpus for s in t.steps}
-        eval_steps: list[_EvalStep] = []
-        for trace in traces:
-            for step in trace.steps:
-                # Over-fetch, then drop any demo from the query's own trace, then take top_k.
-                candidates = self._retriever.topk(step.state_before, step.action, top_k + _SLACK)
-                demos = [d for d in candidates if origin.get(id(d)) != trace.trace_id][:top_k]
-                eval_steps.append(_EvalStep(step=step, demos=demos))
-        return eval_steps
-
-
-# Over-fetch margin so that, after dropping same-trace demos, we can still fill top_k.
-_SLACK = 5
+def _eval_steps(traces: list[Trace], demos: DemoRetriever) -> list[_EvalStep]:
+    """Bundle each step with the (leak-free) demos the serving model would retrieve for it."""
+    return [
+        _EvalStep(step=step, demos=demos.demos_for(trace.trace_id, step))
+        for trace in traces
+        for step in trace.steps
+    ]
 
 
 def _candidate_text(candidate: dict[str, str]) -> str:

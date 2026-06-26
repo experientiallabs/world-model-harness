@@ -14,6 +14,7 @@ from wmh.optimize.gepa import (
     Optimizer,
     OptimizeResult,
     WorldModelGEPAAdapter,
+    _eval_steps,
     _EvalStep,
     predict_observation,
 )
@@ -160,6 +161,7 @@ def test_adapter_evaluate_survives_rollout_failure() -> None:
 
 def test_eval_steps_retrieves_demos_without_same_trace_leakage() -> None:
     from wmh.retrieval import EmbeddingRetriever, HashingEmbedder
+    from wmh.retrieval.leakfree import DemoRetriever
 
     # Two train traces. Each step's nearest neighbor is its own sibling (same trace) — which must be
     # excluded — so the demo it actually gets must come from the OTHER trace.
@@ -169,10 +171,8 @@ def test_eval_steps_retrieves_demos_without_same_trace_leakage() -> None:
         s.action.arguments = {"other": "zzz"}
         s.state_before.structured = {"loc": "warehouse"}
 
-    retriever = EmbeddingRetriever(HashingEmbedder(dim=128))
-    optimizer = GEPAOptimizer(FakeProvider(), FakeJudge(), retriever=retriever)
-    retriever.index(train)
-    eval_steps = optimizer._eval_steps(train, corpus=train, top_k=2)
+    demos = DemoRetriever(EmbeddingRetriever(HashingEmbedder(dim=128)), train, top_k=2)
+    eval_steps = _eval_steps(train, demos)
 
     assert len(eval_steps) == 4
     a_ids = {id(s) for s in train[0].steps}
@@ -183,7 +183,9 @@ def test_eval_steps_retrieves_demos_without_same_trace_leakage() -> None:
 
 
 def test_eval_steps_zero_shot_without_retriever() -> None:
-    optimizer = GEPAOptimizer(FakeProvider(), FakeJudge())  # no retriever
-    eval_steps = optimizer._eval_steps([_trace("t", n=2)], corpus=[_trace("t", n=2)])
+    from wmh.retrieval.leakfree import DemoRetriever
+
+    traces = [_trace("t", n=2)]
+    eval_steps = _eval_steps(traces, DemoRetriever(None, traces))  # no retriever -> zero-shot
     assert len(eval_steps) == 2
     assert all(es.demos == [] for es in eval_steps)
