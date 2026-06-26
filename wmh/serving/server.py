@@ -10,7 +10,6 @@ from __future__ import annotations
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
-from wmh.config import DEFAULT_MODEL_NAME
 from wmh.core.types import Action, EnvState, Observation, Session
 from wmh.engine.world_model import WorldModel
 
@@ -38,8 +37,8 @@ class ModelsResponse(BaseModel):
 
 def _load_named_models(artifact_dir: str, names: list[str] | None) -> dict[str, WorldModel]:
     """Load the requested world models (or all built ones) from `artifact_dir` by name."""
-    from wmh.config import WorldModelStore, load_config
-    from wmh.providers import get_provider
+    from wmh.config import WorldModelStore
+    from wmh.engine import load_world_model
 
     store = WorldModelStore(artifact_dir)
     chosen = names if names is not None else store.list_names()
@@ -49,10 +48,8 @@ def _load_named_models(artifact_dir: str, names: list[str] | None) -> dict[str, 
         )
     models: dict[str, WorldModel] = {}
     for name in chosen:
-        model_dir = str(store.resolve(name))
-        config = load_config(model_dir)
-        provider = get_provider(config.serve_provider_config())
-        models[name] = WorldModel.load(model_dir, provider)
+        world_model, _provider = load_world_model(store.resolve(name))
+        models[name] = world_model
     return models
 
 
@@ -60,21 +57,14 @@ def create_app(
     artifact_dir: str = ".wmh",
     names: list[str] | None = None,
     world_models: dict[str, WorldModel] | None = None,
-    world_model: WorldModel | None = None,
 ) -> FastAPI:
     """Build the FastAPI app serving one or more named WorldModels.
 
-    Models come from one of (in precedence order): `world_models` (name -> model, for tests),
-    `world_model` (a single injected model, registered under the default name), or loading from
-    `artifact_dir` with `names` selecting which (default: all built ones).
+    Models are either injected directly via `world_models` (name -> model, for tests), or loaded
+    from `artifact_dir` with `names` selecting which to serve (default: all built ones).
     """
     app = FastAPI(title="World Model Harness")
-    if world_models is not None:
-        models = world_models
-    elif world_model is not None:
-        models = {DEFAULT_MODEL_NAME: world_model}
-    else:
-        models = _load_named_models(artifact_dir, names)
+    models = world_models if world_models is not None else _load_named_models(artifact_dir, names)
 
     def _model_or_404(name: str) -> WorldModel:
         try:

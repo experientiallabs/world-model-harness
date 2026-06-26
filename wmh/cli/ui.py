@@ -297,19 +297,22 @@ _PLAY_HELP = (
 )
 
 
+_AGENT_PROMPT = "[bold]agent>[/bold] "
+
+
 def run_play_repl(
     console: Console,
     world_model: WorldModel,
     model_name: str,
     task: str | None,
-    read_line: Callable[[], str] | None = None,
+    reader: PromptReader | None = None,
 ) -> None:
     """Run the human-in-the-loop demo against `world_model`.
 
-    `read_line` is an optional callable `() -> str` used to source input (injected in tests); it
-    defaults to the console's prompt. The loop ends on `:quit`, EOF, or KeyboardInterrupt.
+    `reader` is an optional `PromptReader` (`(prompt_text) -> line`) used to source input — injected
+    in tests, defaults to the console's prompt. The loop ends on `:quit`, EOF, or KeyboardInterrupt.
     """
-    prompt = read_line if read_line is not None else (lambda: console.input("[bold]agent>[/bold] "))
+    ask = reader if reader is not None else console.input
     session = world_model.new_session(task=task)
     console.print(
         Panel(
@@ -322,7 +325,7 @@ def run_play_repl(
 
     while True:
         try:
-            line = prompt()
+            line = ask(_AGENT_PROMPT)
         except (EOFError, KeyboardInterrupt):
             console.print("\n[dim]bye[/dim]")
             return

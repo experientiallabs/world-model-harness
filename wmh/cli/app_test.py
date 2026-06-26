@@ -72,19 +72,19 @@ def _traces_file(tmp_path) -> str:  # noqa: ANN001 - pytest fixture path
 def patched_provider(monkeypatch) -> None:  # noqa: ANN001 - pytest fixture
     """Swap the real provider registry for the fake everywhere the CLI constructs one.
 
-    `build.py` binds `get_provider` at import time, while `app.py` imports it lazily inside each
-    command; we patch both the build module's bound name and the registry the lazy imports read.
+    Each module binds `get_provider` at its own import time (build.py for the build pipeline,
+    loader.py for serve/demo/play), so patch every module-level name plus the registry the lazy
+    imports read.
     """
     import sys
 
     import wmh.providers as providers_pkg
 
-    # `wmh.engine.__init__` rebinds the name `build` to the function, shadowing the submodule
-    # attribute, so reach the module object through sys.modules rather than attribute access.
-    build_module = sys.modules["wmh.engine.build"]
-
     fake = FakeProvider()
-    monkeypatch.setattr(build_module, "get_provider", lambda config: fake)
+    # `wmh.engine.__init__` rebinds the name `build` to the function, shadowing the submodule
+    # attribute, so reach module objects through sys.modules rather than attribute access.
+    for module_name in ("wmh.engine.build", "wmh.engine.loader"):
+        monkeypatch.setattr(sys.modules[module_name], "get_provider", lambda config: fake)
     monkeypatch.setattr(providers_pkg, "get_provider", lambda config: fake)
 
 

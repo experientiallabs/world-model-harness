@@ -1,0 +1,26 @@
+"""Load a built world model from its artifact directory.
+
+One place owns the "artifact dir -> live WorldModel" sequence (read config -> construct the serve
+provider -> `WorldModel.load`). The CLI and the serving layer both call this so the loading path
+stays identical no matter how the model was selected (by name, by picker, or served in bulk).
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+from wmh.config import load_config
+from wmh.engine.world_model import WorldModel
+from wmh.providers import get_provider
+from wmh.providers.base import Provider
+
+
+def load_world_model(model_dir: str | Path) -> tuple[WorldModel, Provider]:
+    """Load the world model under `model_dir`, returning it with the serve provider it was built on.
+
+    The provider is returned alongside so callers that also need it (e.g. `wmh demo`, which runs an
+    LLM agent against the same provider) don't re-read the config or reconstruct it.
+    """
+    config = load_config(str(model_dir))
+    provider = get_provider(config.serve_provider_config())
+    return WorldModel.load(str(model_dir), provider), provider

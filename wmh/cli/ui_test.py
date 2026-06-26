@@ -97,12 +97,9 @@ def test_models_table_renders_names() -> None:
 
 def test_play_repl_renders_observation_and_state_then_quits() -> None:
     console = Console(force_terminal=False, no_color=True, width=100)
-    lines = iter(['get_user {"id": "u1"}', ":state", ":quit"])
-
+    reader = _scripted_reader(['get_user {"id": "u1"}', ":state", ":quit"])
     with console.capture() as cap:
-        run_play_repl(
-            console, _world_model(), "airline", task="look up users", read_line=lambda: next(lines)
-        )
+        run_play_repl(console, _world_model(), "airline", task="look up users", reader=reader)
     out = cap.get()
     assert "found u1" in out  # observation rendered
     assert "looked up u1" in out  # scratchpad updated and shown by :state
@@ -111,20 +108,20 @@ def test_play_repl_renders_observation_and_state_then_quits() -> None:
 
 def test_play_repl_reports_parse_errors_without_crashing() -> None:
     console = Console(force_terminal=False, no_color=True, width=100)
-    lines = iter(['get_user ["bad"]', ":quit"])
+    reader = _scripted_reader(['get_user ["bad"]', ":quit"])
     with console.capture() as cap:
-        run_play_repl(console, _world_model(), "airline", task=None, read_line=lambda: next(lines))
+        run_play_repl(console, _world_model(), "airline", task=None, reader=reader)
     assert "parse error" in cap.get()
 
 
 def test_play_repl_exits_cleanly_on_eof() -> None:
     console = Console(force_terminal=False, no_color=True, width=100)
 
-    def eof() -> str:
+    def eof(_prompt: str) -> str:
         raise EOFError
 
     with console.capture() as cap:
-        run_play_repl(console, _world_model(), "airline", task=None, read_line=eof)
+        run_play_repl(console, _world_model(), "airline", task=None, reader=eof)
     assert "bye" in cap.get()
 
 

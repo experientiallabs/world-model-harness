@@ -219,15 +219,12 @@ def _load_model(name: str | None, root: str):  # noqa: ANN202 - (WorldModel, nam
     Returns `(world_model, resolved_name, provider)` so callers can reuse the provider without
     re-reading config / reconstructing it.
     """
-    from wmh.engine.world_model import WorldModel
-    from wmh.providers import get_provider
+    from wmh.engine import load_world_model
 
     store = WorldModelStore(root)
     resolved_name = _resolve_name(store, name)
-    model_dir = store.model_dir(resolved_name)
-    config = load_config(str(model_dir))
-    provider = get_provider(config.serve_provider_config())
-    return WorldModel.load(str(model_dir), provider), resolved_name, provider
+    world_model, provider = load_world_model(store.model_dir(resolved_name))
+    return world_model, resolved_name, provider
 
 
 if __name__ == "__main__":
