@@ -11,14 +11,15 @@ steps (`add`).
 
 from __future__ import annotations
 
-import json
+from pathlib import Path
 from typing import Protocol, runtime_checkable
 
 import numpy as np
 from numpy.typing import NDArray
 
-from wmh.core.types import Action, EnvState, JsonObject, Observation, Step, Trace
-from wmh.providers.base import Provider
+from wmh.core.render import encode_state_action
+from wmh.core.types import Action, EnvState, Observation, Step, Trace
+from wmh.providers.base import Embedder
 
 # A placeholder observation for query-only encoding: topk embeds (state, action), never the result.
 _EMPTY_OBS = Observation(content="")
@@ -38,12 +39,9 @@ class Retriever(Protocol):
         """Online enrichment: add a freshly generated step to the buffer."""
         ...
 
-
-def _render_json(value: JsonObject) -> str:
-    """Stable, human-readable one-liner for a JSON object (sorted keys, no whitespace churn)."""
-    if not value:
-        return "{}"
-    return json.dumps(value, sort_keys=True, separators=(",", ":"), default=str)
+    def sample(self, n: int) -> list[Step]:
+        """Return up to `n` steps from the buffer (e.g. to seed the demo agent)."""
+        ...
 
 
 class EmbeddingRetriever:
@@ -55,39 +53,19 @@ class EmbeddingRetriever:
     matching DreamGym Eq. 4's ``Topk(cos(phi(s_t,a_t), phi(s_i,a_i)))``.
     """
 
-    def __init__(self, provider: Provider) -> None:
+    def __init__(self, provider: Embedder) -> None:
         self._provider = provider
         # Parallel structures: row i of `_matrix` is the embedding of `_steps[i]`.
         self._steps: list[Step] = []
         self._matrix: NDArray[np.float64] | None = None
 
-    @staticmethod
-    def _encode_text(state: EnvState, action: Action) -> str:
-        """Render (state, action) into the text we embed for phi(s, a).
-
-        We embed a *structured summary* rather than raw JSON blobs: a labelled, line-oriented
-        rendering of the env state (structured config + scratchpad "database") followed by the
-        action (kind, tool name, arguments, message). Labels are stable and keys are sorted so
-        semantically equal steps render identically, keeping cosine similarity meaningful across
-        traces.
-        """
-        lines = [
-            "STATE:",
-            f"  structured: {_render_json(state.structured)}",
-        ]
-        if state.scratchpad:
-            lines.append(f"  scratchpad: {state.scratchpad}")
-        lines.append(f"ACTION kind={action.kind.value}")
-        if action.name is not None:
-            lines.append(f"  tool: {action.name}")
-        if action.arguments:
-            lines.append(f"  arguments: {_render_json(action.arguments)}")
-        if action.content is not None:
-            lines.append(f"  message: {action.content}")
-        return "\n".join(lines)
+    # phi(s, a): retrieval embeds the canonical (state, action) summary from wmh.core.render, the
+    # same text the engine and GEPA render, so an embedded step and a shown demo describe one step
+    # identically.
+    _encode_text = staticmethod(encode_state_action)
 
     def _embed_steps(self, steps: list[Step]) -> NDArray[np.float64]:
-        texts = [self._encode_text(s.state_before, s.action) for s in steps]
+        texts = [encode_state_action(s.state_before, s.action) for s in steps]
         vectors = self._provider.embed(texts)
         return np.asarray(vectors, dtype=np.float64)
 
@@ -107,6 +85,11 @@ class EmbeddingRetriever:
         query = self._embed_steps(
             [Step(action=action, observation=_EMPTY_OBS, state_before=state)]
         )[0]
+        if query.shape[0] != self._matrix.shape[1]:
+            raise ValueError(
+                f"embedder produces dim {query.shape[0]} but the indexed buffer has dim "
+                f"{self._matrix.shape[1]}; load the same embedder (embed_dim) used at build time"
+            )
         scores = _cosine(query, self._matrix)
         # argsort ascending, take the tail, reverse for descending-similarity order.
         count = min(k, len(self._steps))
@@ -121,6 +104,39 @@ class EmbeddingRetriever:
             self._matrix = vector
         else:
             self._matrix = np.vstack([self._matrix, vector])
+
+    def sample(self, n: int) -> list[Step]:
+        """Return the first up-to-`n` steps from the buffer (deterministic; no RNG needed)."""
+        return self._steps[: max(0, n)]
+
+    def save(self, index_dir: str | Path) -> None:
+        """Persist the buffer (embedding matrix + parallel steps) under `index_dir`.
+
+        `wmh build` writes this; `wmh serve` / `WorldModel.load` reloads it without re-embedding.
+        """
+        path = Path(index_dir)
+        path.mkdir(parents=True, exist_ok=True)
+        matrix = self._matrix if self._matrix is not None else np.empty((0, 0), dtype=np.float64)
+        np.save(path / _MATRIX_FILE, matrix)
+        with (path / _STEPS_FILE).open("w", encoding="utf-8") as fh:
+            for step in self._steps:
+                fh.write(step.model_dump_json() + "\n")
+
+    def load(self, index_dir: str | Path) -> None:
+        """Reload a buffer previously written by `save`, replacing any current contents."""
+        path = Path(index_dir)
+        matrix = np.load(path / _MATRIX_FILE)
+        steps = [
+            Step.model_validate_json(line)
+            for line in (path / _STEPS_FILE).read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+        self._steps = steps
+        self._matrix = matrix if matrix.size and steps else None
+
+
+_MATRIX_FILE = "embeddings.npy"
+_STEPS_FILE = "steps.jsonl"
 
 
 def _cosine(query: NDArray[np.float64], matrix: NDArray[np.float64]) -> NDArray[np.float64]:

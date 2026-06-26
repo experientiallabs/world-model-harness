@@ -6,32 +6,94 @@ Ingestion is part of the build: there is no separate ingest step.
 
 from __future__ import annotations
 
-from wmh.config import HarnessConfig
+import hashlib
+import json
+
+from wmh.config import ArtifactPaths, HarnessConfig, save_config
 from wmh.core.types import Trace
-from wmh.ingest import VendorPull
+from wmh.engine.prompts import BASE_ENV_PROMPT
+from wmh.ingest import VendorPull, get_adapter
+from wmh.optimize import GEPAOptimizer, LLMJudge, OptimizeResult
+from wmh.providers import get_provider
+from wmh.providers.base import Embedder, Provider
+from wmh.retrieval import EmbeddingRetriever, HashingEmbedder
 
 
 def ingest(
     config: HarnessConfig, *, file: str | None = None, vendor: VendorPull | None = None
 ) -> list[Trace]:
     """Load + normalize traces from a file upload or a vendor SDK pull into `Trace` objects."""
-    # adapter = get_adapter(config.trace_adapter)
-    # return adapter.from_file(file) if file is not None else adapter.from_vendor(vendor)
-    raise NotImplementedError
+    adapter = get_adapter(config.trace_adapter)
+    if file is not None:
+        return adapter.from_file(file)
+    if vendor is not None:
+        return adapter.from_vendor(vendor)
+    raise ValueError("ingest needs either a file path or a vendor pull")
 
 
 def split_traces(traces: list[Trace], train_split: float) -> tuple[list[Trace], list[Trace]]:
-    """Deterministic train/held-out split for GEPA (held-out is never seen during evolution)."""
-    # TODO: stable split (e.g. by hashing trace_id) so rebuilds are reproducible.
-    raise NotImplementedError
+    """Deterministic train/held-out split for GEPA (held-out is never seen during evolution).
+
+    Assignment is by a stable hash of `trace_id`, so the same corpus always splits the same way
+    regardless of order and rebuilds are reproducible. `train_split` is the target train fraction.
+    """
+    train: list[Trace] = []
+    test: list[Trace] = []
+    for trace in traces:
+        digest = hashlib.blake2b(trace.trace_id.encode("utf-8"), digest_size=8).digest()
+        # Map the hash to [0, 1); below the threshold -> train.
+        fraction = int.from_bytes(digest, "big") / 2**64
+        (train if fraction < train_split else test).append(trace)
+    return train, test
 
 
 def build(
-    config: HarnessConfig, *, file: str | None = None, vendor: VendorPull | None = None
+    config: HarnessConfig,
+    *,
+    file: str | None = None,
+    vendor: VendorPull | None = None,
+    root: str = ".wmh",
+    serve_provider: Provider | None = None,
+    embedder: Embedder | None = None,
+) -> OptimizeResult:
+    """Ingest traces and run the full build, creating + persisting the artifact under `root`.
+
+    `serve_provider` / `embedder` are injectable for testing; in production they are constructed
+    from `config` (serve provider via the registry, embedder = offline HashingEmbedder sized to
+    `config.embed_dim`). Returns the GEPA OptimizeResult (also persisted).
+    """
+    paths = ArtifactPaths(root)
+    traces = ingest(config, file=file, vendor=vendor)
+    if not traces:
+        raise ValueError("no traces ingested; nothing to build")
+    train, test = split_traces(traces, config.train_split)
+
+    provider = serve_provider or get_provider(config.serve_provider_config())
+    embed = embedder or HashingEmbedder(dim=config.embed_dim)
+
+    # Retrieval index over the full corpus: at serve time we retrieve from everything we have seen.
+    retriever = EmbeddingRetriever(embed)
+    retriever.index(traces)
+
+    # GEPA evolves the env prompt on the held-out split; fall back to train if the split is empty.
+    optimizer = GEPAOptimizer(provider, LLMJudge(provider))
+    result = optimizer.optimize(train, test or train, BASE_ENV_PROMPT, config.gepa_budget)
+
+    _persist(paths, config, retriever, result)
+    return result
+
+
+def _persist(
+    paths: ArtifactPaths,
+    config: HarnessConfig,
+    retriever: EmbeddingRetriever,
+    result: OptimizeResult,
 ) -> None:
-    """Ingest traces and run the full build, creating + persisting the artifact under `.wmh/`."""
-    # traces = ingest(config, file=file, vendor=vendor)
-    # train, test = split_traces(traces, config.train_split)
-    # retriever.index(train); optimizer.optimize(train, test, BASE_ENV_PROMPT, config.gepa_budget)
-    # persist prompts, frontier, metrics, and the index.
-    raise NotImplementedError
+    """Write config, prompts, frontier, metrics, and the retrieval index under `.wmh/`."""
+    save_config(config, paths.root)
+    paths.base_prompt.parent.mkdir(parents=True, exist_ok=True)
+    paths.base_prompt.write_text(BASE_ENV_PROMPT, encoding="utf-8")
+    paths.optimized_prompt.write_text(result.prompt, encoding="utf-8")
+    paths.frontier.write_text(json.dumps(result.frontier, indent=2), encoding="utf-8")
+    paths.metrics.write_text(result.metrics.model_dump_json(indent=2), encoding="utf-8")
+    retriever.save(paths.index)

@@ -119,3 +119,32 @@ def test_encode_text_is_structured_and_stable() -> None:
     assert "scratchpad: logged in" in text
     other = EnvState(structured={"a": 1, "b": 2}, scratchpad="logged in")
     assert EmbeddingRetriever._encode_text(other, action) == text
+
+
+def test_save_load_roundtrip_preserves_topk(tmp_path) -> None:  # noqa: ANN001 - pytest fixture
+    from wmh.retrieval.embedders import HashingEmbedder
+
+    steps = [_step("alpha", 1, "a"), _step("beta", 2, "b"), _step("gamma", 3, "c")]
+    src = EmbeddingRetriever(HashingEmbedder(dim=64))
+    src.index([Trace(trace_id="t", steps=steps)])
+    query_state = EnvState(structured={"loc": "beta"})
+    before = [s.observation.content for s in src.topk(query_state, steps[1].action, k=2)]
+
+    src.save(tmp_path / "index")
+    # Fresh retriever reloads without re-embedding and returns identical ranking.
+    dst = EmbeddingRetriever(HashingEmbedder(dim=64))
+    dst.load(tmp_path / "index")
+    after = [s.observation.content for s in dst.topk(query_state, steps[1].action, k=2)]
+    assert before == after
+    assert len(dst._steps) == 3
+
+
+def test_save_load_empty_buffer(tmp_path) -> None:  # noqa: ANN001 - pytest fixture
+    from wmh.retrieval.embedders import HashingEmbedder
+
+    src = EmbeddingRetriever(HashingEmbedder(dim=16))
+    src.index([])
+    src.save(tmp_path / "index")
+    dst = EmbeddingRetriever(HashingEmbedder(dim=16))
+    dst.load(tmp_path / "index")
+    assert dst.topk(EnvState(), _step("alpha", 1, "a").action, k=3) == []

@@ -11,6 +11,7 @@ from typing import Protocol, runtime_checkable
 
 from pydantic import BaseModel, ValidationError
 
+from wmh.core.parsing import extract_json_object
 from wmh.core.types import Observation, Step
 from wmh.providers.base import Message, Provider
 
@@ -79,7 +80,7 @@ def _parse_judgement(text: str) -> JudgeResult:
     Falls back to a neutral-but-flagged failure rather than raising, so a single malformed reply
     does not abort a whole GEPA run.
     """
-    raw = _extract_json(text)
+    raw = extract_json_object(text)
     if raw is not None:
         try:
             parsed = _RawJudgement.model_validate_json(raw)
@@ -90,40 +91,6 @@ def _parse_judgement(text: str) -> JudgeResult:
         score=0.0,
         critique=f"Unparseable judge response; treated as failure. Raw: {text.strip()[:200]}",
     )
-
-
-def _extract_json(text: str) -> str | None:
-    """Pull the first complete JSON object out of a model reply.
-
-    Scans for the first ``{`` and returns up to its balanced closing ``}`` (tracking string
-    literals and escapes). This tolerates ```json fences, surrounding prose, nested objects, and
-    multiple objects (we take the first) — cases a greedy/lazy regex gets wrong.
-    """
-    start = text.find("{")
-    if start == -1:
-        return None
-    depth = 0
-    in_string = False
-    escaped = False
-    for i in range(start, len(text)):
-        ch = text[i]
-        if in_string:
-            if escaped:
-                escaped = False
-            elif ch == "\\":
-                escaped = True
-            elif ch == '"':
-                in_string = False
-            continue
-        if ch == '"':
-            in_string = True
-        elif ch == "{":
-            depth += 1
-        elif ch == "}":
-            depth -= 1
-            if depth == 0:
-                return text[start : i + 1]
-    return None
 
 
 def _clamp(score: float) -> float:

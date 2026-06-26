@@ -18,7 +18,6 @@ so the optimizer evolves against the exact prompt the world model serves.
 
 from __future__ import annotations
 
-import json
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
@@ -27,15 +26,10 @@ import gepa
 from gepa.core.adapter import EvaluationBatch, GEPAAdapter
 from pydantic import BaseModel, Field
 
-from wmh.core.types import Action, EnvState, JsonObject, JsonValue, Observation, Step, Trace
+from wmh.core.render import build_env_prompt, encode_state_action
+from wmh.core.types import Action, EnvState, JsonValue, Observation, Step, Trace
 from wmh.optimize.judge import Judge
 from wmh.providers.base import Message, Provider
-
-
-def _render_json(value: JsonObject) -> str:
-    """Stable, sorted-key JSON for an object so equal state/args render identically across runs."""
-    return json.dumps(value, sort_keys=True, default=str)
-
 
 # The single named component GEPA evolves: the specialized env (system) prompt.
 ENV_PROMPT_COMPONENT = "env_prompt"
@@ -62,50 +56,7 @@ class Optimizer(Protocol):
     ) -> OptimizeResult: ...
 
 
-# --- env-prompt assembly + prediction helper (provider-only; no engine import) -------------------
-
-# Minimal local mirror of wmh.engine.prompts.BASE_ENV_PROMPT's intent.
-# TODO: converge with the engine's base prompt during integration.
-_PREDICT_INSTRUCTION = (
-    "You ARE the environment. Given the environment state, similar past examples, the originating "
-    "task, and the agent's latest action, output ONLY what the environment returns in response. "
-    "Predict the consequence; if the action is invalid, return the error the environment would "
-    "emit. Never address the agent or explain yourself."
-)
-
-
-def _render_demo(step: Step) -> str:
-    action = step.action
-    label = action.name or action.content or "(none)"
-    return (
-        f"- action({action.kind.value}): {label} args={_render_json(action.arguments)}\n"
-        f"  -> observation(is_error={step.observation.is_error}): {step.observation.content}"
-    )
-
-
-def _assemble_env_prompt(
-    prompt: str,
-    task: str | None,
-    state: EnvState,
-    action: Action,
-    demos: list[Step],
-) -> tuple[str, str]:
-    """Return (system, user) for a world-model completion. Minimal local version of the engine's.
-
-    TODO: replace with `wmh.engine.prompts.build_env_prompt` once the import cycle is resolved.
-    """
-    system = f"{_PREDICT_INSTRUCTION}\n\n--- SPECIALIZED ENV PROMPT ---\n{prompt}"
-    demo_block = "\n".join(_render_demo(d) for d in demos) if demos else "(none)"
-    action_label = action.name or action.content or "(none)"
-    user = (
-        f"TASK: {task or '(none)'}\n\n"
-        f"ENV STATE:\n  structured: {_render_json(state.structured)}\n"
-        f"  scratchpad: {state.scratchpad}\n\n"
-        f"SIMILAR PAST EXAMPLES:\n{demo_block}\n\n"
-        f"AGENT ACTION ({action.kind.value}): {action_label} args={_render_json(action.arguments)}"
-        "\n\nENVIRONMENT RESPONSE:"
-    )
-    return system, user
+# --- prediction helper (provider-only; no engine import, to avoid an engine<->optimize cycle) ----
 
 
 def predict_observation(
@@ -118,11 +69,13 @@ def predict_observation(
 ) -> Observation:
     """Predict the observation for (state, action) under `prompt`, using only a Provider.
 
-    This is the single rollout primitive GEPA replays. The output contract is plain text: the
-    model's completion *is* the observation content (TODO: align with the world model's eventual
-    structured error/reward contract in wmh.engine.world_model._parse_observation).
+    This is the single rollout primitive GEPA replays. It assembles the prompt with the shared
+    `wmh.core.render.build_env_prompt` — the exact assembly the serving engine uses — so GEPA
+    evolves prompts against what the world model actually serves. The output contract is plain
+    text: the model's completion *is* the observation content (it is parsed into structured
+    error/reward signals by the engine's `_parse_observation`, mirrored here only at serve time).
     """
-    system, user = _assemble_env_prompt(prompt, task, state, action, demos)
+    system, user = build_env_prompt(prompt, task, state, action, demos=demos)
     completion = provider.complete(
         system, [Message(role="user", content=user)], temperature=0.0, max_tokens=1024
     )
@@ -191,14 +144,13 @@ class WorldModelGEPAAdapter(GEPAAdapter[Step, _StepTrajectory, Observation]):
     ) -> Mapping[str, Sequence[Mapping[str, JsonValue]]]:
         records: list[Mapping[str, JsonValue]] = []
         for traj in eval_batch.trajectories or []:
-            action = traj.step.action
+            # The same canonical (state, action) text the model saw at prediction time.
+            state_action = encode_state_action(traj.step.state_before, traj.step.action)
             records.append(
                 {
                     "Inputs": {
                         "task": traj.step.task or "(none)",
-                        "state": _state_repr(traj.step.state_before),
-                        "action": f"{action.kind.value}: "
-                        f"{action.name or action.content or '(none)'} args={action.arguments!r}",
+                        "state_action": state_action,
                     },
                     "Generated Outputs": traj.predicted.content,
                     "Feedback": (
@@ -209,10 +161,6 @@ class WorldModelGEPAAdapter(GEPAAdapter[Step, _StepTrajectory, Observation]):
             )
         # GEPA only ever asks us to update the components it selected; we own a single one.
         return {component: records for component in components_to_update}
-
-
-def _state_repr(state: EnvState) -> str:
-    return f"structured={state.structured!r} scratchpad={state.scratchpad!r}"
 
 
 # --- reflection LM adapter -----------------------------------------------------------------------

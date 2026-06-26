@@ -81,3 +81,21 @@ def test_save_does_not_leave_temp_file(tmp_path: Path) -> None:
     root = tmp_path / ".wmh"
     save_config(HarnessConfig(), root=root)
     assert list(root.glob("*.tmp")) == []
+
+
+def test_serve_provider_config_resolves_by_kind() -> None:
+    config = HarnessConfig(
+        providers=[
+            ProviderConfig(kind=ProviderKind.BEDROCK, model="opus"),
+            ProviderConfig(kind=ProviderKind.OPENAI, model="gpt"),
+        ],
+        serve_provider=ProviderKind.BEDROCK,
+    )
+    assert config.serve_provider_config().model == "opus"
+    assert config.provider_config(ProviderKind.OPENAI).model == "gpt"
+
+
+def test_provider_config_missing_kind_raises() -> None:
+    config = HarnessConfig(providers=[], serve_provider=ProviderKind.BEDROCK)
+    with pytest.raises(ValueError, match="no provider config for bedrock"):
+        config.serve_provider_config()
