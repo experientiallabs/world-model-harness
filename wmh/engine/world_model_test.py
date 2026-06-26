@@ -11,6 +11,7 @@ from wmh.retrieval import EmbeddingRetriever, HashingEmbedder
 def test_world_model_new_session_works() -> None:
     wm = WorldModel.__new__(WorldModel)
     wm._sessions = {}
+    wm._trackers = {}
     session = WorldModel.new_session(wm, task="hi")
     assert session.id
     assert WorldModel.get_session(wm, session.id) is session
@@ -87,6 +88,42 @@ def test_step_marks_errors_and_enriches_buffer() -> None:
     assert obs.is_error is True
     # The freshly produced step was added to the buffer (online enrichment).
     assert len(retriever._steps) == 1
+
+
+class _UsageProvider(FakeProvider):
+    """FakeProvider that also reports token usage, for serve-metering assertions."""
+
+    def complete(
+        self,
+        system: str,
+        messages: list[Message],
+        *,
+        temperature: float = 0.7,
+        max_tokens: int = 2048,
+    ) -> Completion:
+        from wmh.providers.base import TokenUsage
+
+        self.last_system = system
+        self.last_user = messages[0].content
+        return Completion(text=self._reply, usage=TokenUsage(input_tokens=120, output_tokens=30))
+
+
+def test_step_meters_usage_per_session() -> None:
+    provider = _UsageProvider('{"output": "ok", "is_error": false}')
+    provider.config = ProviderConfig(kind=ProviderKind.BEDROCK, model="claude-opus-4-8")
+    wm = WorldModel(provider, _retriever_with([]), top_k=1)
+    session = wm.new_session(task="t")
+
+    wm.step(session.id, Action(kind=ActionKind.TOOL_CALL, name="f", arguments={}))
+    wm.step(session.id, Action(kind=ActionKind.TOOL_CALL, name="f", arguments={}))
+
+    usage = wm.session_usage(session.id)
+    assert usage.kind == "serve"
+    assert usage.total.calls == 2
+    assert usage.total.input_tokens == 240
+    assert usage.total.output_tokens == 60
+    # 240*5/1e6 + 60*25/1e6 = 0.0012 + 0.0015 = 0.0027
+    assert usage.total.cost_usd == 0.0027
 
 
 def test_load_reads_artifact(tmp_path) -> None:  # noqa: ANN001 - pytest fixture

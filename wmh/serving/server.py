@@ -10,6 +10,7 @@ from pydantic import BaseModel
 
 from wmh.core.types import Action, EnvState, Observation, Session
 from wmh.engine.world_model import WorldModel
+from wmh.tracking import RunRecord
 
 
 class NewSessionRequest(BaseModel):
@@ -66,6 +67,12 @@ def create_app(artifact_dir: str = ".wmh", world_model: WorldModel | None = None
     @app.get("/sessions/{session_id}", response_model=Session)
     def get_session(session_id: str) -> Session:
         return _session_or_404(session_id)
+
+    @app.get("/sessions/{session_id}/usage", response_model=RunRecord)
+    def session_usage(session_id: str) -> RunRecord:
+        """Per-session token/cost/time so far (serve-time observability)."""
+        _session_or_404(session_id)
+        return wm.session_usage(session_id)
 
     @app.post("/sessions/{session_id}/step", response_model=StepResponse)
     def step(session_id: str, req: StepRequest) -> StepResponse:
