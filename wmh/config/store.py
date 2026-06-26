@@ -18,7 +18,7 @@ import re
 import tomllib
 from pathlib import Path
 
-from pydantic import BaseModel
+from pydantic import BaseModel, JsonValue
 
 from wmh.config.config import ARTIFACT_DIR, ArtifactPaths, HarnessConfig
 
@@ -134,9 +134,10 @@ class WorldModelStore:
         return [self.info(name) for name in self.list_names()]
 
 
-def _as_float(value: object) -> float | None:
-    return float(value) if isinstance(value, (int, float)) else None
+def _as_float(value: JsonValue) -> float | None:
+    # bool is an int subclass; exclude it so a stray `true` doesn't read as 1.0.
+    return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else None
 
 
-def _as_int(value: object) -> int | None:
-    return int(value) if isinstance(value, (int, float)) else None
+def _as_int(value: JsonValue) -> int | None:
+    return int(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else None

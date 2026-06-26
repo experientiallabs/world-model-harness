@@ -45,7 +45,11 @@ def providers_verify(
     seen: set[tuple[str, str]] = set()
     providers: list[ProviderConfig] = []
     for model_name in names:
-        for pc in load_config(str(store.resolve(model_name))).providers:
+        try:
+            model_dir = str(store.resolve(model_name))
+        except (FileNotFoundError, ValueError) as exc:
+            raise typer.BadParameter(str(exc)) from exc
+        for pc in load_config(model_dir).providers:
             key = (pc.kind.value, pc.model)
             if key not in seen:
                 seen.add(key)
@@ -112,14 +116,14 @@ def build(
         serve_provider=serve_provider,
         gepa_budget=params.gepa_budget,
     )
-    reporter = RichBuildReporter(_console, params.name)
-    run_build(
-        config,
-        file=params.file,
-        vendor=VendorPull() if params.vendor else None,
-        root=model_dir,
-        reporter=reporter,
-    )
+    with RichBuildReporter(_console, params.name) as reporter:
+        run_build(
+            config,
+            file=params.file,
+            vendor=VendorPull() if params.vendor else None,
+            root=model_dir,
+            reporter=reporter,
+        )
     _console.print(build_summary_panel(store.info(params.name), model_dir))
 
 
@@ -163,11 +167,8 @@ def demo(
 ) -> None:
     """Demo the harness: an LLM agent makes a tool call vs the world model; show prompt+output."""
     from wmh.engine.demo import run_demo
-    from wmh.providers import get_provider
 
-    wm, resolved_name = _load_model(name, root)
-    config = load_config(str(WorldModelStore(root).model_dir(resolved_name)))
-    provider = get_provider(config.serve_provider_config())
+    wm, _resolved_name, provider = _load_model(name, root)
     # Seed the demo agent from whatever steps the index holds.
     examples = wm.sample_steps(3)
     result = run_demo(wm, provider, examples)
@@ -185,7 +186,7 @@ def play(
     """Step into the environment yourself: type actions, the world model returns observations."""
     from wmh.cli.ui import run_play_repl
 
-    wm, resolved_name = _load_model(name, root)
+    wm, resolved_name, _provider = _load_model(name, root)
     run_play_repl(_console, wm, resolved_name, task)
 
 
@@ -194,21 +195,30 @@ def _resolve_name(store: WorldModelStore, name: str | None) -> str:
 
     With `--name`, validate it exists. Otherwise, when several models are built on an interactive
     terminal, show a numbered picker; on a non-TTY (or a single model) defer to `store.resolve`,
-    which returns the lone model or raises a helpful "pass --name" error.
+    which returns the lone model or raises a helpful "pass --name" error. Store errors
+    (unknown/ambiguous name) are turned into a clean `typer.BadParameter` rather than a traceback.
     """
-    if name is not None:
-        store.resolve(name)  # validates existence, raising a friendly error if missing
-        return name
-    infos = store.list_info()
-    if _console.is_terminal and len(infos) > 1:
-        from wmh.cli.ui import select_model
+    try:
+        if name is not None:
+            store.resolve(name)  # validates existence, raising a friendly error if missing
+            return name
+        # Only enumerate full model summaries when we actually need the picker (>1 model on a TTY).
+        # `list_names` is cheap (a dir scan); `list_info` reads every config/metrics/frontier file.
+        if _console.is_terminal and len(store.list_names()) > 1:
+            from wmh.cli.ui import select_model
 
-        return select_model(_console, infos)
-    return store.resolve(None).name
+            return select_model(_console, store.list_info())
+        return store.resolve(None).name
+    except (FileNotFoundError, ValueError) as exc:
+        raise typer.BadParameter(str(exc)) from exc
 
 
-def _load_model(name: str | None, root: str):  # noqa: ANN202 - returns (WorldModel, resolved name)
-    """Resolve + load a named world model (or the single built one) with its serve provider."""
+def _load_model(name: str | None, root: str):  # noqa: ANN202 - (WorldModel, name, Provider)
+    """Resolve + load a named world model (or the single built one) with its serve provider.
+
+    Returns `(world_model, resolved_name, provider)` so callers can reuse the provider without
+    re-reading config / reconstructing it.
+    """
     from wmh.engine.world_model import WorldModel
     from wmh.providers import get_provider
 
@@ -217,7 +227,7 @@ def _load_model(name: str | None, root: str):  # noqa: ANN202 - returns (WorldMo
     model_dir = store.model_dir(resolved_name)
     config = load_config(str(model_dir))
     provider = get_provider(config.serve_provider_config())
-    return WorldModel.load(str(model_dir), provider), resolved_name
+    return WorldModel.load(str(model_dir), provider), resolved_name, provider
 
 
 if __name__ == "__main__":

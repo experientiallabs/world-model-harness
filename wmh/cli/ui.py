@@ -128,8 +128,9 @@ def select_model(
         console.print(f"  [cyan]{i}[/cyan]. {info.name}{score}")
     while True:
         raw = ask("> ").strip()
-        if raw.isdigit() and 1 <= int(raw) <= len(infos):
-            return infos[int(raw) - 1].name
+        choice = _parse_int(raw)
+        if choice is not None and 1 <= choice <= len(infos):
+            return infos[choice - 1].name
         # Allow typing the name directly too.
         for info in infos:
             if raw == info.name:
@@ -148,9 +149,19 @@ def _prompt_int(console: Console, ask: PromptReader, label: str, default: int) -
         raw = ask(f"[bold]{label}[/bold] [dim][{default}][/dim]: ").strip()
         if not raw:
             return default
-        if raw.isdigit():
-            return int(raw)
-        console.print("[red]enter a whole number[/red]")
+        value = _parse_int(raw)
+        if value is not None and value >= 0:
+            return value
+        console.print("[red]enter a non-negative whole number[/red]")
+
+
+def _parse_int(raw: str) -> int | None:
+    """Parse a base-10 integer, or None. Unlike `str.isdigit`, this rejects unicode digit
+    characters (e.g. superscripts) that `isdigit()` accepts but `int()` rejects with ValueError."""
+    try:
+        return int(raw)
+    except ValueError:
+        return None
 
 
 class RichBuildReporter:
@@ -216,6 +227,21 @@ class RichBuildReporter:
 
     def _stage(self, message: str) -> None:
         self._console.print(f"{_CHECK} {message}")
+
+    def close(self) -> None:
+        """Stop the live progress bar if it is still running (e.g. the build raised mid-GEPA)."""
+        if self._progress is not None:
+            self._progress.stop()
+            self._progress = None
+            self._task_id = None
+
+    def __enter__(self) -> RichBuildReporter:
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        # Always tear down the live Progress so an exception during the build doesn't leave a
+        # spinning bar that corrupts the terminal.
+        self.close()
 
 
 def build_summary_panel(info: ModelInfo, root: str) -> Panel:
@@ -316,14 +342,22 @@ def run_play_repl(
 
 
 def _handle_action(console: Console, world_model: WorldModel, session_id: str, line: str) -> None:
-    """Parse + step one typed action, rendering the observation (or a friendly parse error)."""
+    """Parse + step one typed action, rendering the observation (or a friendly error).
+
+    A failed step (e.g. a provider/network error) is reported and swallowed so the REPL keeps the
+    session alive instead of crashing the whole interactive run.
+    """
     try:
         action = parse_action(line)
     except ValueError as exc:
         console.print(f"[red]parse error[/red]: {exc}")
         return
-    with console.status("[dim]world model thinking…[/dim]", spinner="dots"):
-        turn = play_turn(world_model, session_id, action)
+    try:
+        with console.status("[dim]world model thinking…[/dim]", spinner="dots"):
+            turn = play_turn(world_model, session_id, action)
+    except Exception as exc:  # noqa: BLE001 - keep the REPL alive; surface the failure to the user
+        console.print(f"[red]step failed[/red]: {exc}")
+        return
     _render_turn(console, turn)
 
 

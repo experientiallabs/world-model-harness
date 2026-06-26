@@ -172,6 +172,26 @@ def test_build_non_interactive_without_source_errors(tmp_path) -> None:  # noqa:
 def test_play_unknown_model_errors(tmp_path) -> None:  # noqa: ANN001
     result = runner.invoke(app, ["play", "--name", "nope", "--root", str(tmp_path / ".wmh")])
     assert result.exit_code != 0
+    # A clean usage error, not an uncaught FileNotFoundError traceback.
+    assert not isinstance(result.exception, FileNotFoundError)
+    assert "nope" in result.output
+
+
+def test_demo_unknown_model_is_clean_error(patched_provider, tmp_path) -> None:  # noqa: ANN001
+    root = tmp_path / ".wmh"
+    _build(root, "airline", tmp_path)
+    result = runner.invoke(app, ["demo", "--name", "ghost", "--root", str(root)])
+    assert result.exit_code != 0
+    # Resolved through _load_model -> _resolve_name; must surface as a usage error, not a traceback.
+    assert not isinstance(result.exception, (FileNotFoundError, ValueError))
+
+
+def test_providers_verify_unknown_model_is_clean_error(tmp_path) -> None:  # noqa: ANN001
+    result = runner.invoke(
+        app, ["providers", "verify", "--name", "ghost", "--root", str(tmp_path / ".wmh")]
+    )
+    assert result.exit_code != 0
+    assert not isinstance(result.exception, FileNotFoundError)
 
 
 def test_providers_verify_empty_project_is_friendly(tmp_path) -> None:  # noqa: ANN001

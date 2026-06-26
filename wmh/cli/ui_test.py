@@ -199,3 +199,24 @@ def test_select_model_reprompts_then_accepts_name() -> None:
     # First an out-of-range number (re-prompts), then the model name directly.
     chosen = select_model(console, infos, reader=_scripted_reader(["9", "airline"]))
     assert chosen == "airline"
+
+
+def test_select_model_survives_unicode_digit_input() -> None:
+    # '²' (superscript two): str.isdigit() is True but int() raises ValueError. The picker must
+    # treat it as invalid and re-prompt, not crash.
+    console = Console(force_terminal=False, no_color=True, width=100)
+    infos = [
+        ModelInfo(name="airline", serve_provider="bedrock", serve_model="opus"),
+        ModelInfo(name="retail", serve_provider="bedrock", serve_model="opus"),
+    ]
+    chosen = select_model(console, infos, reader=_scripted_reader(["²", "1"]))
+    assert chosen == "airline"
+
+
+def test_build_wizard_reprompts_on_unicode_digit_budget() -> None:
+    # Same unicode-digit footgun in the int prompt: must re-ask, not crash. With file provided the
+    # prompts are name/provider/model/region/budget; blanks accept defaults, '²' is a bad budget.
+    console = Console(force_terminal=False, no_color=True, width=100)
+    reader = _scripted_reader(["", "", "", "", "²", "7"])
+    params = run_build_wizard(console, BuildParams(name="m", file="/tmp/t.jsonl"), reader=reader)
+    assert params.gepa_budget == 7
