@@ -39,8 +39,8 @@ environment reach the same verdict as the real one?*
    closed-loop).
 2. **An agent driver.** Reconstruct the agent's prompt from captured context, call the agent via the
    `Provider` interface, parse its tool call, route it to the world model, append the predicted
-   observation, repeat. Terminate on the benchmark's submit signal (SIB emits `SIB_SUBMIT`) or a
-   turn cap (Qwen-AgentWorld used 50).
+   observation, repeat. Terminate on the benchmark's submit signal (each benchmark defines its own
+   submit convention) or a turn cap (Qwen-AgentWorld used 50).
 3. **Success detection against gold.** Traces already carry the task's **gold assertions** in
    `Trace.metadata` (the trace-capture pipeline stores them now for exactly this). Score the agent's
    final submission against gold with an LLM judge that *checks the assertions* (semantic, not
