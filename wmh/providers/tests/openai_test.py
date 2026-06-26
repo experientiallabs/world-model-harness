@@ -111,6 +111,21 @@ def test_embed_uses_embed_model(monkeypatch: pytest.MonkeyPatch) -> None:
     assert vectors == [[0.1, 0.2], [0.3, 0.4]]
     assert embeddings.last_kwargs["model"] == "text-embed-3"
     assert embeddings.last_kwargs["input"] == ["a", "b"]
+    assert "dimensions" not in embeddings.last_kwargs  # omitted when embed_dim unset
+
+
+def test_embed_threads_embed_dim_as_dimensions(monkeypatch: pytest.MonkeyPatch) -> None:
+    embeddings = _FakeEmbeddings(_FakeEmbeddingResponse([[0.1, 0.2, 0.3]]))
+    config = ProviderConfig(
+        kind=ProviderKind.OPENAI, model="gpt-5.5", embed_model="text-embed-3", embed_dim=3
+    )
+    provider = OpenAIProvider(config)
+    chat = _FakeChatCompletions(_FakeChatResponse("", _FakeUsage(0, 0)))
+    monkeypatch.setattr(provider, "_get_client", lambda: _FakeClient(chat, embeddings))
+
+    provider.embed(["a"])
+
+    assert embeddings.last_kwargs["dimensions"] == 3  # embed_dim -> dimensions param
 
 
 def test_embed_requires_embed_model() -> None:

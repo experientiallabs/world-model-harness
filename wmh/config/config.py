@@ -12,7 +12,7 @@ import tomli_w
 from pydantic import BaseModel, Field, JsonValue, ValidationError
 
 from wmh.core.types import JsonObject
-from wmh.providers.base import ProviderConfig, ProviderKind
+from wmh.providers.base import EmbedderKind, ProviderConfig, ProviderKind
 
 ARTIFACT_DIR = ".wmh"
 
@@ -30,8 +30,10 @@ class HarnessConfig(BaseModel):
 
     providers: list[ProviderConfig] = Field(default_factory=list)
     serve_provider: ProviderKind = ProviderKind.ANTHROPIC  # serves the live world model
-    embed_provider: ProviderKind = ProviderKind.OPENAI  # supplies phi for retrieval
-    embed_dim: int = 512  # phi dimensionality; the offline HashingEmbedder's vector size
+    # Which embedder supplies phi for retrieval. Defaults to the offline HashingEmbedder (no creds);
+    # set to a provider-backed kind (bedrock/openai/azure_openai) for semantic phi.
+    embed_provider: EmbedderKind = EmbedderKind.HASHING
+    embed_dim: int = 512  # phi dimensionality; index + query embedder must agree on this
     top_k: int = 5  # demos retrieved per step (DreamGym k)
     train_split: float = 0.8  # train/held-out ratio for GEPA
     gepa_budget: int = 50  # rollout budget for prompt evolution
@@ -51,6 +53,59 @@ class HarnessConfig(BaseModel):
         """The ProviderConfig that serves the live world model."""
         return self.provider_config(self.serve_provider)
 
+    def embed_provider_config(self) -> ProviderConfig:
+        """The ProviderConfig backing phi retrieval, with `embed_dim` stamped on.
+
+        Stamping `embed_dim` makes the backend request vectors of exactly the persisted dimension,
+        so the index and query embedders agree. Raises for `EmbedderKind.HASHING` (the offline
+        embedder has no provider) — guard with `embed_provider is EmbedderKind.HASHING` first.
+        """
+        config = self.provider_config(self.embed_provider.provider_kind())
+        return config.model_copy(update={"embed_dim": self.embed_dim})
+
+    @classmethod
+    def for_build(
+        cls,
+        *,
+        serve_provider: ProviderKind,
+        serve_model: str,
+        region: str | None,
+        embed_provider: EmbedderKind,
+        embed_model: str | None,
+        embed_dim: int,
+        gepa_budget: int,
+    ) -> HarnessConfig:
+        """Assemble a build config from the choices `wmh build` collects.
+
+        Owns the one piece of provider wiring: a provider-backed embedder either **reuses** the
+        serve provider's config (same backend — just add `embed_model`) or gets **its own**
+        `ProviderConfig`. Keeping this here (not in the CLI) makes it unit-testable and gives every
+        entry point one place to construct a build config. Callers must already have validated that
+        a non-hashing embedder has an `embed_model`.
+        """
+        serve = ProviderConfig(kind=serve_provider, model=serve_model, region=region)
+        providers = [serve]
+        if embed_provider is not EmbedderKind.HASHING:
+            embed_kind = embed_provider.provider_kind()
+            if embed_kind == serve_provider:
+                providers[0] = serve.model_copy(update={"embed_model": embed_model})
+            else:
+                providers.append(
+                    ProviderConfig(
+                        kind=embed_kind,
+                        model=embed_model or "",
+                        embed_model=embed_model,
+                        region=region,
+                    )
+                )
+        return cls(
+            providers=providers,
+            serve_provider=serve_provider,
+            embed_provider=embed_provider,
+            embed_dim=embed_dim,
+            gepa_budget=gepa_budget,
+        )
+
 
 class ArtifactPaths:
     """Resolves the files under `.wmh/`."""
@@ -69,6 +124,11 @@ class ArtifactPaths:
     @property
     def index(self) -> Path:
         return self.root / "index"
+
+    @property
+    def runs(self) -> Path:
+        """Directory of persisted run records (build + serve), one JSON per run."""
+        return self.root / "runs"
 
     @property
     def base_prompt(self) -> Path:

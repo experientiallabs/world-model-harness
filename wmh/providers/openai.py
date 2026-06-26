@@ -47,7 +47,9 @@ class OpenAIProvider:
     def embed(self, texts: list[str]) -> list[list[float]]:
         if self.config.embed_model is None:
             raise ValueError("OpenAIProvider.embed requires config.embed_model to be set.")
-        return _openai_common.embed(self._get_client().embeddings, self.config.embed_model, texts)
+        return _openai_common.embed(
+            self._get_client().embeddings, self.config.embed_model, texts, self.config.embed_dim
+        )
 
     def verify(self) -> VerifyResult:
         return verify_via_ping(self)

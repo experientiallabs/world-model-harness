@@ -15,6 +15,26 @@ class ProviderKind(StrEnum):
     OPENAI = "openai"  # GPT 5.5 direct
 
 
+class EmbedderKind(StrEnum):
+    """Which embedder supplies phi for retrieval.
+
+    `HASHING` is the offline, zero-config default (no creds, no network). The other three map 1:1 to
+    the same-named `ProviderKind` and use that backend's embeddings API. Anthropic is intentionally
+    absent — it has no embeddings API; configure `BEDROCK`/`OPENAI`/`AZURE_OPENAI` (or `HASHING`).
+    """
+
+    HASHING = "hashing"  # offline HashingEmbedder (default)
+    BEDROCK = "bedrock"  # Titan on AWS Bedrock
+    OPENAI = "openai"  # OpenAI embeddings
+    AZURE_OPENAI = "azure_openai"  # Azure OpenAI embedding deployment
+
+    def provider_kind(self) -> ProviderKind:
+        """The ProviderKind backing this embedder. Raises for `HASHING` (no provider)."""
+        if self is EmbedderKind.HASHING:
+            raise ValueError("HASHING is the offline embedder; it has no backing provider")
+        return ProviderKind(self.value)
+
+
 Role = Literal["user", "assistant"]
 
 
@@ -49,7 +69,8 @@ class ProviderConfig(BaseModel):
 
     kind: ProviderKind
     model: str
-    embed_model: str | None = None
+    embed_model: str | None = None  # embeddings model id / Azure embedding deployment
+    embed_dim: int | None = None  # requested embedding dimension (Titan v2, text-embedding-3-*)
     # Backend knobs (only some apply per kind):
     endpoint: str | None = None  # Azure OpenAI / custom base URL
     region: str | None = None  # AWS Bedrock region
