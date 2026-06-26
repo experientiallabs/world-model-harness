@@ -1,0 +1,107 @@
+"""Tests for the research build/eval primitives (no network: fake provider + judge)."""
+
+from __future__ import annotations
+
+from wmh.core.types import Action, ActionKind, EnvState, Observation, Step, Trace
+from wmh.optimize.judge import JudgeResult
+from wmh.providers.base import Completion, Message, ProviderConfig, ProviderKind
+from wmh.research.pipeline import optimize_prompt, score_prompt
+
+
+class FakeProvider:
+    """Records rollout temperatures; returns a fixed prediction and a fixed reflection mutation."""
+
+    def __init__(self) -> None:
+        self.config = ProviderConfig(kind=ProviderKind.ANTHROPIC, model="m")
+        self.rollout_temps: list[float] = []
+
+    def complete(
+        self,
+        system: str,
+        messages: list[Message],
+        *,
+        temperature: float = 0.7,
+        max_tokens: int = 2048,
+    ) -> Completion:
+        if "improve the system prompt" in system:
+            return Completion(text="IMPROVED")
+        self.rollout_temps.append(temperature)
+        return Completion(text="predicted")
+
+    def embed(self, texts: list[str]) -> list[list[float]]:
+        return [[float(len(t))] for t in texts]
+
+    def verify(self):  # noqa: ANN201
+        raise NotImplementedError
+
+
+class FakeJudge:
+    def __init__(self, score: float = 0.6) -> None:
+        self._score = score
+        self.calls = 0
+
+    def score(self, predicted: Observation, actual: Observation, context: Step) -> JudgeResult:
+        self.calls += 1
+        return JudgeResult(score=self._score, critique="tweak it")
+
+
+def _trace(tid: str, n: int = 2) -> Trace:
+    steps = [
+        Step(
+            action=Action(kind=ActionKind.TOOL_CALL, name="f", arguments={"i": i}),
+            observation=Observation(content=f"real-{i}"),
+            state_before=EnvState(structured={"loc": "shop"}),
+            task="t",
+        )
+        for i in range(n)
+    ]
+    return Trace(trace_id=tid, steps=steps)
+
+
+def test_optimize_prompt_returns_winner_and_uses_train_temperature() -> None:
+    provider = FakeProvider()
+    result = optimize_prompt(
+        [_trace("tr1"), _trace("tr2")],
+        [_trace("te1")],
+        "BASE",
+        provider=provider,
+        judge=FakeJudge(),
+        embedder=None,
+        budget=8,
+        train_temperature=1.0,
+        seed=3,
+    )
+    assert result.prompt  # non-empty winning prompt
+    # Every rollout GEPA ran went through at the requested training temperature.
+    assert provider.rollout_temps and all(t == 1.0 for t in provider.rollout_temps)
+
+
+def test_score_prompt_uses_eval_temperature_and_returns_mean() -> None:
+    provider = FakeProvider()
+    judge = FakeJudge(score=0.6)
+    held_out = [_trace("te1", n=3)]
+    mean = score_prompt(
+        "PROMPT",
+        held_out,
+        provider=provider,
+        judge=judge,
+        embedder=None,
+        train=None,
+        eval_temperature=0.5,
+    )
+    assert abs(mean - 0.6) < 1e-9
+    assert judge.calls == 3
+    assert provider.rollout_temps == [0.5, 0.5, 0.5]
+
+
+def test_score_prompt_empty_holdout_is_zero() -> None:
+    mean = score_prompt(
+        "P",
+        [],
+        provider=FakeProvider(),
+        judge=FakeJudge(),
+        embedder=None,
+        train=None,
+        eval_temperature=0.0,
+    )
+    assert mean == 0.0
