@@ -74,6 +74,54 @@ One interface, four backends, verified on startup. Credentials are read from the
 | Azure OpenAI | GPT 5.5 | `AZURE_OPENAI_API_KEY`, `AZURE_OPENAI_ENDPOINT` |
 | OpenAI | GPT 5.5 | `OPENAI_API_KEY` |
 
+## Benchmark results
+
+**Open-loop reconstruction fidelity** — how faithfully the world model reproduces the *real*
+recorded observation for each held-out `(state, action)`, scored 0–1 by a reference-grounded
+5-dimension LLM judge (format / factuality / consistency / realism / quality) with a
+deterministic-vs-volatile content split. Run with `wmh eval` (teacher-forced replay; the model never
+sees the observation it's scored against). Backend: Bedrock **Opus 4.8**, top-k=5 retrieval, 70/30
+split, seed 0.
+
+Measured on the **tau2-bench** corpus (66 traces / 433 steps captured from Sierra's real tau²-bench —
+telecom + airline + retail), comparing the un-evolved base prompt to a GEPA-optimized one
+(`world-models/tau-telecom/`, 317 reflection rollouts):
+
+| Prompt | held-out steps | fidelity | error-flag acc |
+|---|---|---|---|
+| Base | 84 | 0.755 ± 0.34 | 0.81 |
+| **GEPA-optimized** | 84 | **0.864 ± 0.19** | **1.00** |
+
+GEPA lifts every dimension and tightens variance:
+
+| | format | factuality | consistency | realism | quality |
+|---|---|---|---|---|---|
+| Base | 0.82 | 0.65 | 0.75 | 0.88 | 0.68 |
+| Optimized | 0.99 | 0.72 | 0.88 | 0.97 | 0.76 |
+| Δ | +0.17 | +0.08 | +0.13 | +0.09 | +0.08 |
+
+**Reading these:** the model reproduces response *shape* and success/error status near-perfectly
+(format 0.99, error-flag 1.00); the ceiling is **factuality (0.72)** — predicting concrete values the
+environment alone knows (a reservation's exact flights). GEPA gives a clean **+0.11** lift, but the
+signal only became trustworthy once the corpus was large enough: on an earlier 12-trace corpus GEPA
+selected candidates on a ~7-step validation set (noise) and showed no reliable lift — a measurement
+artifact, not an optimizer failure.
+
+> Numbers are one corpus / one seed on an 84-step holdout (±0.19–0.34) — directional, not a
+> leaderboard. Retrieval uses the offline lexical embedder (semantic untested). The largest
+> factuality lever is **state grounding** — see the design note below.
+
+### Design note: the world model's internal database
+
+Today's open-loop benchmark scores the model with an **empty `state_before`** — the trace-capture
+pipeline omits the environment's database to avoid leaking answers — so factuality on
+records/computed values has a hard ceiling the model can't beat from `(action, retrieved demos)`
+alone. This is a measurement/seeding gap, not a fundamental limit: `EnvState` already carries
+`structured` (a state dict) and `scratchpad` (the env's free-text memory, which `WorldModel.step`
+updates from each prediction's `state_note`). The direction is to **seed a world model with its
+benchmark's initial database** and let it **read/write its own state and memories** as a session
+advances — turning factuality from "guess the hidden value" into "look it up in the state you have".
+
 ## Development
 
 Managed with [uv](https://docs.astral.sh/uv/); linting/formatting with
