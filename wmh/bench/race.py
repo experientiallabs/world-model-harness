@@ -38,12 +38,14 @@ class RaceStep(BaseModel):
 
 
 class RaceReport(BaseModel):
-    """The outcome of replaying one scenario: per-step records plus wall-clock totals.
+    """The outcome of replaying one scenario: per-step records plus wall-clock + cost totals.
 
     `startup_seconds` is the world model's cost-to-first-observation — the analogue of the sandbox's
     container boot — which for the world model is just one LLM round-trip (the first `step`), so it
-    equals `steps[0].seconds`. `total_seconds` is the sum across all steps. These are the numbers
-    the demo's right-side timer shows; the sandbox side (booted separately) is the comparison.
+    equals `steps[0].seconds`. `total_seconds` is the sum across all steps. `tokens`/`cost_usd` come
+    from the world model's serve-time metering (`session_usage`) — the LLM spend to reconstruct the
+    whole scenario. These are the numbers the demo's right-side panel shows (time + cost); the
+    sandbox side (booted separately) is the comparison.
     """
 
     benchmark: str = ""
@@ -53,11 +55,26 @@ class RaceReport(BaseModel):
     steps: list[RaceStep] = Field(default_factory=list)
     startup_seconds: float = 0.0
     total_seconds: float = 0.0
+    tokens: int = 0  # total LLM tokens metered across the scenario's steps
+    cost_usd: float = 0.0  # total LLM cost for the scenario
+
+    @property
+    def fidelity(self) -> float:
+        """Fraction of steps whose predicted error flag matched the recorded one (0..1).
+
+        A cheap, judge-free fidelity signal for the demo — the same ✓/≈ the live view shows. Real
+        scoring is `wmh bench run` (the rubric judge); this is the at-a-glance number for the race.
+        """
+        if not self.steps:
+            return 0.0
+        matches = sum(1 for s in self.steps if s.is_error_predicted == s.is_error_actual)
+        return matches / len(self.steps)
 
     def summary(self) -> str:
         return (
             f"first observation in {self.startup_seconds:.2f}s, "
-            f"{len(self.steps)} steps in {self.total_seconds:.2f}s total"
+            f"{len(self.steps)} steps in {self.total_seconds:.2f}s total, "
+            f"{self.tokens} tokens, ${self.cost_usd:.4f}, fidelity {self.fidelity:.0%}"
         )
 
 
@@ -106,6 +123,9 @@ def race_trace(
         if on_step is not None:
             on_step(race_step)
 
+    # Serve-time metering: the world model meters every `step`'s LLM tokens/cost onto the session's
+    # tracker, so read the scenario's total spend back from `session_usage` (no extra LLM calls).
+    usage = world_model.session_usage(session.id)
     return RaceReport(
         benchmark=benchmark,
         model=model,
@@ -114,6 +134,8 @@ def race_trace(
         steps=steps,
         startup_seconds=steps[0].seconds if steps else 0.0,
         total_seconds=total,
+        tokens=usage.total.total_tokens,
+        cost_usd=usage.total.cost_usd,
     )
 
 

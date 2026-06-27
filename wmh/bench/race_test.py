@@ -5,7 +5,7 @@ from __future__ import annotations
 from wmh.bench.race import RaceReport, race_trace
 from wmh.core.types import Action, ActionKind, EnvState, Observation, Step, Trace
 from wmh.engine.world_model import WorldModel
-from wmh.providers.base import Completion, Message, ProviderConfig, ProviderKind
+from wmh.providers.base import Completion, Message, ProviderConfig, ProviderKind, TokenUsage
 from wmh.retrieval import EmbeddingRetriever, HashingEmbedder
 
 
@@ -105,3 +105,45 @@ def test_race_default_clock_runs_without_a_fake() -> None:
     assert len(report.steps) == 1
     assert report.steps[0].seconds >= 0.0
     assert report.steps[0].predicted == "predicted obs"
+
+
+class MeteredProvider(FakeProvider):
+    """Returns token usage on a priced model, so the race report's tokens/cost are non-zero."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.config = ProviderConfig(
+            kind=ProviderKind.BEDROCK, model="us.anthropic.claude-opus-4-8"
+        )
+
+    def complete(
+        self,
+        system: str,
+        messages: list[Message],
+        *,
+        temperature: float = 0.7,
+        max_tokens: int = 2048,
+    ) -> Completion:
+        self.calls += 1
+        return Completion(
+            text='{"output": "predicted obs", "is_error": false}',
+            usage=TokenUsage(input_tokens=100, output_tokens=20),
+        )
+
+
+def test_race_reports_tokens_cost_and_fidelity() -> None:
+    # Two steps, 120 tokens each at Opus 4.8 rates -> tokens + cost rolled up from session metering.
+    report = race_trace(_world_model(MeteredProvider()), _trace("t", n=2))
+    assert report.tokens == 240  # (100 + 20) * 2 steps
+    # 200 input @ $5/Mtok + 40 output @ $25/Mtok = $0.001 + $0.001 = $0.002.
+    assert abs(report.cost_usd - 0.002) < 1e-9
+    # The recorded observations are non-error and the fake predicts is_error=false -> 100% match.
+    assert report.fidelity == 1.0
+    assert "tokens" in report.summary() and "fidelity" in report.summary()
+
+
+def test_race_fidelity_zero_for_empty_trace() -> None:
+    report = race_trace(_world_model(FakeProvider()), _trace("empty", n=0))
+    assert report.fidelity == 0.0
+    assert report.tokens == 0
+    assert report.cost_usd == 0.0
