@@ -82,10 +82,11 @@ and gold travel as optional `wmh.state.*` / `wmh.trace.metadata` attributes).
 ## Run ONE real scenario (the real-environment side of the comparison)
 
 `run_real_scenario.py` is the real half of the scenario comparison. The world model side is
-`wmh bench scenario tau-bench --trace N`; this runs the SAME held-out scenario for real — it
-constructs Sierra's real tau2 domain environment (the airline/retail Python tools over the real JSON
-DB) and calls the exact recorded tool calls in order, printing the real tool results and the
-wall-clock time. Compare the two end times by eye.
+`wmh bench scenario tau-bench --trace N`; this runs the SAME held-out scenario for real — it stands
+up Sierra's real tau2 domain environment **from scratch** (import the heavy `tau2` package →
+register components → load the domain JSON DB), times that standup and counts it in the total, then
+calls the exact recorded tool calls in order, printing the real tool results. Compare the two end
+times by eye.
 
 Because tau2 actions are tool calls (not shell commands), this imports the real `tau2` package and
 must run in the `.venv` from the Setup section above (NOT under `wmh`, which never imports tau2):
@@ -96,6 +97,7 @@ TAU2_DATA_DIR="$PWD/tau2-bench/data" .venv/bin/python run_real_scenario.py --tra
 
 Stdlib + tau2 only; reads the committed `examples/tau2-bench.otel.jsonl`, re-implements the harness's
 blake2b train/holdout split inline so trace selection matches the world-model side, and reads the
-`domain` from each trace's metadata. tau2's environment is an in-memory DB, so its "startup" is just
-loading the DB — the comparison here is less about speed than about not needing to stand up Sierra's
-stack at all.
+`domain` from each trace's metadata. The per-run standup timed here is import + registry + DB load
+(the one-time `pip install tau2-bench` is the venv Setup above). Observed (`--trace 0`, airline):
+standup 1.74s + 10 tool calls, 1.74s total. tau2's env is an in-memory DB, so the comparison here is
+less about speed than about not needing to stand up Sierra's stack at all.

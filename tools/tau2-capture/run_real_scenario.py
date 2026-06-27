@@ -91,7 +91,16 @@ def main() -> None:
     trace = pool[args.trace]
     domain, calls = trace["domain"] or "airline", trace["calls"]
 
-    # The real tau2 environment (imported only here, in the tau2 venv — never by wmh).
+    print(
+        f"REAL tau2 env: domain={domain}, trace {trace['trace_id'][:8]} "
+        f"({len(calls)} tool calls) — standing up the real environment "
+        "(import tau2 -> registry -> load domain DB), then replaying the recorded tool calls\n"
+    )
+
+    # Standup = the real cost of bringing Sierra's environment up in-process: importing the heavy
+    # tau2 package + registering its components + loading the domain DB. (The one-time
+    # `pip install tau2-bench` is the venv Setup in the README; this is the per-run standup.)
+    start = time.monotonic()
     try:
         from tau2.registry import registry
     except ImportError as exc:  # pragma: no cover - depends on the isolated venv
@@ -99,15 +108,9 @@ def main() -> None:
             "tau2 is not importable; run this from tools/tau2-capture/ in the tau2 .venv "
             "(see this directory's README), with TAU2_DATA_DIR set."
         ) from exc
-
-    print(
-        f"REAL tau2 env: domain={domain}, trace {trace['trace_id'][:8]} "
-        f"({len(calls)} tool calls) — constructing the real environment + DB\n"
-    )
-    start = time.monotonic()
     env = registry.get_env_constructor(domain)()  # loads the real domain DB
     env_ready = time.monotonic()
-    print(f"[environment + DB loaded in {env_ready - start:.2f}s]\n")
+    print(f"[environment stood up (import + registry + DB) in {env_ready - start:.2f}s]\n")
 
     for i, (name, kwargs) in enumerate(calls):
         print(f"--- step {i} ---\n> {name}({json.dumps(kwargs)})")
@@ -120,8 +123,8 @@ def main() -> None:
 
     total = time.monotonic() - start
     print(
-        f"done (REAL tau2 env): DB load {env_ready - start:.2f}s + "
-        f"{len(calls)} tool calls in {total:.2f}s total"
+        f"done (REAL tau2 env): standup {env_ready - start:.2f}s + "
+        f"{len(calls)} tool calls, {total:.2f}s total"
     )
 
 

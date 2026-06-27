@@ -1,24 +1,26 @@
 #!/usr/bin/env python3
-"""Run ONE real terminal-tasks scenario in a local shell, streaming full stdout + timing.
+"""Run ONE real terminal-tasks scenario in a freshly-built container, streaming stdout + timing.
 
 The **real-environment** half of the scenario comparison for terminal-tasks. `wmh bench scenario
 terminal-tasks --trace N` reconstructs a held-out scenario with the world model (LLM, no shell);
-this runs the SAME scenario for real — it executes the exact recorded `bash` commands (curl-to-API
-calls) in a local shell, in order, printing the real stdout and the wall-clock time. You compare the
-two end times by eye.
+this runs the SAME scenario for real — and to be honest about the standup the world model skips, it
+**builds a fresh container from scratch** first (a base image + the real `apt-get install` of the
+tools these tasks need: `curl`, `python3`, `jq`, `ca-certificates`), streaming the build and
+counting it in the total time, *then* `docker exec`s the exact recorded `bash` commands. You compare
+the two end times by eye.
 
 Because terminal-tasks commands hit live public APIs, a real re-run reflects *current* data, so the
 output may differ from the recorded observation (rates change, releases bump) — that is the honest
-real environment. There is no container to boot here; the "startup cost" the world model saves is
-whatever the real tools' cold start is (shell + curl + network).
+real environment.
 
-Stdlib-only and self-contained (no `wmh` import), like the rest of `tools/terminal-tasks-capture/`:
-it reads the committed `examples/terminal-tasks.otel.jsonl`, picks the SAME held-out trace `--trace
-N` the world-model side picks (re-implementing the harness's deterministic blake2b split inline),
-and runs that trace's recorded commands with `bash -lc`.
+Stdlib-only and self-contained (no `wmh` import). It reads the committed
+`examples/terminal-tasks.otel.jsonl`, picks the SAME held-out trace `--trace N` the world-model side
+picks (re-implementing the harness's deterministic blake2b split inline), and runs that trace's
+recorded commands inside the built container.
 
 Usage:
-    python run_real_scenario.py --trace 1
+    python run_real_scenario.py --trace 1            # cold --no-cache build (default)
+    python run_real_scenario.py --trace 1 --cache    # reuse the cached tools image
 """
 
 from __future__ import annotations
@@ -27,11 +29,24 @@ import argparse
 import hashlib
 import json
 import subprocess
+import tempfile
 import time
+import uuid
 from pathlib import Path
 from typing import Any
 
 _DEFAULT_CORPUS = Path(__file__).resolve().parents[2] / "examples" / "terminal-tasks.otel.jsonl"
+
+# The recorded terminal-tasks commands use curl (-> public APIs), python3 (JSON parsing), and jq.
+# A fresh container installs exactly those — the real tool standup the world model never pays.
+_IMAGE_TAG = "wmh-terminal-tasks:latest"
+_DOCKERFILE = """\
+FROM debian:bookworm-slim
+RUN apt-get update && apt-get install -y --no-install-recommends \\
+        curl ca-certificates python3 jq \\
+    && rm -rf /var/lib/apt/lists/*
+WORKDIR /work
+"""
 
 
 def _attr_map(span: dict[str, Any]) -> dict[str, str]:
@@ -77,11 +92,36 @@ def _holdout(traces: list[dict[str, Any]], train_split: float) -> list[dict[str,
     return held or traces  # tiny corpora: no held-out -> fall back to all (matches the wmh side)
 
 
+def _exists(image: str) -> bool:
+    return subprocess.run(
+        ["docker", "image", "inspect", image], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+    ).returncode == 0
+
+
+def _build_tools_image(*, no_cache: bool) -> None:
+    """`docker build` the fresh tools image (curl/python3/jq), streaming the apt install live."""
+    with tempfile.TemporaryDirectory(prefix="wmh-tt-build-") as ctx:
+        (Path(ctx) / "Dockerfile").write_text(_DOCKERFILE, encoding="utf-8")
+        cmd = ["docker", "build", "-t", _IMAGE_TAG]
+        if no_cache:
+            cmd.append("--no-cache")
+        cmd.append(ctx)
+        print(f"$ {' '.join(cmd)}")
+        rc = subprocess.run(cmd).returncode
+        if rc != 0:
+            raise SystemExit(f"docker build failed (exit {rc})")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--corpus", default=str(_DEFAULT_CORPUS), help="terminal-tasks OTel corpus.")
     parser.add_argument("--trace", type=int, default=0, help="Which held-out trace to replay.")
     parser.add_argument("--train-split", type=float, default=0.7, help="Train/holdout ratio.")
+    parser.add_argument(
+        "--cache",
+        action="store_true",
+        help="Reuse the cached tools image if present. Default: cold --no-cache build.",
+    )
     parser.add_argument("--exec-timeout", type=int, default=120, help="Per-command timeout (s).")
     args = parser.parse_args()
 
@@ -92,23 +132,52 @@ def main() -> None:
     trace = pool[args.trace]
     commands = trace["commands"]
     task = (trace["task"] or "").strip().splitlines()[0] if trace["task"] else ""
+    no_cache = not args.cache
     print(
-        f"REAL shell: trace {trace['trace_id'][:8]} ({len(commands)} commands)"
-        + (f" — {task[:80]}" if task else "")
-        + " — running the recorded commands for real\n"
+        f"REAL sandbox: trace {trace['trace_id'][:8]} ({len(commands)} commands)"
+        + (f" — {task[:70]}" if task else "")
+        + " — building a fresh container (apt install curl/python3/jq), then running the commands"
+        + (" [--no-cache]\n" if no_cache else " [cached]\n")
     )
 
     start = time.monotonic()
-    for i, command in enumerate(commands):
-        print(f"--- step {i} ---\n$ {command}")
-        try:
-            subprocess.run(["bash", "-lc", command], timeout=args.exec_timeout)
-        except subprocess.TimeoutExpired:
-            print(f"[timed out after {args.exec_timeout}s]")
+    if args.cache and _exists(_IMAGE_TAG):
+        print(f"--- tools image {_IMAGE_TAG} already built (cached) ---\n")
+    else:
+        print("--- building the tools image ---")
+        _build_tools_image(no_cache=no_cache)
         print()
+    build_done = time.monotonic()
+    print(f"[container built from scratch in {build_done - start:.1f}s]\n")
+
+    container = f"wmh-real-{uuid.uuid4().hex[:8]}"
+    rc = subprocess.run(
+        ["docker", "run", "-d", "--name", container, "-w", "/work", "--rm", _IMAGE_TAG,
+         "sleep", "2h"],
+        stdout=subprocess.DEVNULL,
+    ).returncode
+    if rc != 0:
+        raise SystemExit(f"failed to start container (docker run exit {rc})")
+    try:
+        for i, command in enumerate(commands):
+            print(f"--- step {i} ---\n$ {command}")
+            try:
+                subprocess.run(
+                    ["docker", "exec", "-w", "/work", container, "bash", "-lc", command],
+                    timeout=args.exec_timeout,
+                )
+            except subprocess.TimeoutExpired:
+                print(f"[timed out after {args.exec_timeout}s]")
+            print()
+    finally:
+        subprocess.run(["docker", "rm", "-f", container], stdout=subprocess.DEVNULL,
+                       stderr=subprocess.DEVNULL)
 
     total = time.monotonic() - start
-    print(f"done (REAL shell): {len(commands)} commands in {total:.2f}s total")
+    print(
+        f"done (REAL sandbox): build {build_done - start:.1f}s + "
+        f"{len(commands)} commands, {total:.1f}s total"
+    )
 
 
 if __name__ == "__main__":
