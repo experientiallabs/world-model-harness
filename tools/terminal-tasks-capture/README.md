@@ -48,3 +48,19 @@ Per trajectory, one Step per tool call:
 reconstructs from action + retrieved steps + teacher-forced history).
 
 The output is OTel-GenAI span JSONL that `wmh.ingest.otel_genai` reads directly.
+
+## Run ONE real scenario (the real-environment side of the comparison)
+
+`run_real_scenario.py` is the real half of the scenario comparison. The world model side is
+`wmh bench scenario terminal-tasks --trace N`; this runs the SAME held-out scenario for real — it
+executes the exact recorded `bash` commands (curl-to-API calls) in a local shell, in order,
+streaming the real stdout and printing the wall-clock time. Compare the two end times by eye.
+
+```bash
+python run_real_scenario.py --trace 1
+```
+
+Stdlib-only; reads the committed `examples/terminal-tasks.otel.jsonl` and re-implements the
+harness's blake2b train/holdout split inline so trace selection matches the world-model side. These
+commands hit live public APIs, so a real re-run reflects *current* data and the output may differ
+from the recorded observation (rates change, releases bump) — that is the honest real environment.

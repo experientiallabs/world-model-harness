@@ -89,3 +89,21 @@ Pure-reasoning turns (assistant messages with no command) are not Steps: open-lo
 predicted observation for `(state, action)`, and a reasoning turn has no environment observation.
 
 The output is OTel-GenAI span JSONL that `wmh.ingest.otel_genai` reads directly.
+
+## Run ONE real scenario (the real-environment side of the comparison)
+
+`run_real_scenario.py` is the real half of the scenario comparison. The world model side is
+`wmh bench scenario swe-bench --trace N`; this runs the SAME held-out scenario for real — it boots
+the instance's SWE-bench Docker image and `docker exec`s the exact recorded commands in order,
+streaming the real stdout and printing the wall-clock time (including container boot). Compare the
+two end times by eye.
+
+```bash
+# same --trace index the world-model side uses (same deterministic held-out split)
+python run_real_scenario.py --trace 0
+```
+
+Stdlib-only; reads the committed `examples/swe-bench.otel.jsonl` and re-implements the harness's
+blake2b train/holdout split inline so trace selection matches exactly. A cold run pays the full
+multi-GB image pull (the dramatic boot cost the world model skips); a warm run reuses the cached
+image.

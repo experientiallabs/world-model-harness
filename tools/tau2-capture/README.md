@@ -78,3 +78,24 @@ observations for `(state, action)`, and a chat turn has no environment observati
 
 The output is OTel-GenAI span JSONL that `wmh.ingest.otel_genai` reads directly (the per-step state
 and gold travel as optional `wmh.state.*` / `wmh.trace.metadata` attributes).
+
+## Run ONE real scenario (the real-environment side of the comparison)
+
+`run_real_scenario.py` is the real half of the scenario comparison. The world model side is
+`wmh bench scenario tau-bench --trace N`; this runs the SAME held-out scenario for real — it
+constructs Sierra's real tau2 domain environment (the airline/retail Python tools over the real JSON
+DB) and calls the exact recorded tool calls in order, printing the real tool results and the
+wall-clock time. Compare the two end times by eye.
+
+Because tau2 actions are tool calls (not shell commands), this imports the real `tau2` package and
+must run in the `.venv` from the Setup section above (NOT under `wmh`, which never imports tau2):
+
+```bash
+TAU2_DATA_DIR="$PWD/tau2-bench/data" .venv/bin/python run_real_scenario.py --trace 0
+```
+
+Stdlib + tau2 only; reads the committed `examples/tau2-bench.otel.jsonl`, re-implements the harness's
+blake2b train/holdout split inline so trace selection matches the world-model side, and reads the
+`domain` from each trace's metadata. tau2's environment is an in-memory DB, so its "startup" is just
+loading the DB — the comparison here is less about speed than about not needing to stand up Sierra's
+stack at all.

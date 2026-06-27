@@ -1,0 +1,129 @@
+#!/usr/bin/env python3
+"""Run ONE real tau²-bench scenario against the real tau2 environment, printing tool results + time.
+
+The **real-environment** half of the scenario comparison for tau-bench. `wmh bench scenario
+tau-bench --trace N` reconstructs a held-out scenario with the world model (LLM, no DB); this runs
+the SAME scenario for real — it constructs Sierra's real tau2 domain environment (the airline/retail
+Python tools over the real JSON database) and calls the exact recorded tool calls in order, printing
+the real tool results and the wall-clock time. You compare the two end times by eye.
+
+Unlike swe-bench/terminal-tasks, tau2 actions are TOOL CALLS (e.g. `get_user_details(user_id=...)`),
+not shell commands, so this imports the real tau2 package and uses `Environment.use_tool`. It must
+therefore run in the tau2 `.venv` set up by this directory's README — NOT under `wmh` (which never
+imports tau2). There is no container/process to boot; the "startup cost" the world model saves is
+loading the real domain DB into the environment.
+
+Stdlib + tau2 only (no `wmh` import). It reads the committed `examples/tau2-bench.otel.jsonl`, picks
+the SAME held-out trace `--trace N` the world-model side picks (re-implementing the harness's
+deterministic blake2b split inline), reads the `domain` from the trace metadata, and replays the
+trace's recorded `(tool_name, arguments)` calls.
+
+Usage (from tools/tau2-capture/, in the tau2 venv):
+    TAU2_DATA_DIR="$PWD/tau2-bench/data" .venv/bin/python run_real_scenario.py --trace 0
+"""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import time
+from pathlib import Path
+from typing import Any
+
+_DEFAULT_CORPUS = Path(__file__).resolve().parents[2] / "examples" / "tau2-bench.otel.jsonl"
+
+
+def _attr_map(span: dict[str, Any]) -> dict[str, str]:
+    return {a["key"]: a.get("value", {}).get("stringValue", "") for a in span.get("attributes", [])}
+
+
+def _load_traces(corpus: Path) -> "list[dict[str, Any]]":
+    """Group the OTel spans into ordered traces: [{trace_id, domain, calls:[(name, args)]}]."""
+    spans = [json.loads(line) for line in corpus.read_text(encoding="utf-8").splitlines() if line]
+    order: list[str] = []
+    by_trace: dict[str, list[dict[str, Any]]] = {}
+    for span in spans:
+        tid = span["traceId"]
+        if tid not in by_trace:
+            by_trace[tid] = []
+            order.append(tid)
+        by_trace[tid].append(span)
+
+    traces: list[dict[str, Any]] = []
+    for tid in order:
+        domain = ""
+        calls: list[tuple[str, dict[str, Any]]] = []
+        for span in by_trace[tid]:
+            attrs = _attr_map(span)
+            if "wmh.trace.metadata" in attrs:
+                domain = json.loads(attrs["wmh.trace.metadata"]).get("domain", "")
+            args = attrs.get("gen_ai.tool.call.arguments")
+            name = attrs.get("gen_ai.tool.name")
+            if args and name:  # an action span (the observation span has no arguments)
+                calls.append((name, json.loads(args)))
+        traces.append({"trace_id": tid, "domain": domain, "calls": calls})
+    return traces
+
+
+def _holdout(traces: list[dict[str, Any]], train_split: float) -> list[dict[str, Any]]:
+    """The held-out traces, by the SAME deterministic blake2b split the wmh harness uses."""
+    held: list[dict[str, Any]] = []
+    for trace in traces:
+        digest = hashlib.blake2b(trace["trace_id"].encode("utf-8"), digest_size=8).digest()
+        fraction = int.from_bytes(digest, "big") / 2**64
+        if fraction >= train_split:
+            held.append(trace)
+    return held or traces  # tiny corpora: no held-out -> fall back to all (matches the wmh side)
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--corpus", default=str(_DEFAULT_CORPUS), help="tau2-bench OTel corpus.")
+    parser.add_argument("--trace", type=int, default=0, help="Which held-out trace to replay.")
+    parser.add_argument("--train-split", type=float, default=0.7, help="Train/holdout ratio.")
+    args = parser.parse_args()
+
+    traces = _load_traces(Path(args.corpus))
+    pool = _holdout(traces, args.train_split)
+    if not 0 <= args.trace < len(pool):
+        raise SystemExit(f"--trace {args.trace} out of range; {len(pool)} held-out trace(s)")
+    trace = pool[args.trace]
+    domain, calls = trace["domain"] or "airline", trace["calls"]
+
+    # The real tau2 environment (imported only here, in the tau2 venv — never by wmh).
+    try:
+        from tau2.registry import registry
+    except ImportError as exc:  # pragma: no cover - depends on the isolated venv
+        raise SystemExit(
+            "tau2 is not importable; run this from tools/tau2-capture/ in the tau2 .venv "
+            "(see this directory's README), with TAU2_DATA_DIR set."
+        ) from exc
+
+    print(
+        f"REAL tau2 env: domain={domain}, trace {trace['trace_id'][:8]} "
+        f"({len(calls)} tool calls) — constructing the real environment + DB\n"
+    )
+    start = time.monotonic()
+    env = registry.get_env_constructor(domain)()  # loads the real domain DB
+    env_ready = time.monotonic()
+    print(f"[environment + DB loaded in {env_ready - start:.2f}s]\n")
+
+    for i, (name, kwargs) in enumerate(calls):
+        print(f"--- step {i} ---\n> {name}({json.dumps(kwargs)})")
+        try:
+            result = env.use_tool(name, **kwargs)
+            print(result)
+        except Exception as exc:  # noqa: BLE001 - surface the REAL tool error, like the agent saw
+            print(f"[tool error] {type(exc).__name__}: {exc}")
+        print()
+
+    total = time.monotonic() - start
+    print(
+        f"done (REAL tau2 env): DB load {env_ready - start:.2f}s + "
+        f"{len(calls)} tool calls in {total:.2f}s total"
+    )
+
+
+if __name__ == "__main__":
+    main()
