@@ -161,3 +161,28 @@ def test_for_build_hashing_embedder_needs_no_embed_provider_config() -> None:
     )
     assert [pc.kind for pc in config.providers] == [ProviderKind.BEDROCK]
     assert config.embed_provider is EmbedderKind.HASHING
+
+
+def test_for_build_threads_train_split() -> None:
+    # train_split defaults to 0.8 but is overridable (so `wmh build --train-split` reaches GEPA).
+    default = HarnessConfig.for_build(
+        serve_provider=ProviderKind.BEDROCK,
+        serve_model="opus",
+        region=None,
+        embed_provider=EmbedderKind.HASHING,
+        embed_model=None,
+        embed_dim=512,
+        gepa_budget=10,
+    )
+    assert default.train_split == 0.8
+    custom = HarnessConfig.for_build(
+        serve_provider=ProviderKind.BEDROCK,
+        serve_model="opus",
+        region=None,
+        embed_provider=EmbedderKind.HASHING,
+        embed_model=None,
+        embed_dim=512,
+        gepa_budget=10,
+        train_split=0.5,
+    )
+    assert custom.train_split == 0.5

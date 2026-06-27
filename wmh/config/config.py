@@ -74,6 +74,7 @@ class HarnessConfig(BaseModel):
         embed_model: str | None,
         embed_dim: int,
         gepa_budget: int,
+        train_split: float = 0.8,
     ) -> HarnessConfig:
         """Assemble a build config from the choices `wmh build` collects.
 
@@ -104,6 +105,7 @@ class HarnessConfig(BaseModel):
             embed_provider=embed_provider,
             embed_dim=embed_dim,
             gepa_budget=gepa_budget,
+            train_split=train_split,
         )
 
 

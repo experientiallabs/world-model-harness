@@ -103,6 +103,9 @@ def build(
     model: str = typer.Option("us.anthropic.claude-opus-4-8", help="Serve provider model id."),
     region: str = typer.Option(None, help="AWS region (Bedrock)."),
     gepa_budget: int = typer.Option(50, help="GEPA rollout budget."),
+    train_split: float = typer.Option(
+        0.8, help="Train/held-out ratio for GEPA's internal split (lower = bigger valset)."
+    ),
     embed_provider: str = typer.Option(
         "hashing", help="phi embedder: hashing (offline) | bedrock | openai | azure_openai."
     ),
@@ -145,6 +148,7 @@ def build(
         model=model,
         region=region,
         gepa_budget=gepa_budget,
+        train_split=train_split,
         embed_provider=embed_provider,
         embed_model=embed_model,
         embed_dim=embed_dim,
@@ -187,6 +191,7 @@ def build(
         embed_model=params.embed_model,
         embed_dim=params.embed_dim,
         gepa_budget=params.gepa_budget,
+        train_split=params.train_split,
     )
     # Fail fast: ping the serve provider (and the embed path, if provider-backed) before spending
     # any rollouts. A missing SDK or bad creds otherwise surfaces only deep inside GEPA, which
