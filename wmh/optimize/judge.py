@@ -26,6 +26,9 @@ observation the world model generated, judge whether the prediction is *function
 the actual one — i.e. it conveys the same outcome, errors, and salient data the agent would act on.
 Ignore cosmetic differences (wording, formatting, ordering, incidental ids). Penalize wrong
 outcomes, flipped success/error status, and missing or fabricated salient facts.
+The observations are encoded as JSON strings. If `content` is `""` and `content_length` is `0`, the
+observation is the empty string; do not infer or fill in missing content from the action or actual
+observation.
 
 Respond with ONLY a JSON object, no prose around it:
 {"score": <float 0..1>, "critique": "<one or two sentences: what matched, what diverged, and how \
@@ -73,12 +76,25 @@ class LLMJudge:
 def _build_judge_prompt(predicted: Observation, actual: Observation, context: Step) -> str:
     action = context.action
     action_desc = action.name or action.content or "(none)"
+    actual_payload = _observation_payload(actual)
+    predicted_payload = _observation_payload(predicted)
     return (
         f"AGENT ACTION ({action.kind.value}): {action_desc}\n"
         f"ACTION ARGUMENTS: {json.dumps(action.arguments, sort_keys=True, default=str)}\n\n"
-        f"ACTUAL OBSERVATION (is_error={actual.is_error}):\n{actual.content}\n\n"
-        f"PREDICTED OBSERVATION (is_error={predicted.is_error}):\n{predicted.content}\n"
+        "ACTUAL OBSERVATION JSON:\n"
+        f"{json.dumps(actual_payload, ensure_ascii=False, sort_keys=True)}\n\n"
+        "PREDICTED OBSERVATION JSON:\n"
+        f"{json.dumps(predicted_payload, ensure_ascii=False, sort_keys=True)}\n"
     )
+
+
+def _observation_payload(observation: Observation) -> dict[str, object]:
+    return {
+        "is_error": observation.is_error,
+        "content_length": len(observation.content),
+        "content": observation.content,
+        "empty_content": observation.content == "",
+    }
 
 
 def _parse_judgement(text: str) -> JudgeResult:

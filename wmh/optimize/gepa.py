@@ -60,7 +60,13 @@ class OptimizeResult(BaseModel):
 @runtime_checkable
 class Optimizer(Protocol):
     def optimize(
-        self, train: list[Trace], test: list[Trace], base_prompt: str, budget: int
+        self,
+        train: list[Trace],
+        test: list[Trace],
+        base_prompt: str,
+        budget: int,
+        *,
+        rag_corpus: list[Trace] | None = None,
     ) -> OptimizeResult: ...
 
 
@@ -272,8 +278,23 @@ class GEPAOptimizer:
         self._seed = seed
 
     def optimize(
-        self, train: list[Trace], test: list[Trace], base_prompt: str, budget: int
+        self,
+        train: list[Trace],
+        test: list[Trace],
+        base_prompt: str,
+        budget: int,
+        *,
+        rag_corpus: list[Trace] | None = None,
     ) -> OptimizeResult:
+        """Run GEPA over optimization splits, optionally retrieving demos from another corpus.
+
+        `train`/`test` are GEPA's optimization data: minibatch examples and validation examples.
+        `rag_corpus`, when supplied, is the replay-buffer corpus used for retrieved demos during
+        those GEPA evaluations. Keeping it separate lets callers optimize a prompt on a dev split
+        while using an independently chosen RAG/index split, instead of forcing the GEPA trainset to
+        double as the retrieval corpus. When omitted, the historical behavior is preserved: demos
+        come from the GEPA train source.
+        """
         train_steps = [step for trace in train for step in trace.steps]
         val_steps = [step for trace in test for step in trace.steps]
         # GEPA samples minibatches from the trainset; fall back to val when train is empty.
@@ -283,9 +304,11 @@ class GEPAOptimizer:
             # Nothing to optimize against (or no budget): the base prompt is the only candidate.
             return OptimizeResult(prompt=base_prompt, frontier=[base_prompt])
 
-        # RAG-aware, leak-free: retrieve demos from the train corpus only, never a step's own trace.
+        # RAG-aware, leak-free: retrieve demos from the configured RAG corpus only, never a step's
+        # own trace. By default, preserve the original behavior and use GEPA's train source.
         # Built once and reused for both splits (retrieval is independent of the candidate prompt).
-        demos = DemoRetriever(self._retriever, train_src)
+        demo_src = train_src if rag_corpus is None else rag_corpus
+        demos = DemoRetriever(self._retriever, demo_src)
         trainset = _eval_steps(train_src, demos)
         valset = _eval_steps(val_src, demos)
         adapter = WorldModelGEPAAdapter(self._provider, self._judge, self._on_rollout)

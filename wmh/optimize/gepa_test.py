@@ -115,6 +115,44 @@ def test_optimize_runs_bounded_loop_and_returns_valid_frontier() -> None:
     assert judge.calls > 0
 
 
+def test_optimize_can_retrieve_from_separate_rag_corpus() -> None:
+    from wmh.retrieval import EmbeddingRetriever, HashingEmbedder
+
+    class PromptRecordingProvider(FakeProvider):
+        def __init__(self) -> None:
+            super().__init__()
+            self.rollout_user_messages: list[str] = []
+
+        def complete(
+            self,
+            system: str,
+            messages: list[Message],
+            *,
+            temperature: float = 0.7,
+            max_tokens: int = 2048,
+        ) -> Completion:
+            if "improve the system prompt" not in system:
+                self.rollout_user_messages.append(messages[0].content)
+            return super().complete(
+                system, messages, temperature=temperature, max_tokens=max_tokens
+            )
+
+    provider = PromptRecordingProvider()
+    dev = _trace("dev", n=1)
+    rag = _trace("rag", n=1)
+    rag.steps[0].observation.content = "rag-only-observation"
+    rag.steps[0].action.arguments = {"source": "rag-only"}
+
+    result = GEPAOptimizer(
+        provider, FakeJudge(), retriever=EmbeddingRetriever(HashingEmbedder(dim=64))
+    ).optimize([dev], [dev], "BASE", budget=1, rag_corpus=[rag])
+
+    assert result.prompt
+    prompt_text = "\n".join(provider.rollout_user_messages)
+    assert "rag-only-observation" in prompt_text
+    assert "real-0" not in prompt_text
+
+
 def test_optimize_with_zero_budget_returns_base_prompt() -> None:
     result = GEPAOptimizer(FakeProvider(), FakeJudge()).optimize(
         [_trace("tr1")], [_trace("te1")], "BASE", budget=0
