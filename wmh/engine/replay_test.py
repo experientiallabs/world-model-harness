@@ -77,6 +77,17 @@ def test_replay_scores_and_aggregates() -> None:
     assert report.results[0].actual == "real-0"
 
 
+def test_replay_includes_all_prior_teacher_forced_history_by_default() -> None:
+    provider = FakeProvider('{"output": "real-2", "is_error": false}')
+    report = replay("BASE", [_trace("h", n=3)], provider, FakeJudge(1.0))
+
+    assert report.n_steps == 3
+    user_prompt = provider.last_user or ""
+    assert "OBSERVATION (is_error=False): real-0" in user_prompt
+    assert "OBSERVATION (is_error=False): real-1" in user_prompt
+    assert "OBSERVATION (is_error=False): real-2" not in user_prompt
+
+
 def test_replay_tracks_error_flag_mismatch() -> None:
     # Model predicts an error, but the actual observation is not an error -> flag mismatch.
     provider = FakeProvider('{"output": "boom", "is_error": true}')
@@ -124,17 +135,43 @@ def test_replay_carries_rubric_dimensions() -> None:
 
 def test_replay_sampled_turns_scores_five_for_long_traces() -> None:
     judge = FakeJudge(0.5)
-    report = replay("BASE", [_trace("h", n=10)], FakeProvider('{"output": "x"}'),
-                    judge, sample_turns="sampled", seed=0)
+    report = replay(
+        "BASE",
+        [_trace("h", n=10)],
+        FakeProvider('{"output": "x"}'),
+        judge,
+        sample_turns="sampled",
+        seed=0,
+    )
     assert report.n_steps == 5  # first, last, 3 middle
     # Deterministic under a fixed seed.
     judge2 = FakeJudge(0.5)
-    report2 = replay("BASE", [_trace("h", n=10)], FakeProvider('{"output": "x"}'),
-                     judge2, sample_turns="sampled", seed=0)
+    report2 = replay(
+        "BASE",
+        [_trace("h", n=10)],
+        FakeProvider('{"output": "x"}'),
+        judge2,
+        sample_turns="sampled",
+        seed=0,
+    )
     assert [r.action for r in report.results] == [r.action for r in report2.results]
 
 
+def test_replay_sampled_turns_history_uses_original_trace_prefix() -> None:
+    provider = FakeProvider('{"output": "x"}')
+    replay("BASE", [_trace("h", n=10)], provider, FakeJudge(0.5), sample_turns="sampled", seed=0)
+
+    user_prompt = provider.last_user or ""
+    assert "OBSERVATION (is_error=False): real-8" in user_prompt
+    assert "OBSERVATION (is_error=False): real-9" not in user_prompt
+
+
 def test_replay_sample_turns_all_scores_every_step() -> None:
-    report = replay("BASE", [_trace("h", n=10)], FakeProvider('{"output": "x"}'),
-                    FakeJudge(0.5), sample_turns="all")
+    report = replay(
+        "BASE",
+        [_trace("h", n=10)],
+        FakeProvider('{"output": "x"}'),
+        FakeJudge(0.5),
+        sample_turns="all",
+    )
     assert report.n_steps == 10

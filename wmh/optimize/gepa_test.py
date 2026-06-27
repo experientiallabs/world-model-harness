@@ -31,6 +31,7 @@ class FakeProvider:
         self._mutation = mutation
         self.reflection_calls = 0
         self.rollout_calls = 0
+        self.last_rollout_user: str | None = None
 
     def complete(
         self,
@@ -44,6 +45,7 @@ class FakeProvider:
             self.reflection_calls += 1
             return Completion(text=self._mutation)
         self.rollout_calls += 1
+        self.last_rollout_user = messages[0].content
         return Completion(text=self._prediction)
 
     def embed(self, texts: list[str]) -> list[list[float]]:
@@ -89,6 +91,21 @@ def test_predict_observation_uses_provider() -> None:
         demos=[],
     )
     assert obs.content == "the cart now has 1 item"
+
+
+def test_predict_observation_can_include_history() -> None:
+    provider = FakeProvider(prediction="next")
+    predict_observation(
+        provider,
+        "PROMPT",
+        task="t",
+        state=EnvState(),
+        action=Action(kind=ActionKind.MESSAGE, content="continue"),
+        demos=[],
+        history=[_trace("hist", n=1).steps[0]],
+    )
+
+    assert "OBSERVATION (is_error=False): real-0" in (provider.last_rollout_user or "")
 
 
 def test_optimizer_satisfies_protocol() -> None:
