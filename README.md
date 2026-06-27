@@ -83,12 +83,16 @@ deterministic-vs-volatile content split. Run with `wmh eval` (teacher-forced rep
 sees the recorded observation it's scored against). Backend: Bedrock **Opus 4.8**, top-k=5 retrieval,
 70/30 train-holdout, seed 0.
 
-| Benchmark | held-out steps | Optimized prompt | Base prompt |
-|---|---|---|---|
-| **tau2-bench** (airline API) | 18 | **0.81 ± 0.21** | 0.57 ± 0.36 |
-| **terminal-tasks** (bash) | 48 | **0.52 ± 0.28** | 0.60 ± 0.28 |
+Comparing the un-evolved base prompt, a prompt GEPA-optimized on **tau2 only**, and one optimized
+**across both benchmarks** (`world-models/cross-task/`):
 
-Per-dimension, optimized prompt:
+| Benchmark | held-out steps | Base | tau2-only GEPA | **Cross-task GEPA** |
+|---|---|---|---|---|
+| **tau2-bench** (airline API) | 18 | 0.57 ± 0.36 | **0.81 ± 0.21** | 0.65 ± 0.36 |
+| **terminal-tasks** (bash) | 48 | 0.60 ± 0.28 | 0.52 ± 0.28 | **0.60 ± 0.28** |
+| Overall (step-weighted) | 66 | 0.589 | 0.599 | **0.617** |
+
+Per-dimension, tau2-only optimized prompt:
 
 | Benchmark | format | factuality | consistency | realism | quality | error-flag acc |
 |---|---|---|---|---|---|---|
@@ -98,9 +102,10 @@ Per-dimension, optimized prompt:
 **Reading these:** the model reproduces response *shape* and success/error status very well
 (tau2 format 1.00, error-flag 1.00); the ceiling is **factuality** — predicting concrete values the
 environment alone knows (a reservation's exact flights, a command's runtime output). The
-tau2-optimized prompt lifts tau2 by +0.25 but slightly *hurts* terminal (it over-confidently predicts
-success on shell commands that actually fail), evidence that a single benchmark's GEPA prompt
-overfits; we are moving toward prompts that generalize across benchmark families.
+**tau2-only** prompt lifts tau2 by +0.25 but *hurts* terminal (it over-confidently predicts success
+on shell commands that actually fail) — a single benchmark's GEPA prompt overfits. Optimizing GEPA
+**across both** benchmark families recovers terminal to baseline while keeping most of the tau2 gain,
+and wins on the overall step-weighted mean — so cross-task optimization is the better general policy.
 
 > Numbers are directional on small held-out sets, and use the offline lexical embedder (semantic
 > retrieval untested). The largest factuality lever is **state grounding** — see the design note
