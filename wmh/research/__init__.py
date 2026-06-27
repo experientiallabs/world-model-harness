@@ -12,10 +12,12 @@ Two layers:
   which sweeps every condition across multiple seeds and aggregates mean + std. Adding a new
   experiment = writing one `Ablation`.
 - `pipeline` — the reusable build/eval primitives every ablation leans on: `optimize_prompt` (run
-  GEPA at a chosen rollout temperature + seed) and `score_prompt` (replay-score held-out fidelity at
-  a chosen eval temperature, leak-free).
+  GEPA at a chosen seed) and `score_prompt` (replay-score held-out fidelity via the canonical
+  `wmh.engine.replay`, leak-free).
 
-`temperature` is the first concrete experiment: train-vs-eval temperature (docs/gepa_research.md).
+`seed_stability` is the first concrete experiment: how reproducible is GEPA's evolved prompt across
+seeds. The train-vs-eval temperature sweep is parked (the shipped providers reject sampling params);
+see docs/research_directions.md.
 """
 
 from wmh.research.ablation import (
@@ -28,23 +30,17 @@ from wmh.research.ablation import (
     run_ablation,
 )
 from wmh.research.pipeline import optimize_prompt, score_prompt
-from wmh.research.temperature import (
-    TEMPERATURE_CONDITIONS,
-    TemperatureAblation,
-    temperature_conditions,
-)
+from wmh.research.seed_stability import SeedStabilityAblation
 
 __all__ = [
-    "TEMPERATURE_CONDITIONS",
     "Ablation",
     "AblationReport",
     "Condition",
     "ConditionReport",
     "SeedScore",
-    "TemperatureAblation",
+    "SeedStabilityAblation",
     "aggregate",
     "optimize_prompt",
     "run_ablation",
     "score_prompt",
-    "temperature_conditions",
 ]

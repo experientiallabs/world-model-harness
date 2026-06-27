@@ -58,7 +58,7 @@ def _trace(tid: str, n: int = 2) -> Trace:
     return Trace(trace_id=tid, steps=steps)
 
 
-def test_optimize_prompt_returns_winner_and_uses_train_temperature() -> None:
+def test_optimize_prompt_returns_winner_at_deterministic_temperature() -> None:
     provider = FakeProvider()
     result = optimize_prompt(
         [_trace("tr1"), _trace("tr2")],
@@ -68,15 +68,14 @@ def test_optimize_prompt_returns_winner_and_uses_train_temperature() -> None:
         judge=FakeJudge(),
         embedder=None,
         budget=8,
-        train_temperature=1.0,
         seed=3,
     )
     assert result.prompt  # non-empty winning prompt
-    # Every rollout GEPA ran went through at the requested training temperature.
-    assert provider.rollout_temps and all(t == 1.0 for t in provider.rollout_temps)
+    # Rollouts run deterministically (T=0): no sampling knob is exposed by the harness.
+    assert provider.rollout_temps and all(t == 0.0 for t in provider.rollout_temps)
 
 
-def test_score_prompt_uses_eval_temperature_and_returns_mean() -> None:
+def test_score_prompt_delegates_to_replay_and_returns_mean() -> None:
     provider = FakeProvider()
     judge = FakeJudge(score=0.6)
     held_out = [_trace("te1", n=3)]
@@ -87,11 +86,11 @@ def test_score_prompt_uses_eval_temperature_and_returns_mean() -> None:
         judge=judge,
         embedder=None,
         train=None,
-        eval_temperature=0.5,
     )
     assert abs(mean - 0.6) < 1e-9
     assert judge.calls == 3
-    assert provider.rollout_temps == [0.5, 0.5, 0.5]
+    # replay scores each held-out step once, deterministically.
+    assert provider.rollout_temps == [0.0, 0.0, 0.0]
 
 
 def test_score_prompt_empty_holdout_is_zero() -> None:
@@ -102,6 +101,5 @@ def test_score_prompt_empty_holdout_is_zero() -> None:
         judge=FakeJudge(),
         embedder=None,
         train=None,
-        eval_temperature=0.0,
     )
     assert mean == 0.0

@@ -1,4 +1,4 @@
-"""Tests for the train-vs-eval temperature ablation (drives the framework with fakes)."""
+"""Tests for the GEPA seed-stability ablation (drives the framework with fakes, no network)."""
 
 from __future__ import annotations
 
@@ -6,19 +6,12 @@ from wmh.core.types import Action, ActionKind, EnvState, Observation, Step, Trac
 from wmh.optimize.judge import JudgeResult
 from wmh.providers.base import Completion, Message, ProviderConfig, ProviderKind
 from wmh.research.ablation import Ablation, run_ablation
-from wmh.research.temperature import (
-    EVAL_TEMP,
-    TRAIN_TEMP,
-    TemperatureAblation,
-    temperature_conditions,
-)
+from wmh.research.seed_stability import SeedStabilityAblation
 
 
 class FakeProvider:
     def __init__(self) -> None:
         self.config = ProviderConfig(kind=ProviderKind.ANTHROPIC, model="m")
-        self.eval_temps: list[float] = []
-        self._optimizing = False
 
     def complete(
         self,
@@ -59,8 +52,8 @@ def _trace(tid: str, n: int = 2) -> Trace:
     )
 
 
-def _ablation() -> TemperatureAblation:
-    return TemperatureAblation(
+def _ablation() -> SeedStabilityAblation:
+    return SeedStabilityAblation(
         [_trace("tr1"), _trace("tr2")],
         [_trace("te1")],
         "BASE",
@@ -69,40 +62,28 @@ def _ablation() -> TemperatureAblation:
     )
 
 
-def test_default_grid_is_2x2_crossed() -> None:
-    conds = temperature_conditions()
-    assert len(conds) == 4
-    labels = {c.label for c in conds}
-    assert labels == {
-        "Ttrain=0/Teval=0",
-        "Ttrain=0/Teval=1",
-        "Ttrain=1/Teval=0",
-        "Ttrain=1/Teval=1",
-    }
-    # Each condition carries both knobs.
-    for c in conds:
-        assert TRAIN_TEMP in c.params and EVAL_TEMP in c.params
-
-
-def test_temperature_ablation_satisfies_protocol() -> None:
+def test_satisfies_protocol() -> None:
     assert isinstance(_ablation(), Ablation)
 
 
-def test_run_one_condition_returns_holdout_fidelity() -> None:
-    ablation = _ablation()
-    cond = ablation.conditions()[0]
-    score = ablation.run(cond, seed=0)
-    # The fake judge returns 0.5 for every held-out step, so the mean fidelity is 0.5.
-    assert abs(score - 0.5) < 1e-9
+def test_single_baseline_condition() -> None:
+    conds = _ablation().conditions()
+    assert len(conds) == 1
+    assert conds[0].label == "baseline"
 
 
-def test_run_ablation_aggregates_all_cells_across_seeds() -> None:
+def test_run_one_seed_returns_holdout_fidelity() -> None:
     ablation = _ablation()
-    report = run_ablation(ablation, [0, 1])
-    assert report.name == "train-vs-eval-temperature"
-    assert len(report.conditions) == 4
-    for cell in report.conditions:
-        assert len(cell.per_seed) == 2
-        # Deterministic fakes -> identical scores across seeds -> zero std.
-        assert abs(cell.mean - 0.5) < 1e-9
-        assert cell.std == 0.0
+    # The fake judge returns 0.5 for every held-out step, so mean fidelity is 0.5.
+    assert abs(ablation.run(ablation.conditions()[0], seed=0) - 0.5) < 1e-9
+
+
+def test_run_ablation_aggregates_across_seeds() -> None:
+    report = run_ablation(_ablation(), [0, 1, 2])
+    assert report.name == "gepa-seed-stability"
+    assert len(report.conditions) == 1
+    cell = report.conditions[0]
+    assert len(cell.per_seed) == 3
+    # Deterministic fakes -> identical fidelity across seeds -> zero std (perfectly stable).
+    assert abs(cell.mean - 0.5) < 1e-9
+    assert cell.std == 0.0

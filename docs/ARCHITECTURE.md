@@ -49,8 +49,9 @@ Packages are layered; arrows point "depends on". `core` depends on nothing, the 
   per phase (build / GEPA / judge / serve) onto a `RunTracker`. Transparent: nothing it wraps knows.
 - **`research`** — the optimization-research surface (`docs/gepa_research.md`). An `Ablation`
   framework (sweep named `Condition`s across seeds → mean+std) over reusable build/eval primitives
-  (`optimize_prompt`/`score_prompt`) that wrap the real pipeline at chosen train/eval temperatures.
-  The first experiment is the train-vs-eval temperature ablation; live runners live in `scripts/`.
+  (`optimize_prompt` / `score_prompt`) that wrap the real pipeline (`score_prompt` delegates to
+  `engine.replay`, so the `wmh eval` rubric scores experiments too). The first experiment is GEPA
+  seed-stability; live runners live in `scripts/`. Parked directions: `docs/research_directions.md`.
 - **`cli`** — `build / list / eval / serve / demo / play / providers verify`. Each command is thin:
   it parses flags and delegates to an `engine` function.
 
