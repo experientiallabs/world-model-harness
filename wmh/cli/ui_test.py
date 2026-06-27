@@ -129,8 +129,8 @@ def test_play_repl_exits_cleanly_on_eof() -> None:
 
 def test_build_wizard_collects_all_inputs() -> None:
     console = Console(force_terminal=False, no_color=True, width=100)
-    # Prompts in order: name, file, provider, model, region, budget, embedder, embed_dim.
-    # (embed model is skipped because the embedder is the offline 'hashing' default.)
+    # Prompts in order: name, file, provider (select), model (select), region (bedrock only),
+    # budget, embedder (select). No embed-model (hashing default) and no phi-dim prompt.
     reader = _scripted_reader(
         [
             "tau2-airline",
@@ -140,7 +140,6 @@ def test_build_wizard_collects_all_inputs() -> None:
             "us-east-1",
             "8",
             "hashing",
-            "512",
         ]
     )
     params = run_build_wizard(console, BuildParams(name="default"), reader=reader)
@@ -152,23 +151,35 @@ def test_build_wizard_collects_all_inputs() -> None:
     assert params.embed_provider == "hashing"
 
 
+def test_build_wizard_select_by_number() -> None:
+    console = Console(force_terminal=False, no_color=True, width=100)
+    # Provider/model/embedder are numbered pickers; choosing by index must work. Pick anthropic (2),
+    # its second model, no region prompt (not bedrock), budget 8, hashing embedder (1).
+    reader = _scripted_reader(["m", "/tmp/t.jsonl", "2", "2", "8", "1"])
+    params = run_build_wizard(console, BuildParams(name="default"), reader=reader)
+    assert params.provider == "anthropic"
+    assert params.model == "claude-opus-4-7"  # second anthropic model
+    assert params.region is None  # region only prompted for bedrock
+    assert params.embed_provider == "hashing"
+
+
 def test_build_wizard_collects_provider_embedder() -> None:
     console = Console(force_terminal=False, no_color=True, width=100)
-    # Picking a provider-backed embedder adds an embeddings-model prompt.
+    # A provider-backed embedder adds an embeddings-model picker; phi dim keeps its default.
     reader = _scripted_reader(
-        ["m", "/tmp/t.jsonl", "bedrock", "opus", "us-east-1", "8", "bedrock", "titan-v2", "1024"]
+        ["m", "/tmp/t.jsonl", "openai", "gpt-5.5", "8", "openai", "text-embedding-3-large"]
     )
     params = run_build_wizard(console, BuildParams(name="default"), reader=reader)
-    assert params.embed_provider == "bedrock"
-    assert params.embed_model == "titan-v2"
-    assert params.embed_dim == 1024
+    assert params.embed_provider == "openai"
+    assert params.embed_model == "text-embedding-3-large"
+    assert params.embed_dim == 512  # default, no longer prompted
 
 
 def test_build_wizard_accepts_defaults_with_blank_input() -> None:
     console = Console(force_terminal=False, no_color=True, width=100)
     # File provided (so that prompt is skipped); press Enter (blank) for every remaining prompt
-    # (name/provider/model/region/budget/embedder/embed_dim) to accept the suggested defaults.
-    reader = _scripted_reader(["", "", "", "", "", "", ""])
+    # (name/provider/model/region/budget/embedder) to accept the suggested defaults.
+    reader = _scripted_reader(["", "", "", "", "", ""])
     defaults = BuildParams(name="seeded", file="/tmp/t.jsonl", provider="bedrock", gepa_budget=50)
     params = run_build_wizard(console, defaults, reader=reader)
     assert params.name == "seeded"  # blank kept the default
@@ -180,12 +191,25 @@ def test_build_wizard_accepts_defaults_with_blank_input() -> None:
 
 def test_build_wizard_reprompts_on_blank_trace_source() -> None:
     # A blank traces path must re-ask, not crash. After a name, blank the file once, then give a
-    # real path; remaining prompts (provider/model/region/budget/embedder/embed_dim) take defaults.
+    # real path; remaining prompts (provider/model/region/budget/embedder) take defaults.
     console = Console(force_terminal=False, no_color=True, width=100)
-    reader = _scripted_reader(["mymodel", "", "/tmp/t.jsonl", "", "", "", "", "", ""])
+    reader = _scripted_reader(["mymodel", "", "/tmp/t.jsonl", "", "", "", "", ""])
     params = run_build_wizard(console, BuildParams(name="default"), reader=reader)
     assert params.name == "mymodel"
     assert params.file == "/tmp/t.jsonl"
+
+
+def test_build_wizard_reports_missing_credentials(monkeypatch) -> None:  # noqa: ANN001 - pytest fixture
+    # The wizard flags an unset provider env var (offline presence check) so the user sees it
+    # before the build. With AWS creds cleared, bedrock should warn for each.
+    for var in ("AWS_REGION", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"):
+        monkeypatch.delenv(var, raising=False)
+    console = Console(force_terminal=False, no_color=True, width=100)
+    with console.capture() as cap:
+        reader = _scripted_reader(["m", "/tmp/t.jsonl", "bedrock", "", "us-east-1", "8", "hashing"])
+        run_build_wizard(console, BuildParams(name="default"), reader=reader)
+    out = cap.get()
+    assert "make sure AWS_ACCESS_KEY_ID is set" in out
 
 
 # --- selection picker ----------------------------------------------------------------------------
@@ -232,9 +256,9 @@ def test_select_model_survives_unicode_digit_input() -> None:
 
 def test_build_wizard_reprompts_on_unicode_digit_budget() -> None:
     # Same unicode-digit footgun in the int prompt: must re-ask, not crash. With file provided the
-    # prompts are name/provider/model/region/budget/embedder/embed_dim; blanks accept defaults,
-    # '²' is a bad budget that must be rejected and re-asked.
+    # prompts are name/provider/model/region/budget/embedder; blanks accept defaults, '²' is a bad
+    # budget that must be rejected and re-asked.
     console = Console(force_terminal=False, no_color=True, width=100)
-    reader = _scripted_reader(["", "", "", "", "²", "7", "", ""])
+    reader = _scripted_reader(["", "", "", "", "²", "7", ""])
     params = run_build_wizard(console, BuildParams(name="m", file="/tmp/t.jsonl"), reader=reader)
     assert params.gepa_budget == 7
