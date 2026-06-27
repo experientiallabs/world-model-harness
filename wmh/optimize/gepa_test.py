@@ -134,7 +134,7 @@ def _eval_batch(trace: Trace) -> list[_EvalStep]:
 
 
 class _TempRecordingProvider(FakeProvider):
-    """Records the temperature of every rollout completion (research-harness knob plumbing)."""
+    """Records the temperature of every rollout completion."""
 
     def __init__(self) -> None:
         super().__init__()
@@ -153,33 +153,13 @@ class _TempRecordingProvider(FakeProvider):
         return super().complete(system, messages, temperature=temperature, max_tokens=max_tokens)
 
 
-def test_predict_observation_defaults_to_deterministic_temperature() -> None:
+def test_predict_observation_runs_deterministically() -> None:
+    # Rollouts are always T=0 — the providers reject sampling params, so there is no knob.
     provider = _TempRecordingProvider()
     predict_observation(
         provider, "P", task=None, state=EnvState(), action=Action(kind=ActionKind.MESSAGE), demos=[]
     )
     assert provider.rollout_temps == [0.0]
-
-
-def test_predict_observation_forwards_temperature() -> None:
-    provider = _TempRecordingProvider()
-    predict_observation(
-        provider,
-        "P",
-        task=None,
-        state=EnvState(),
-        action=Action(kind=ActionKind.MESSAGE),
-        demos=[],
-        temperature=1.0,
-    )
-    assert provider.rollout_temps == [1.0]
-
-
-def test_adapter_forwards_rollout_temperature() -> None:
-    provider = _TempRecordingProvider()
-    adapter = WorldModelGEPAAdapter(provider, FakeJudge(), temperature=0.7)
-    adapter.evaluate(_eval_batch(_trace("t", n=2)), {ENV_PROMPT_COMPONENT: "P"}, False)
-    assert provider.rollout_temps == [0.7, 0.7]
 
 
 def test_adapter_evaluate_scores_and_captures_traces() -> None:
