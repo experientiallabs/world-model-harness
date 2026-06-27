@@ -51,6 +51,15 @@ The output is OTel-GenAI span JSONL that `wmh.ingest.otel_genai` reads directly.
 
 ## Run ONE real scenario (the real-environment side of the comparison)
 
+### One command: `run.sh`
+
+`./run.sh [--trace N]` does it end to end — sets up the venv/deps if missing, builds the
+environment from scratch, runs the recorded scenario, and streams all stdout, ending with the
+total time. That whole standup is the cost the world-model side (`wmh bench scenario`) skips.
+Defaults to the simplest held-out scenario; `--trace N` pins one. Details below.
+
+## Run ONE real scenario (manual)
+
 `run_real_scenario.py` is the real half of the scenario comparison. The world model side is
 `wmh bench scenario terminal-tasks --trace N`; this runs the SAME held-out scenario for real — and
 to be honest about the standup the world model skips, it **builds a fresh container from scratch**

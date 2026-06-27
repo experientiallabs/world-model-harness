@@ -81,6 +81,15 @@ and gold travel as optional `wmh.state.*` / `wmh.trace.metadata` attributes).
 
 ## Run ONE real scenario (the real-environment side of the comparison)
 
+### One command: `run.sh`
+
+`./run.sh [--trace N]` does it end to end — sets up the venv/deps if missing, builds the
+environment from scratch, runs the recorded scenario, and streams all stdout, ending with the
+total time. That whole standup is the cost the world-model side (`wmh bench scenario`) skips.
+Defaults to the simplest held-out scenario; `--trace N` pins one. Details below.
+
+## Run ONE real scenario (manual)
+
 `run_real_scenario.py` is the real half of the scenario comparison. The world model side is
 `wmh bench scenario tau-bench --trace N`; this runs the SAME held-out scenario for real — it stands
 up Sierra's real tau2 domain environment **from scratch** (import the heavy `tau2` package →
