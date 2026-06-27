@@ -51,7 +51,7 @@ trace-capture pipeline) so there is one source of truth.
 ```bash
 wmh bench list                      # every committed benchmark + its eval config
 wmh bench run tau-bench             # score the bundled BASE_ENV_PROMPT
-wmh bench run tau-bench --model airline   # score a built model's optimized prompt
+wmh bench run tau-bench --model tau-bench  # score a model's optimized prompt (bundled or built)
 wmh bench run tau-bench --prompt my_prompt.txt
 wmh bench                           # leaderboard over all persisted runs
 ```
@@ -60,6 +60,11 @@ wmh bench                           # leaderboard over all persisted runs
 benchmark-level **mean ± std**, and writes a `BenchRun` JSON under `benchmarks/<name>/results/`.
 Runs are comparable over time; the leaderboard shows the *latest* run per (benchmark, prompt),
 ranked by fidelity.
+
+`--model` resolves through `WorldModelStore`, which searches both the writable project root
+(`.wmh/models/<name>/`, where `wmh build` writes) and the committed bundled `world-models/<name>/`
+(canonical example models shipped with the repo) — so `--model tau-bench` scores the bundled
+canonical model with no extra flags.
 
 ## Aggregation
 
