@@ -74,6 +74,50 @@ One interface, four backends, verified on startup. Credentials are read from the
 | Azure OpenAI | GPT 5.5 | `AZURE_OPENAI_API_KEY`, `AZURE_OPENAI_ENDPOINT` |
 | OpenAI | GPT 5.5 | `OPENAI_API_KEY` |
 
+## Benchmark results
+
+**Open-loop reconstruction fidelity** — how faithfully the world model reproduces the *real*
+recorded observation for each held-out `(state, action)`, scored 0–1 by a reference-grounded
+5-dimension LLM judge (format / factuality / consistency / realism / quality), with a
+deterministic-vs-volatile content split. Run with `wmh eval` (teacher-forced replay; the model never
+sees the recorded observation it's scored against). Backend: Bedrock **Opus 4.8**, top-k=5 retrieval,
+70/30 train-holdout, seed 0.
+
+| Benchmark | held-out steps | Optimized prompt | Base prompt |
+|---|---|---|---|
+| **tau2-bench** (airline API) | 18 | **0.81 ± 0.21** | 0.57 ± 0.36 |
+| **terminal-tasks** (bash) | 48 | **0.52 ± 0.28** | 0.60 ± 0.28 |
+
+Per-dimension, optimized prompt:
+
+| Benchmark | format | factuality | consistency | realism | quality | error-flag acc |
+|---|---|---|---|---|---|---|
+| tau2-bench | 1.00 | 0.62 | 0.83 | 0.96 | 0.66 | 1.00 |
+| terminal-tasks | 0.66 | 0.30 | 0.57 | 0.73 | 0.34 | 0.81 |
+
+**Reading these:** the model reproduces response *shape* and success/error status very well
+(tau2 format 1.00, error-flag 1.00); the ceiling is **factuality** — predicting concrete values the
+environment alone knows (a reservation's exact flights, a command's runtime output). The
+tau2-optimized prompt lifts tau2 by +0.25 but slightly *hurts* terminal (it over-confidently predicts
+success on shell commands that actually fail), evidence that a single benchmark's GEPA prompt
+overfits; we are moving toward prompts that generalize across benchmark families.
+
+> Numbers are directional on small held-out sets, and use the offline lexical embedder (semantic
+> retrieval untested). The largest factuality lever is **state grounding** — see the design note
+> below.
+
+### Design note: the world model's internal database
+
+Today's open-loop benchmark scores the model with an **empty `state_before`** — the trace-capture
+pipeline omits the environment's database to avoid leaking answers — so factuality on
+records/computed values has a hard ceiling the model can't beat from `(action, retrieved demos)`
+alone. This is a measurement/seeding gap, not a fundamental limit: `EnvState` already carries
+`structured` (a machine-readable state dict) and `scratchpad` (the env's free-text memory, which
+`WorldModel.step` already updates from each prediction's `state_note`). The direction is to **seed a
+world model with its benchmark's initial database** as context and let it **read/write its own
+state and memories** as a session advances — turning factuality from "guess the hidden value" into
+"look it up in the state you were given."
+
 ## Development
 
 Managed with [uv](https://docs.astral.sh/uv/); linting/formatting with
