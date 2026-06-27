@@ -12,8 +12,9 @@ the pieces fit (and where to plug in a new provider, adapter, or embedder).
 
 ## How it works
 
-1. **Build** from your agent's OTel traces (file export or vendor SDK): ingest → normalize → split
-   train/held-out → index a replay buffer → evolve the env prompt with GEPA against the held-out split.
+1. **Build** from your agent's OTel traces (file export or provider query API): ingest → normalize
+   → split train/held-out → index a replay buffer → evolve the env prompt with GEPA against the
+   held-out split.
 2. **Serve**: agents call `WorldModel.step(action)` (in-process or via the local HTTP backend). Each
    step retrieves the most similar past `(state, action) → observation` examples and predicts the
    next observation.
@@ -25,6 +26,8 @@ uv sync
 wmh providers verify                       # confirm Anthropic / Bedrock / Azure OpenAI / OpenAI creds
 wmh build                                  # guided creation wizard (prompts for name, traces, provider…)
 wmh build --name airline --file traces.jsonl   # …or fully scriptable with flags -> .wmh/models/airline/
+wmh build --name airline --vendor braintrust --trace-project prod-airline
+wmh build --name airline --vendor phoenix --trace-project default
 wmh list                                   # show every built world model
 wmh eval traces.jsonl                      # score reconstruction fidelity (replay + LLM judge)
 wmh serve                                  # local backend on :8000 (serves all built models)
@@ -39,6 +42,31 @@ wmh play                                   # step into the environment yourself 
 World models are **named** and stored under `.wmh/models/<name>/`, so one project can hold several
 (e.g. `airline`, `retail`). Commands that read a model take `--name`; if only one is built, `--name`
 is optional.
+
+## Import traces
+
+Local exports remain the simplest path:
+
+```bash
+wmh build --name airline --file traces.otel.jsonl
+```
+
+Provider-backed imports use `--vendor` plus source-specific flags/env vars. All sources feed the
+same `otel-genai` adapter, so they may return either OTLP JSON (`resourceSpans`) or span rows with
+`trace_id`/`span_id` plus `attributes` containing OTel GenAI keys such as `gen_ai.tool.name`.
+
+| Source | Command | Credentials / config |
+|---|---|---|
+| Generic OTLP HTTP | `--vendor otlp --trace-endpoint <url>` | `WMH_OTLP_QUERY_ENDPOINT`, `WMH_OTLP_API_KEY` |
+| Braintrust BTQL | `--vendor braintrust --trace-project <project>` | `BRAINTRUST_API_KEY`, optional `BRAINTRUST_API_URL`, `BRAINTRUST_PROJECT` |
+| Arize Phoenix | `--vendor phoenix --trace-project <project>` | `PHOENIX_BASE_URL`, `PHOENIX_API_KEY`, `PHOENIX_PROJECT_ID` |
+
+Common filters: `--trace-since`, `--trace-until`, `--trace-limit`. Braintrust also accepts
+`--trace-query` for a custom BTQL query when the default `project_logs(..., shape => 'traces')`
+query does not match your workspace layout.
+
+Phoenix defaults to `GET /v1/projects/{project}/spans/otlpv1` under `PHOENIX_BASE_URL`; pass
+`--trace-endpoint` to target a custom Phoenix-compatible spans route directly.
 
 ## Use it as an API
 

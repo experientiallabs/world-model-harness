@@ -216,6 +216,44 @@ def test_build_non_interactive_without_source_errors(tmp_path) -> None:  # noqa:
     assert result.exit_code != 0
 
 
+def test_build_rejects_file_and_vendor_together(tmp_path) -> None:  # noqa: ANN001
+    result = runner.invoke(
+        app,
+        [
+            "build",
+            "--name",
+            "x",
+            "--file",
+            _traces_file(tmp_path),
+            "--vendor",
+            "braintrust",
+            "--root",
+            str(tmp_path / ".wmh"),
+            "--no-interactive",
+        ],
+    )
+    assert result.exit_code != 0
+    assert "either --file or --vendor" in result.output
+
+
+def test_build_rejects_unknown_trace_source(tmp_path) -> None:  # noqa: ANN001
+    result = runner.invoke(
+        app,
+        [
+            "build",
+            "--name",
+            "x",
+            "--vendor",
+            "not-a-source",
+            "--root",
+            str(tmp_path / ".wmh"),
+            "--no-interactive",
+        ],
+    )
+    assert result.exit_code != 0
+    assert "unknown trace source" in result.output
+
+
 def test_build_aborts_when_provider_sdk_missing(monkeypatch, tmp_path) -> None:  # noqa: ANN001
     """A missing SDK must abort the build before any rollouts, with the `uv sync` extra hint.
 

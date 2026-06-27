@@ -3,15 +3,13 @@
 from __future__ import annotations
 
 import json
-import os
 from pathlib import Path
 
 import pytest
 
 from wmh.core.types import ActionKind
 from wmh.ingest import get_adapter
-from wmh.ingest.adapter import VendorPull
-from wmh.ingest.otel_genai import VENDOR_ENDPOINT_ENV, OtelGenAIAdapter
+from wmh.ingest.otel_genai import OtelGenAIAdapter
 
 _TESTDATA = Path(__file__).parent / "testdata"
 # `wmh/ingest/otel_genai_test.py` -> repo root is parents[2].
@@ -75,6 +73,37 @@ def test_from_file_parses_jsonl_with_multiple_traces() -> None:
     assert second.steps[0].action.name == "search"
     assert second.steps[0].action.arguments == {"q": "otel"}
     assert second.steps[0].observation.content == "3 results"
+
+
+def test_from_payload_parses_bare_span_list() -> None:
+    payload = [
+        {
+            "traceId": "cccc",
+            "spanId": "01",
+            "name": "chat",
+            "attributes": [
+                {"key": "gen_ai.operation.name", "value": {"stringValue": "chat"}},
+                {"key": "gen_ai.tool.name", "value": {"stringValue": "search"}},
+                {"key": "gen_ai.tool.call.arguments", "value": {"stringValue": '{"q": "otel"}'}},
+            ],
+        },
+        {
+            "traceId": "cccc",
+            "spanId": "02",
+            "name": "execute_tool",
+            "attributes": [
+                {"key": "gen_ai.operation.name", "value": {"stringValue": "execute_tool"}},
+                {"key": "gen_ai.tool.message", "value": {"stringValue": "3 results"}},
+            ],
+        },
+    ]
+
+    traces = OtelGenAIAdapter().from_payload(payload, source="unit")
+
+    assert len(traces) == 1
+    assert traces[0].source == "unit"
+    assert traces[0].steps[0].action.name == "search"
+    assert traces[0].steps[0].observation.content == "3 results"
 
 
 def test_from_file_skips_corrupt_jsonl_lines(tmp_path: Path) -> None:
@@ -212,13 +241,3 @@ def test_committed_terminal_tasks_corpus_satisfies_the_replay_contract() -> None
             assert step.action.name  # the real tool name (bash)
             assert step.task  # the originating task instruction
     assert n_steps > 0
-
-
-def test_from_vendor_without_endpoint_raises_friendly_error() -> None:
-    saved = os.environ.pop(VENDOR_ENDPOINT_ENV, None)
-    try:
-        with pytest.raises(ValueError, match=VENDOR_ENDPOINT_ENV):
-            OtelGenAIAdapter().from_vendor(VendorPull(project="demo"))
-    finally:
-        if saved is not None:
-            os.environ[VENDOR_ENDPOINT_ENV] = saved

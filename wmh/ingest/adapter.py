@@ -1,25 +1,17 @@
 """TraceAdapter protocol + a small registry.
 
-Sources differ in two ways: *transport* (file vs. vendor SDK) and *schema* (which OTel semantic
-convention the spans follow). An adapter owns both: it pulls/reads raw spans and normalizes them.
+Sources differ in two ways: *transport* (file, Braintrust, Phoenix, ... query APIs) and *schema*
+(which OTel semantic convention the spans follow). A `TraceAdapter` owns only the schema mapping:
+raw payloads -> normalized traces. Transport lives in `trace_source.py`.
 """
 
 from __future__ import annotations
 
 from typing import Protocol, runtime_checkable
 
-from pydantic import BaseModel
+from pydantic import JsonValue
 
 from wmh.core.types import Trace
-
-
-class VendorPull(BaseModel):
-    """Parameters for pulling traces from an observability vendor's API."""
-
-    api_key: str | None = None  # falls back to the vendor's env var when None
-    project: str | None = None  # vendor project / workspace to pull from
-    since: str | None = None  # ISO-8601 lower bound on trace start time
-    limit: int | None = None  # max traces to pull
 
 
 @runtime_checkable
@@ -32,8 +24,8 @@ class TraceAdapter(Protocol):
         """Read traces from an exported file (OTLP-JSON / vendor JSONL)."""
         ...
 
-    def from_vendor(self, pull: VendorPull) -> list[Trace]:
-        """Pull traces via a vendor SDK/API."""
+    def from_payload(self, payload: JsonValue, *, source: str) -> list[Trace]:
+        """Normalize an already-fetched trace payload."""
         ...
 
 

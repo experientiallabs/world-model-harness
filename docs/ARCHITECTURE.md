@@ -34,8 +34,9 @@ Packages are layered; arrows point "depends on". `core` depends on nothing, the 
   writable-first: the user's `.wmh/models/<name>/` (where builds write) and a read-only bundled
   `world-models/<name>/` of canonical example models committed to the repo (e.g. `tau-bench`); a
   writable model shadows a bundled one of the same name. `WMH_BUNDLED_DIR` overrides/disables it.
-- **`ingest`** — `TraceAdapter` protocol + a registry; the OTel GenAI adapter normalizes spans into
-  `Trace`s. New trace sources register here.
+- **`ingest`** — `TraceSource` protocol + registry for transport (file, generic OTLP HTTP,
+  Braintrust, Phoenix) and `TraceAdapter` protocol + registry for schema normalization. The OTel
+  GenAI adapter maps fetched payloads into `Trace`s.
 - **`retrieval`** — the DreamGym replay buffer. `EmbeddingRetriever` (cosine top-k over phi),
   pluggable `Embedder`s (`embedders.py`, incl. the offline `HashingEmbedder`), and `leakfree.py`
   (`DemoRetriever` — train-only, never-own-trace retrieval shared by GEPA and eval).
@@ -58,7 +59,7 @@ Packages are layered; arrows point "depends on". `core` depends on nothing, the 
 ## The two lifecycles
 
 **Build** (`wmh build` → `engine.build.build`):
-`ingest` traces → `split_traces` (deterministic train/held-out) → `EmbeddingRetriever.index` →
+load traces from a `TraceSource` → normalize via `TraceAdapter` → `split_traces` (deterministic train/held-out) → `EmbeddingRetriever.index` →
 `GEPAOptimizer.optimize` (replays held-out steps with leak-free RAG, scores with `LLMJudge`,
 reflects to mutate the prompt) → persist prompt + frontier + index + metrics under
 `.wmh/models/<name>/`.
@@ -75,8 +76,11 @@ the session (history + scratchpad) → enrich the buffer.
 - **A new embedding model (phi)** → implement `Embedder` (`embed(texts) -> list[list[float]]`) in
   `wmh/retrieval/embedders.py`; wire it into `get_embedder`. Set `embed_provider` / `embed_dim` in
   config; the persisted dim must match at load (guarded with a clear error).
-- **A new trace source / format** → implement the `TraceAdapter` protocol in `wmh/ingest/`, register
-  it; select it via `config.trace_adapter`.
+- **A new trace transport** → implement the `TraceSource` protocol in `wmh/ingest/trace_source.py`
+  and register it. Use this when the payload is still OTLP / OTel GenAI but the fetch/query API is
+  provider-specific.
+- **A new trace schema** → implement the `TraceAdapter` protocol in `wmh/ingest/`, register it, and
+  select it via `config.trace_adapter`.
 - **A different fitness signal** → implement the `Judge` protocol in `wmh/optimize/judge.py`.
 - **A new CLI command** → add a thin command in `wmh/cli/app.py` that delegates to an `engine`
   function; keep the logic in `engine` so it stays testable without the CLI.

@@ -13,7 +13,7 @@ from wmh.config import ArtifactPaths, HarnessConfig, save_config
 from wmh.core.types import Trace
 from wmh.engine.prompts import BASE_ENV_PROMPT
 from wmh.engine.reporting import BuildReporter, NullReporter
-from wmh.ingest import VendorPull, get_adapter
+from wmh.ingest import TraceSourceConfig, TraceSourceKind, get_adapter, load_traces
 from wmh.optimize import GEPAOptimizer, LLMJudge, OptimizeResult
 from wmh.providers import get_provider
 from wmh.providers.base import Embedder, Provider
@@ -25,15 +25,18 @@ def _count_steps(traces: list[Trace]) -> int:
 
 
 def ingest(
-    config: HarnessConfig, *, file: str | None = None, vendor: VendorPull | None = None
+    config: HarnessConfig,
+    *,
+    file: str | None = None,
+    source: TraceSourceConfig | None = None,
 ) -> list[Trace]:
-    """Load + normalize traces from a file upload or a vendor SDK pull into `Trace` objects."""
+    """Load + normalize traces from a file upload or provider-backed source."""
     adapter = get_adapter(config.trace_adapter)
     if file is not None:
-        return adapter.from_file(file)
-    if vendor is not None:
-        return adapter.from_vendor(vendor)
-    raise ValueError("ingest needs either a file path or a vendor pull")
+        return load_traces(TraceSourceConfig(kind=TraceSourceKind.FILE, path=file), adapter)
+    if source is not None:
+        return load_traces(source, adapter)
+    raise ValueError("ingest needs either a file path or a trace source")
 
 
 def split_traces(traces: list[Trace], train_split: float) -> tuple[list[Trace], list[Trace]]:
@@ -56,7 +59,7 @@ def build(
     config: HarnessConfig,
     *,
     file: str | None = None,
-    vendor: VendorPull | None = None,
+    source: TraceSourceConfig | None = None,
     root: str = ".wmh",
     serve_provider: Provider | None = None,
     embedder: Embedder | None = None,
@@ -71,7 +74,7 @@ def build(
     """
     report = reporter or NullReporter()
     paths = ArtifactPaths(root)
-    traces = ingest(config, file=file, vendor=vendor)
+    traces = ingest(config, file=file, source=source)
     if not traces:
         raise ValueError("no traces ingested; nothing to build")
     report.ingest_done(len(traces), _count_steps(traces))

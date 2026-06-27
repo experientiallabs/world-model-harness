@@ -89,7 +89,46 @@ def providers_verify(
 def build(
     name: str = typer.Option(None, "--name", help="Name for this world model."),
     file: str = typer.Option(None, "--file", help="Path to exported traces (OTLP-JSON / JSONL)."),
-    vendor: str = typer.Option(None, "--vendor", help="Vendor name to pull traces via SDK."),
+    vendor: str = typer.Option(
+        None,
+        "--vendor",
+        help="Trace source to pull from instead of --file: braintrust, phoenix, or otlp.",
+    ),
+    trace_endpoint: str = typer.Option(
+        None,
+        "--trace-endpoint",
+        help="Trace source endpoint/base URL override.",
+    ),
+    trace_api_key: str = typer.Option(
+        None,
+        "--trace-api-key",
+        help="Trace source API key override; otherwise source-specific env vars are used.",
+    ),
+    trace_project: str = typer.Option(
+        None,
+        "--trace-project",
+        help="Trace source project/workspace id or name.",
+    ),
+    trace_since: str = typer.Option(
+        None,
+        "--trace-since",
+        help="Trace source lower time bound (ISO-8601; provider support varies).",
+    ),
+    trace_until: str = typer.Option(
+        None,
+        "--trace-until",
+        help="Trace source upper time bound (ISO-8601; provider support varies).",
+    ),
+    trace_limit: int = typer.Option(
+        None,
+        "--trace-limit",
+        help="Maximum traces to import after source normalization.",
+    ),
+    trace_query: str = typer.Option(
+        None,
+        "--trace-query",
+        help="Provider-native query override, currently used by Braintrust BTQL.",
+    ),
     root: str = typer.Option(ARTIFACT_DIR, help="Project dir holding all world models."),
     provider: str = typer.Option("bedrock", "--provider", help="Provider that serves the model."),
     model: str = typer.Option("us.anthropic.claude-opus-4-8", help="Serve provider model id."),
@@ -119,7 +158,7 @@ def build(
     from wmh.cli.ui import BuildParams, RichBuildReporter, build_summary_panel, run_build_wizard
     from wmh.config import ArtifactPaths
     from wmh.engine.build import build as run_build
-    from wmh.ingest import VendorPull
+    from wmh.ingest import TraceSourceConfig, trace_source_kind
     from wmh.providers import get_provider
     from wmh.retrieval import get_embedder
     from wmh.tracking import MeteredProvider, Phase, RunTracker, classify_build_call, save_run
@@ -133,6 +172,13 @@ def build(
         name=name or DEFAULT_MODEL_NAME,
         file=file,
         vendor=vendor,
+        trace_endpoint=trace_endpoint,
+        trace_api_key=trace_api_key,
+        trace_project=trace_project,
+        trace_since=trace_since,
+        trace_until=trace_until,
+        trace_limit=trace_limit,
+        trace_query=trace_query,
         provider=provider,
         model=model,
         region=region,
@@ -145,6 +191,24 @@ def build(
         params = run_build_wizard(_console, params)
     elif name is None and file is None and vendor is None:
         raise typer.BadParameter("provide --file (or --vendor), or run `wmh build` interactively")
+    if params.file is not None and params.vendor is not None:
+        raise typer.BadParameter("pass either --file or --vendor, not both")
+    source = None
+    if params.vendor is not None:
+        try:
+            source_kind = trace_source_kind(params.vendor)
+        except ValueError as exc:
+            raise typer.BadParameter(str(exc)) from exc
+        source = TraceSourceConfig(
+            kind=source_kind,
+            endpoint=params.trace_endpoint,
+            api_key=params.trace_api_key,
+            project=params.trace_project,
+            since=params.trace_since,
+            until=params.trace_until,
+            limit=params.trace_limit,
+            query=params.trace_query,
+        )
 
     validate_name(params.name)
     try:
@@ -198,7 +262,7 @@ def build(
         run_build(
             config,
             file=params.file,
-            vendor=VendorPull() if params.vendor else None,
+            source=source,
             root=model_dir,
             serve_provider=metered,
             embedder=get_embedder(config),

@@ -72,6 +72,13 @@ class BuildParams(BaseModel):
     name: str
     file: str | None = None
     vendor: str | None = None
+    trace_endpoint: str | None = None
+    trace_api_key: str | None = None
+    trace_project: str | None = None
+    trace_since: str | None = None
+    trace_until: str | None = None
+    trace_limit: int | None = None
+    trace_query: str | None = None
     provider: str = "bedrock"
     model: str = "us.anthropic.claude-opus-4-8"
     region: str | None = None
@@ -150,6 +157,13 @@ def run_build_wizard(
         name=name,
         file=file,
         vendor=vendor,
+        trace_endpoint=defaults.trace_endpoint,
+        trace_api_key=defaults.trace_api_key,
+        trace_project=defaults.trace_project,
+        trace_since=defaults.trace_since,
+        trace_until=defaults.trace_until,
+        trace_limit=defaults.trace_limit,
+        trace_query=defaults.trace_query,
         provider=provider,
         model=model,
         region=region,

@@ -35,14 +35,12 @@ observation for `(state_before, action)` against the recorded one.
 from __future__ import annotations
 
 import json
-import os
 from pathlib import Path
 
-import httpx
 from pydantic import BaseModel, Field, JsonValue
 
 from wmh.core.types import Action, ActionKind, EnvState, JsonObject, Observation, Step, Trace
-from wmh.ingest.adapter import VendorPull, register_adapter
+from wmh.ingest.adapter import register_adapter
 
 # `gen_ai.operation.name` values, per the OTel GenAI semantic conventions.
 _LLM_OPS = frozenset({"chat", "text_completion", "invoke_agent", "generate_content"})
@@ -76,12 +74,6 @@ _TOOL_OUTPUT_KEYS = (
 _STATE_STRUCTURED_KEY = "wmh.state.structured"
 _STATE_SCRATCHPAD_KEY = "wmh.state.scratchpad"
 _TRACE_METADATA_KEY = "wmh.trace.metadata"
-
-# Env vars the (placeholder) vendor pull reads. The real query semantics are vendor-specific; see
-# the TODO in `from_vendor`.
-VENDOR_ENDPOINT_ENV = "WMH_OTLP_QUERY_ENDPOINT"
-VENDOR_API_KEY_ENV = "WMH_OTLP_API_KEY"
-
 
 class _ParsedSpan(BaseModel):
     """A flattened OTLP span with its attributes already decoded to plain JSON values."""
@@ -426,6 +418,10 @@ def _spans_to_traces(spans: list[_ParsedSpan], source: str) -> list[Trace]:
 class OtelGenAIAdapter:
     name = "otel-genai"
 
+    def from_payload(self, payload: JsonValue, *, source: str) -> list[Trace]:
+        """Normalize an already-loaded OTLP / OTel-GenAI payload."""
+        return _spans_to_traces(_collect_spans(payload), source=source)
+
     def from_file(self, path: str) -> list[Trace]:
         text = Path(path).read_text(encoding="utf-8")
         spans: list[_ParsedSpan] = []
@@ -446,44 +442,6 @@ class OtelGenAIAdapter:
         else:
             spans = _collect_spans(payload)
         return _spans_to_traces(spans, source=f"file:{path}")
-
-    def from_vendor(self, pull: VendorPull) -> list[Trace]:
-        """Pull OTLP-JSON spans from an OTLP-compatible query backend.
-
-        OTLP itself is push-only, so "pulling" traces is inherently vendor-specific (Grafana Tempo,
-        Jaeger, Honeycomb, ... each expose their own query API and auth). This implementation does a
-        best-effort generic OTLP-JSON fetch and reuses the same span->Step mapping as `from_file`.
-
-        TODO: implement the vendor-specific query protocol and auth. Today we:
-          - read the query URL from ``$WMH_OTLP_QUERY_ENDPOINT``;
-          - send ``pull.api_key`` (or ``$WMH_OTLP_API_KEY``) as a Bearer token;
-          - pass project/since/limit as query params (real backends name these differently).
-        """
-        endpoint = os.environ.get(VENDOR_ENDPOINT_ENV)
-        if not endpoint:
-            raise ValueError(
-                f"set ${VENDOR_ENDPOINT_ENV} to an OTLP-compatible query URL to pull traces "
-                "(vendor-specific query support is not yet implemented; use from_file meanwhile)"
-            )
-        api_key = pull.api_key or os.environ.get(VENDOR_API_KEY_ENV)
-        headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
-        # TODO: these param names are placeholders; map to the target backend's query schema.
-        params: dict[str, str] = {}
-        if pull.project is not None:
-            params["project"] = pull.project
-        if pull.since is not None:
-            params["since"] = pull.since
-        if pull.limit is not None:
-            params["limit"] = str(pull.limit)
-        response = httpx.get(endpoint, headers=headers, params=params, timeout=30.0)
-        response.raise_for_status()
-        spans = _collect_spans(response.json())
-        traces = _spans_to_traces(spans, source=f"vendor:{pull.project or endpoint}")
-        # The `limit` query param is a placeholder a real backend may ignore; enforce it locally
-        # so the `VendorPull.limit` contract holds regardless of what the backend honors.
-        if pull.limit is not None:
-            traces = traces[: pull.limit]
-        return traces
 
 
 register_adapter(OtelGenAIAdapter())

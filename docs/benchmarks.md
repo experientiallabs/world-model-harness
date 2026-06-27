@@ -37,6 +37,22 @@ Traces are stored as one-span-per-line OTel-GenAI JSONL that `wmh.ingest.otel_ge
 per-step state and trace metadata travel as optional `wmh.state.*` / `wmh.trace.metadata` span
 attributes — a strict superset of the OTel GenAI semconv, so any trace that omits them still parses.
 
+## Trace sources
+
+The OTel GenAI parser is schema-only. Transport is handled by `TraceSource` implementations:
+
+- `file` — local OTLP JSON / JSONL exports (`wmh build --file traces.otel.jsonl`).
+- `otlp` — a generic HTTP query endpoint returning OTLP JSON (`WMH_OTLP_QUERY_ENDPOINT` or
+  `--trace-endpoint`).
+- `braintrust` — Braintrust BTQL (`BRAINTRUST_API_KEY`, `BRAINTRUST_PROJECT`, optional
+  `--trace-query`).
+- `phoenix` — Arize Phoenix OTLP spans (`GET /v1/projects/{project}/spans/otlpv1` under
+  `PHOENIX_BASE_URL`, with `PHOENIX_API_KEY` / `PHOENIX_PROJECT_ID`).
+
+Provider sources should return either OTLP JSON directly or rows with `trace_id`/`span_id` and an
+`attributes` object containing the same `gen_ai.*` keys the file parser accepts. The adapter then
+groups by `trace_id`, sorts spans by start time, and emits one `Step` per recorded action.
+
 ## How tau²-bench is captured
 
 The pipeline lives in [`tools/tau2-capture/`](../tools/tau2-capture/README.md) and is deliberately
