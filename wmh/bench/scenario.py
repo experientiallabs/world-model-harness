@@ -120,6 +120,10 @@ def run_scenario(
             recorded.state_before,
             recorded.action,
             demos=demos.demos_for(trace.trace_id, recorded),
+            # Teacher-forced prefix: the recorded prior steps (each carries only the agent's action
+            # + the real recorded observation, never agent reasoning), so each prediction sees the
+            # earlier turns exactly as the real environment did.
+            history=trace.steps[:i],
         )
         elapsed = the_clock.monotonic() - start
         total += elapsed
