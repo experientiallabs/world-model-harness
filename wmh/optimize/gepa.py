@@ -81,6 +81,10 @@ def predict_observation(
     shared `wmh.core.render.build_env_prompt` and parses the completion with the shared
     `parse_observation` — the exact assembly AND output contract the serving engine uses — so the
     predicted observation (content + is_error + state_note) matches what the world model produces.
+
+    Rollouts run deterministically: the providers (Opus 4.8 / GPT 5.5) reject sampling params, so no
+    temperature is forwarded. A temperature sweep is parked until a sampling-capable provider exists
+    (see docs/research_directions.md).
     """
     system, user = build_env_prompt(prompt, task, state, action, demos=demos)
     completion = provider.complete(
@@ -255,12 +259,17 @@ class GEPAOptimizer:
         judge: Judge,
         retriever: Retriever | None = None,
         on_rollout: RolloutCallback | None = None,
+        *,
+        seed: int = 0,
     ) -> None:
         self._provider = provider
         self._judge = judge
         # Optional retriever for RAG-aware evaluation. When None, GEPA evaluates zero-shot.
         self._retriever = retriever
         self._on_rollout = on_rollout
+        # The GEPA engine seed (minibatch sampling + candidate selection). Defaults to the
+        # historical 0; the research harness sweeps it for seed stability (docs/gepa_research.md).
+        self._seed = seed
 
     def optimize(
         self, train: list[Trace], test: list[Trace], base_prompt: str, budget: int
@@ -291,7 +300,7 @@ class GEPAOptimizer:
             reflection_minibatch_size=min(3, len(trainset)),
             display_progress_bar=False,
             raise_on_exception=False,
-            seed=0,
+            seed=self._seed,
         )
 
         best = _candidate_text(result.candidates[result.best_idx])

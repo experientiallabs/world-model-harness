@@ -30,7 +30,10 @@ Packages are layered; arrows point "depends on". `core` depends on nothing, the 
   (Anthropic, Bedrock, Azure OpenAI, OpenAI) behind `get_provider`. `Embedder` is the narrower
   embed-only capability retrieval needs.
 - **`config`** — `HarnessConfig` (persisted to `config.toml`), `ArtifactPaths` (the on-disk layout
-  of one model), and `WorldModelStore` (named models under `.wmh/models/<name>/`).
+  of one model), and `WorldModelStore` (named models). The store searches two locations,
+  writable-first: the user's `.wmh/models/<name>/` (where builds write) and a read-only bundled
+  `world-models/<name>/` of canonical example models committed to the repo (e.g. `tau-bench`); a
+  writable model shadows a bundled one of the same name. `WMH_BUNDLED_DIR` overrides/disables it.
 - **`ingest`** — `TraceAdapter` protocol + a registry; the OTel GenAI adapter normalizes spans into
   `Trace`s. New trace sources register here.
 - **`retrieval`** — the DreamGym replay buffer. `EmbeddingRetriever` (cosine top-k over phi),
@@ -44,6 +47,11 @@ Packages are layered; arrows point "depends on". `core` depends on nothing, the 
 - **`serving`** — a thin FastAPI transport over in-process `WorldModel`s, namespaced by model name.
 - **`tracking`** — `MeteredProvider` wraps any `Provider` at the boundary to record time/tokens/cost
   per phase (build / GEPA / judge / serve) onto a `RunTracker`. Transparent: nothing it wraps knows.
+- **`research`** — the optimization-research surface (`docs/gepa_research.md`). An `Ablation`
+  framework (sweep named `Condition`s across seeds → mean+std) over reusable build/eval primitives
+  (`optimize_prompt` / `score_prompt`) that wrap the real pipeline (`score_prompt` delegates to
+  `engine.replay`, so the `wmh eval` rubric scores experiments too). The first experiment is GEPA
+  seed-stability; live runners live in `scripts/`. Parked directions: `docs/research_directions.md`.
 - **`cli`** — `build / list / eval / serve / demo / play / providers verify`. Each command is thin:
   it parses flags and delegates to an `engine` function.
 
