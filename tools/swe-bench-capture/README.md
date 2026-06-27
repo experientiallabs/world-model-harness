@@ -93,17 +93,23 @@ The output is OTel-GenAI span JSONL that `wmh.ingest.otel_genai` reads directly.
 ## Run ONE real scenario (the real-environment side of the comparison)
 
 `run_real_scenario.py` is the real half of the scenario comparison. The world model side is
-`wmh bench scenario swe-bench --trace N`; this runs the SAME held-out scenario for real — it boots
-the instance's SWE-bench Docker image and `docker exec`s the exact recorded commands in order,
-streaming the real stdout and printing the wall-clock time (including container boot). Compare the
-two end times by eye.
+`wmh bench scenario swe-bench --trace N`; this runs the SAME held-out scenario for real — and
+crucially it **builds the environment from scratch** before running anything: the SWE-bench base
+image → the environment image (the real conda/pip **dependency install**) → the instance image
+(clone repo + checkout commit + install). Every `docker build` line is streamed and the whole
+standup is counted in the total time, *then* the recorded commands are `docker exec`'d. That build
+is the slow, multi-minute cost the world model skips entirely.
 
 ```bash
-# same --trace index the world-model side uses (same deterministic held-out split)
-python run_real_scenario.py --trace 0
+# from the swebench .venv; same --trace index the world-model side uses (same held-out split)
+.venv/bin/python run_real_scenario.py --trace 0           # cold --no-cache build (default)
+.venv/bin/python run_real_scenario.py --trace 0 --cache   # reuse cached layers after the first build
 ```
 
-Stdlib-only; reads the committed `examples/swe-bench.otel.jsonl` and re-implements the harness's
-blake2b train/holdout split inline so trace selection matches exactly. A cold run pays the full
-multi-GB image pull (the dramatic boot cost the world model skips); a warm run reuses the cached
-image.
+Imports `swebench` (for the official base/env/instance Dockerfiles + setup scripts) but never `wmh`;
+reads the committed `examples/swe-bench.otel.jsonl` and re-implements the harness's blake2b
+train/holdout split inline so `--trace N` selects the SAME scenario as the world-model side.
+
+Observed (astropy__astropy-13453, `--trace 0`, cold `--no-cache`): **build from scratch 339.5s + 19
+commands, 362.0s total** — vs. the world model reconstructing the same 19-step scenario in ~96s with
+**zero** standup. The dependency install is the gap.
