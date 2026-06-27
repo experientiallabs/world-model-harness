@@ -14,6 +14,7 @@ from rich.console import Console
 from wmh.config import (
     ARTIFACT_DIR,
     DEFAULT_MODEL_NAME,
+    PROVIDER_ENV_VARS,
     HarnessConfig,
     WorldModelStore,
     load_config,
@@ -26,6 +27,7 @@ app = typer.Typer(help="World Model Harness: a frontier LLM acts as your agent's
 providers_app = typer.Typer(help="Manage and verify LLM providers.")
 app.add_typer(providers_app, name="providers")
 _console = Console()
+_CHECK = "[green]✓[/green]"
 
 # Module-level singleton: a typer.Argument call can't be a default inline (ruff B008).
 _EVAL_FILES = typer.Argument(..., help="OTel trace files to score (one corpus each).")
@@ -178,6 +180,11 @@ def build(
         embed_dim=params.embed_dim,
         gepa_budget=params.gepa_budget,
     )
+    # Fail fast: ping the serve provider (and the embed path, if provider-backed) before spending
+    # any rollouts. A missing SDK or bad creds otherwise surfaces only deep inside GEPA, which
+    # silently swallows it and "succeeds" with a useless held-out-0.0 model.
+    _verify_or_abort(config)
+
     # Meter the build at the provider boundary: the one serve provider drives GEPA rollouts,
     # reflection, and the judge, so wrapping it captures all build LLM cost/tokens without touching
     # the optimizer. `classify_build_call` splits judge vs GEPA by system prompt.
@@ -213,6 +220,50 @@ def build(
                 f"  {phase.value}: {bucket.total_tokens} tokens, "
                 f"${bucket.cost_usd:.4f} ({bucket.calls} calls)"
             )
+
+
+# The `uv sync` extra that installs each provider's SDK, surfaced when a verify ping fails with a
+# missing module so the fix is one copy-paste away.
+_PROVIDER_EXTRA: dict[ProviderKind, str] = {
+    ProviderKind.ANTHROPIC: "anthropic",
+    ProviderKind.BEDROCK: "bedrock",
+    ProviderKind.OPENAI: "openai",
+    ProviderKind.AZURE_OPENAI: "openai",
+}
+
+
+def _verify_or_abort(config: HarnessConfig) -> None:
+    """Ping the serve provider (and any provider-backed embedder) and abort on failure.
+
+    Runs before any rollouts so a missing SDK or bad creds fails loudly and immediately, instead of
+    being swallowed inside GEPA and yielding a useless model. Raises `typer.Exit(1)` with an
+    actionable hint (the `uv sync` extra for a missing SDK; "check creds / model id" otherwise).
+    """
+    checks = [(config.serve_provider_config(), False)]
+    if config.embed_provider is not EmbedderKind.HASHING:
+        checks.append((config.embed_provider_config(), True))
+
+    failed = False
+    for cfg, is_embed in checks:
+        label = f"embed:{cfg.kind.value}" if is_embed else cfg.kind.value
+        _console.print(f"verifying {label}…")
+        result = verify_embedder(cfg) if is_embed else verify_all([cfg])[0]
+        if result.ok:
+            _console.print(f"  {_CHECK} {label} ({result.model}) reachable")
+            continue
+        failed = True
+        _console.print(f"  [red]✗ {label} ({result.model}) failed[/red]: {result.detail}")
+        if "No module named" in result.detail:
+            extra = _PROVIDER_EXTRA.get(cfg.kind, cfg.kind.value)
+            _console.print(f"    [yellow]run `uv sync --extra {extra}` to install the SDK[/yellow]")
+        else:
+            envs = ", ".join(PROVIDER_ENV_VARS.get(cfg.kind, []))
+            hint = f" ({envs})" if envs else ""
+            _console.print(
+                f"    [yellow]check the model id and that your credentials are set{hint}[/yellow]"
+            )
+    if failed:
+        raise typer.Exit(1)
 
 
 @app.command("list")
