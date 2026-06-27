@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
 from rich.console import Console
 
 from wmh.cli.ui import (
@@ -179,11 +178,14 @@ def test_build_wizard_accepts_defaults_with_blank_input() -> None:
     assert params.embed_provider == "hashing"  # default embedder, no embed-model prompt
 
 
-def test_build_wizard_requires_a_trace_source() -> None:
+def test_build_wizard_reprompts_on_blank_trace_source() -> None:
+    # A blank traces path must re-ask, not crash. After a name, blank the file once, then give a
+    # real path; remaining prompts (provider/model/region/budget/embedder/embed_dim) take defaults.
     console = Console(force_terminal=False, no_color=True, width=100)
-    reader = _scripted_reader(["mymodel", ""])  # name, then blank file
-    with pytest.raises(ValueError, match="traces file is required"):
-        run_build_wizard(console, BuildParams(name="default"), reader=reader)
+    reader = _scripted_reader(["mymodel", "", "/tmp/t.jsonl", "", "", "", "", "", ""])
+    params = run_build_wizard(console, BuildParams(name="default"), reader=reader)
+    assert params.name == "mymodel"
+    assert params.file == "/tmp/t.jsonl"
 
 
 # --- selection picker ----------------------------------------------------------------------------

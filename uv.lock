@@ -892,6 +892,7 @@ dependencies = [
     { name = "numpy", version = "2.5.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
     { name = "pydantic" },
     { name = "rich" },
+    { name = "tomli-w" },
     { name = "typer" },
     { name = "uvicorn" },
 ]
@@ -903,9 +904,6 @@ anthropic = [
 bedrock = [
     { name = "boto3" },
 ]
-config = [
-    { name = "tomli-w" },
-]
 dev = [
     { name = "anthropic" },
     { name = "boto3" },
@@ -913,7 +911,6 @@ dev = [
     { name = "opentelemetry-proto" },
     { name = "pytest" },
     { name = "ruff" },
-    { name = "tomli-w" },
     { name = "ty" },
 ]
 openai = [
@@ -937,10 +934,10 @@ requires-dist = [
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },
     { name = "rich", specifier = ">=13.7" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.5" },
-    { name = "tomli-w", marker = "extra == 'config'", specifier = ">=1.0" },
+    { name = "tomli-w", specifier = ">=1.0" },
     { name = "ty", marker = "extra == 'dev'", specifier = ">=0.0.1a1" },
     { name = "typer", specifier = ">=0.12" },
     { name = "uvicorn", specifier = ">=0.29" },
-    { name = "world-model-harness", extras = ["anthropic", "openai", "bedrock", "otel", "config"], marker = "extra == 'dev'" },
+    { name = "world-model-harness", extras = ["anthropic", "openai", "bedrock", "otel"], marker = "extra == 'dev'" },
 ]
-provides-extras = ["anthropic", "openai", "bedrock", "otel", "config", "dev"]
+provides-extras = ["anthropic", "openai", "bedrock", "otel", "dev"]
