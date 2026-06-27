@@ -1,11 +1,11 @@
 """Open-loop reconstruction-fidelity evaluation by replaying held-out steps ("open replay").
 
-Replay is TEACHER-FORCED and so perfectly repeatable per step: for each held-out step we feed the
-*real recorded* `(state_before, action)` and have the world model predict the observation, then
-score it against the *real recorded* observation. Nothing the model generates feeds forward, so a
-bad prediction at one step never contaminates another — the score isolates per-step fidelity. (The
-closed-loop counterpart, where predictions feed forward, is a future direction: see
-docs/closed_loop.md.)
+Replay is TEACHER-FORCED and so perfectly repeatable per step: for each held-out step we feed
+all *real recorded* prior same-trace steps plus the step's `(state_before, action)`, have the world
+model predict the observation, then score it against the *real recorded* observation. Nothing the
+model generates feeds forward, so a bad prediction at one step never contaminates another — the
+score isolates per-step fidelity. (The closed-loop counterpart, where predictions feed forward, is a
+future direction: see docs/closed_loop.md.)
 
 The judge is pluggable; `RubricJudge` (the Qwen-AgentWorld-style 5-dimension scorer) is the default
 for evaluation, and the report carries per-step scores plus their mean ± std across steps.
@@ -96,20 +96,23 @@ def replay(
     rng = random.Random(seed)
     results: list[StepResult] = []
     for trace in held_out:
-        for step in _select_steps(trace, sample_turns, rng):
-            results.append(_score_step(prompt, trace.trace_id, step, provider, judge, demos))
+        for step_index in _select_step_indices(trace, sample_turns, rng):
+            step = trace.steps[step_index]
+            history = trace.steps[:step_index]
+            results.append(
+                _score_step(prompt, trace.trace_id, step, provider, judge, demos, history)
+            )
     return _aggregate(results)
 
 
-def _select_steps(trace: Trace, sample_turns: str, rng: random.Random) -> list[Step]:
+def _select_step_indices(trace: Trace, sample_turns: str, rng: random.Random) -> list[int]:
     """Pick which steps of `trace` to score. 'all' = every step; 'sampled' = first/last/3 middle."""
     steps = trace.steps
     if sample_turns != "sampled" or len(steps) <= SAMPLED_TURNS:
-        return steps
+        return list(range(len(steps)))
     middle = list(range(1, len(steps) - 1))
     picks = sorted(rng.sample(middle, SAMPLED_TURNS - 2))
-    indices = [0, *picks, len(steps) - 1]
-    return [steps[i] for i in indices]
+    return [0, *picks, len(steps) - 1]
 
 
 def _score_step(
@@ -119,11 +122,13 @@ def _score_step(
     provider: Provider,
     judge: Judge,
     demos: DemoRetriever,
+    history: list[Step],
 ) -> StepResult:
     """Predict the observation for one step and score it against the recorded observation."""
     predicted = predict_observation(
         provider, prompt, step.task, step.state_before, step.action,
         demos=demos.demos_for(trace_id, step),
+        history=history,
     )
     verdict = judge.score(predicted, step.observation, step)
     return StepResult(

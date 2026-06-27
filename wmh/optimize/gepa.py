@@ -80,6 +80,7 @@ def predict_observation(
     state: EnvState,
     action: Action,
     demos: list[Step],
+    history: list[Step] | None = None,
 ) -> Observation:
     """Predict the observation for (state, action) under `prompt`, using only a Provider.
 
@@ -92,7 +93,7 @@ def predict_observation(
     temperature is forwarded. A temperature sweep is parked until a sampling-capable provider exists
     (see docs/research_directions.md).
     """
-    system, user = build_env_prompt(prompt, task, state, action, demos=demos)
+    system, user = build_env_prompt(prompt, task, state, action, history=history, demos=demos)
     completion = provider.complete(
         system, [Message(role="user", content=user)], temperature=0.0, max_tokens=1024
     )
