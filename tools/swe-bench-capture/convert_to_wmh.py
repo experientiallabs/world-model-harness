@@ -70,27 +70,45 @@ def _info_of(traj: Any) -> dict[str, Any]:  # noqa: ANN401 - loosely-typed sourc
 
 
 def _command_of(message: dict[str, Any]) -> str | None:
-    """The shell command an assistant turn ran: the first fenced block, else None (reasoning-only)."""
+    """The shell command an assistant turn ran, or None for a reasoning-only turn.
+
+    Handles both mini-swe-agent model formats:
+    - tool-call models (what Bedrock Opus 4.8 produces): the command is in
+      ``extra.actions[0].command``.
+    - text-based models: the command is the first fenced ```` ``` ```` block in ``content``.
+    """
+    extra = message.get("extra")
+    if isinstance(extra, dict):
+        actions = extra.get("actions")
+        if isinstance(actions, list) and actions:
+            first = actions[0]
+            if isinstance(first, dict):
+                command = first.get("command")
+                if isinstance(command, str) and command.strip():
+                    return command.strip()
     content = message.get("content")
-    if not isinstance(content, str):
-        return None
-    match = _FENCE_RE.search(content)
-    if match is None:
-        return None
-    command = match.group(1).strip()
-    return command or None
+    if isinstance(content, str):
+        match = _FENCE_RE.search(content)
+        if match is not None and match.group(1).strip():
+            return match.group(1).strip()
+    return None
 
 
 def _observation_of(message: dict[str, Any]) -> tuple[str, bool]:
-    """The real output + error flag from an environment (user) reply.
+    """The real output + error flag from an environment reply (a ``tool`` or ``user`` message).
 
-    Prefers the ``<output>`` body and a non-zero ``<returncode>``; falls back to the raw content
-    when the reply isn't wrapped (older harness formats), so no real observation is ever dropped.
+    Prefers the structured ``extra.returncode`` + the ``<output>`` body; falls back to the raw
+    content when the reply isn't wrapped (older/text formats), so no real observation is dropped.
     """
     content = message.get("content")
     text = content if isinstance(content, str) else ""
     out_match = _OUTPUT_RE.search(text)
     body = out_match.group(1) if out_match is not None else text
+
+    extra = message.get("extra")
+    if isinstance(extra, dict) and extra.get("returncode") is not None:
+        # Structured returncode from the tool-call format is authoritative.
+        return body, extra["returncode"] != 0
     rc_match = _RETURNCODE_RE.search(text)
     is_error = bool(rc_match) and rc_match.group(1) != "0"
     return body, is_error
@@ -143,8 +161,8 @@ def _spans_for_trajectory(
         if command is None:
             continue  # reasoning-only turn: no environment observation to score
         nxt = messages[i + 1] if i + 1 < len(messages) else None
-        if nxt is None or nxt.get("role") == "assistant":
-            continue  # no recorded observation followed this command; skip (never invent one)
+        if nxt is None or nxt.get("role") not in ("tool", "user"):
+            continue  # no recorded env reply followed this command; skip (never invent one)
         obs_content, obs_error = _observation_of(nxt)
 
         action_attrs = [
