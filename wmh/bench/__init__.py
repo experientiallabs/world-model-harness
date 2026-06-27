@@ -19,6 +19,7 @@ from wmh.bench.definition import (
     load_benchmark,
 )
 from wmh.bench.leaderboard import LeaderboardRow, build_leaderboard
+from wmh.bench.race import RaceReport, RaceStep, race_trace
 from wmh.bench.results import (
     BenchRun,
     SeedResult,
@@ -37,6 +38,9 @@ __all__ = [
     "load_benchmark",
     "LeaderboardRow",
     "build_leaderboard",
+    "RaceReport",
+    "RaceStep",
+    "race_trace",
     "BenchRun",
     "SeedResult",
     "load_runs",
