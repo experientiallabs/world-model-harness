@@ -16,6 +16,7 @@ Everything that talks to `rich` lives here so the engine stays headless. Respons
 
 from __future__ import annotations
 
+import os
 from collections.abc import Callable
 
 from pydantic import BaseModel
@@ -33,10 +34,11 @@ from rich.progress import (
 )
 from rich.table import Table
 
-from wmh.config import ModelInfo, validate_name
+from wmh.config import PROVIDER_ENV_VARS, ModelInfo, validate_name
 from wmh.core.types import Action, ActionKind, Session
 from wmh.engine.play import PlayTurn, parse_action, play_turn
 from wmh.engine.world_model import WorldModel
+from wmh.providers.base import ProviderKind
 
 # A reader takes a fully-rendered prompt string and returns the user's typed line.
 PromptReader = Callable[[str], str]
@@ -44,14 +46,24 @@ PromptReader = Callable[[str], str]
 # Stage glyphs reused by the animated and plain reporters.
 _CHECK = "[green]✓[/green]"
 
-# Provider-specific defaults the creation wizard suggests.
-_DEFAULT_MODELS: dict[str, str] = {
-    "bedrock": "us.anthropic.claude-opus-4-8",
-    "anthropic": "claude-opus-4-8",
-    "openai": "gpt-5.5",
-    "azure_openai": "gpt-5.5",
+# Serve providers offered in the wizard picker, with the model ids each supports. The first model
+# in each list is the suggested default. Keep these in sync with the provider backends.
+_PROVIDER_MODELS: dict[str, list[str]] = {
+    "bedrock": ["us.anthropic.claude-opus-4-8", "us.anthropic.claude-opus-4-7"],
+    "anthropic": ["claude-opus-4-8", "claude-opus-4-7", "claude-sonnet-4-6", "claude-haiku-4-5"],
+    "openai": ["gpt-5.5", "gpt-5.5-pro", "gpt-5.4"],
+    "azure_openai": ["gpt-5.5", "gpt-5.4"],
 }
 _DEFAULT_REGIONS: dict[str, str] = {"bedrock": "us-east-1"}
+
+# Embedders offered in the wizard, with the embeddings-model ids each provider-backed one supports
+# (None = the offline hashing embedder, no model). First entry is the suggested default.
+_EMBEDDERS: dict[str, list[str] | None] = {
+    "hashing": None,
+    "bedrock": ["amazon.titan-embed-text-v2:0"],
+    "openai": ["text-embedding-3-small", "text-embedding-3-large"],
+    "azure_openai": ["text-embedding-3-small", "text-embedding-3-large"],
+}
 
 
 class BuildParams(BaseModel):
@@ -105,21 +117,34 @@ def run_build_wizard(
             if not file:
                 console.print("[red]a traces path is required (or pass --vendor)[/red]")
 
-    provider = _prompt_text(console, ask, "Serve provider", defaults.provider)
-    model_default = defaults.model or _DEFAULT_MODELS.get(provider, defaults.model)
-    model = _prompt_text(console, ask, "Serve model id", model_default)
-    region_default = defaults.region or _DEFAULT_REGIONS.get(provider)
-    region = _prompt_text(console, ask, "Region (blank for default)", region_default) or None
-    gepa_budget = _prompt_int(console, ask, "GEPA rollout budget", defaults.gepa_budget)
+    # Serve provider: pick from the list, then show which credentials it expects so a missing one
+    # is surfaced here (an offline check) rather than as an opaque failure mid-build.
+    provider = _select(console, ask, "Serve provider", list(_PROVIDER_MODELS), defaults.provider)
+    _report_credentials(console, provider)
+    model = _select(console, ask, "Serve model id", _PROVIDER_MODELS[provider], defaults.model)
 
-    # Retrieval phi embedder: default offline hashing (no creds). A provider-backed embedder needs
-    # a model id, prompted only when the user picks one.
-    embed_label = "Embedder (hashing | bedrock | openai | azure_openai)"
-    embed_provider = _prompt_text(console, ask, embed_label, defaults.embed_provider)
+    region = None
+    if provider == "bedrock":
+        region_default = defaults.region or _DEFAULT_REGIONS.get(provider)
+        region = _prompt_text(console, ask, "AWS region", region_default) or None
+
+    gepa_budget = _prompt_int(
+        console,
+        ask,
+        "GEPA rollout budget (more rollouts = better prompt, higher cost/time)",
+        defaults.gepa_budget,
+    )
+
+    # Retrieval phi embedder: default offline hashing (no creds). A provider-backed embedder is
+    # picked from the list and prompts for its embeddings-model id; phi dimensionality keeps its
+    # default (the index and query embedders must agree, so it is not a wizard knob).
+    embed_provider = _select(console, ask, "Embedder", list(_EMBEDDERS), defaults.embed_provider)
     embed_model = defaults.embed_model
-    if embed_provider != "hashing":
-        embed_model = _prompt_text(console, ask, "Embeddings model id", embed_model) or None
-    embed_dim = _prompt_int(console, ask, "phi dimensionality", defaults.embed_dim)
+    embed_models = _EMBEDDERS[embed_provider]
+    if embed_models is not None:
+        if embed_provider != provider:
+            _report_credentials(console, embed_provider)
+        embed_model = _select(console, ask, "Embeddings model id", embed_models, embed_model)
 
     return BuildParams(
         name=name,
@@ -131,8 +156,50 @@ def run_build_wizard(
         gepa_budget=gepa_budget,
         embed_provider=embed_provider,
         embed_model=embed_model,
-        embed_dim=embed_dim,
+        embed_dim=defaults.embed_dim,
     )
+
+
+def _select(
+    console: Console, ask: PromptReader, label: str, options: list[str], default: str | None
+) -> str:
+    """Prompt the user to pick one of `options` by number (or name), defaulting to `default`.
+
+    The default is whichever of `default`/`options[0]` is present in `options`; Enter accepts it.
+    Re-prompts on invalid input. Returns the chosen option string.
+    """
+    chosen_default = default if default in options else options[0]
+    console.print(f"[bold]{label}[/bold]:")
+    for i, opt in enumerate(options, start=1):
+        marker = "  [dim](default)[/dim]" if opt == chosen_default else ""
+        console.print(f"  [cyan]{i}[/cyan]. {escape(opt)}{marker}")
+    while True:
+        raw = ask(f"[dim]\\[{escape(chosen_default)}][/dim] > ").strip()
+        if not raw:
+            return chosen_default
+        choice = _parse_int(raw)
+        if choice is not None and 1 <= choice <= len(options):
+            return options[choice - 1]
+        if raw in options:  # allow typing the option name directly
+            return raw
+        console.print(f"[red]pick 1-{len(options)} or an option name[/red]")
+
+
+def _report_credentials(console: Console, provider: str) -> None:
+    """Print which env vars the chosen provider reads, flagging any that are unset.
+
+    An offline presence check only — it does not validate the value. The live ping that confirms
+    the creds actually work happens once before the build (see `wmh build`).
+    """
+    try:
+        env_vars = PROVIDER_ENV_VARS[ProviderKind(provider)]
+    except (ValueError, KeyError):
+        return
+    for var in env_vars:
+        if os.environ.get(var):
+            console.print(f"  {_CHECK} {var} is set")
+        else:
+            console.print(f"  [yellow]make sure {var} is set[/yellow]")
 
 
 def select_model(

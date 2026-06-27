@@ -8,7 +8,7 @@ import pytest
 from typer.testing import CliRunner
 
 from wmh.cli import app
-from wmh.providers.base import Completion, Message, ProviderConfig, ProviderKind
+from wmh.providers.base import Completion, Message, ProviderConfig, ProviderKind, verify_via_ping
 
 runner = CliRunner()
 
@@ -37,7 +37,9 @@ class FakeProvider:
         return [[0.0] for _ in texts]
 
     def verify(self):  # noqa: ANN201
-        raise NotImplementedError
+        # The pre-build verify guard pings through this; delegate to the shared ping so the fake
+        # reports ok without hitting a real backend.
+        return verify_via_ping(self)
 
 
 def _traces_file(tmp_path) -> str:  # noqa: ANN001 - pytest fixture path
@@ -79,6 +81,7 @@ def patched_provider(monkeypatch) -> None:  # noqa: ANN001 - pytest fixture
     import sys
 
     import wmh.providers as providers_pkg
+    import wmh.providers.registry as registry
 
     fake = FakeProvider()
     # `wmh.engine.__init__` rebinds the name `build` to the function, shadowing the submodule
@@ -86,6 +89,9 @@ def patched_provider(monkeypatch) -> None:  # noqa: ANN001 - pytest fixture
     for module_name in ("wmh.engine.build", "wmh.engine.loader"):
         monkeypatch.setattr(sys.modules[module_name], "get_provider", lambda config: fake)
     monkeypatch.setattr(providers_pkg, "get_provider", lambda config: fake)
+    # The pre-build verify guard pings via verify_all/verify_embedder, which construct providers
+    # through the registry's own get_provider — patch that too so the guard sees the fake.
+    monkeypatch.setattr(registry, "get_provider", lambda config: fake)
 
 
 def _build(root, name: str, tmp_path) -> None:  # noqa: ANN001 - pytest fixture paths
@@ -183,18 +189,18 @@ def test_play_loads_bundled_only_model(patched_provider, monkeypatch, tmp_path) 
 def test_build_interactive_wizard_creates_model(patched_provider, tmp_path) -> None:  # noqa: ANN001
     root = tmp_path / ".wmh"
     # --interactive forces the wizard even under CliRunner (non-TTY); feed each answer line in
-    # prompt order: name, file, provider, model, region, budget, embedder, embed_dim (the offline
-    # 'hashing' embedder skips the embed-model prompt).
+    # prompt order: name, file, provider (select), model (select), region (bedrock only), budget,
+    # embedder (select). The offline 'hashing' embedder skips the embed-model prompt; phi dim isn't
+    # prompted. Provider/model/embedder are picked by index against their option lists.
     answers = "\n".join(
         [
             "wizard-built",
             _traces_file(tmp_path),
-            "bedrock",
-            "opus",
+            "1",  # provider: bedrock
+            "1",  # model: us.anthropic.claude-opus-4-8
             "us-east-1",
-            "4",
-            "hashing",
-            "64",
+            "4",  # gepa budget
+            "1",  # embedder: hashing
         ]
     )
     result = runner.invoke(
@@ -208,6 +214,39 @@ def test_build_non_interactive_without_source_errors(tmp_path) -> None:  # noqa:
     # No --file/--vendor and --no-interactive: should fail fast rather than hang on input.
     result = runner.invoke(app, ["build", "--no-interactive", "--root", str(tmp_path / ".wmh")])
     assert result.exit_code != 0
+
+
+def test_build_aborts_when_provider_sdk_missing(monkeypatch, tmp_path) -> None:  # noqa: ANN001
+    """A missing SDK must abort the build before any rollouts, with the `uv sync` extra hint.
+
+    Regression: previously the ModuleNotFoundError was swallowed inside GEPA and the build
+    "succeeded" with a useless held-out-0.0 model.
+    """
+    import sys
+
+    from wmh.providers.base import VerifyResult
+
+    appmod = sys.modules["wmh.cli.app"]
+    monkeypatch.setattr(
+        appmod,
+        "verify_all",
+        lambda configs: [
+            VerifyResult(
+                ok=False,
+                kind=configs[0].kind,
+                model=configs[0].model,
+                detail="No module named 'boto3'",
+            )
+        ],
+    )
+    root = tmp_path / ".wmh"
+    result = runner.invoke(
+        app, ["build", "--name", "x", "--file", _traces_file(tmp_path), "--root", str(root)]
+    )
+    assert result.exit_code == 1
+    assert "uv sync --extra bedrock" in result.output
+    # Aborted before building: no artifact written.
+    assert not (root / "models" / "x" / "config.toml").exists()
 
 
 def test_play_unknown_model_errors(tmp_path) -> None:  # noqa: ANN001
