@@ -124,6 +124,11 @@ def test_providers_subcommand_is_registered() -> None:
     assert "providers" in group_names
 
 
+def test_bench_subcommand_is_registered() -> None:
+    group_names = {group.name for group in app.registered_groups}
+    assert "bench" in group_names
+
+
 def test_build_then_list_shows_named_model(patched_provider, tmp_path) -> None:  # noqa: ANN001
     root = tmp_path / ".wmh"
     _build(root, "tau2-airline", tmp_path)
@@ -287,3 +292,82 @@ def test_providers_verify_reports_built_model_provider(patched_provider, tmp_pat
     assert result.exit_code == 0, result.output
     # The bedrock provider configured at build time shows up in the verify report.
     assert "bedrock" in result.output
+
+
+# --- bench commands ------------------------------------------------------------------------------
+
+
+def _benchmark(benchmarks_root, name: str, tmp_path) -> None:  # noqa: ANN001 - pytest paths
+    """Write a benchmark definition under <benchmarks_root>/<name>/ pointing at a real trace."""
+    bench_dir = benchmarks_root / name
+    bench_dir.mkdir(parents=True)
+    trace = _traces_file(tmp_path)
+    (bench_dir / "benchmark.toml").write_text(
+        f'version = "1"\ntraces = ["{trace}"]\n[eval]\nseeds = [0]\n', encoding="utf-8"
+    )
+
+
+def test_bench_list_shows_definitions(tmp_path) -> None:  # noqa: ANN001
+    benchmarks = tmp_path / "benchmarks"
+    _benchmark(benchmarks, "tau-bench", tmp_path)
+    result = runner.invoke(app, ["bench", "list", "--benchmarks", str(benchmarks)])
+    assert result.exit_code == 0, result.output
+    assert "tau-bench" in result.output
+
+
+def test_bench_list_empty_is_friendly(tmp_path) -> None:  # noqa: ANN001
+    result = runner.invoke(app, ["bench", "list", "--benchmarks", str(tmp_path / "benchmarks")])
+    assert result.exit_code == 0
+    assert "no benchmarks" in result.output
+
+
+def test_bench_leaderboard_empty_is_friendly(tmp_path) -> None:  # noqa: ANN001
+    benchmarks = tmp_path / "benchmarks"
+    _benchmark(benchmarks, "tau-bench", tmp_path)
+    # Defined but never run: bare `wmh bench` reports no runs yet.
+    result = runner.invoke(app, ["bench", "--benchmarks", str(benchmarks)])
+    assert result.exit_code == 0, result.output
+    assert "no benchmark runs yet" in result.output
+
+
+def test_bench_run_then_leaderboard(monkeypatch, tmp_path) -> None:  # noqa: ANN001
+    import wmh.bench as bench_pkg
+    from wmh.bench.runner import RolloutScore
+
+    # Fake the scorer so the run does no LLM work; the runner + persistence + leaderboard are real.
+    def fake_score(files, prompt, judge_config, **kwargs):  # noqa: ANN001, ANN003, ANN202
+        return RolloutScore(fidelity_mean=0.75, fidelity_std=0.05, n_steps=4, rollouts=1)
+
+    monkeypatch.setattr(bench_pkg, "evaluate_files_once", fake_score)
+
+    benchmarks = tmp_path / "benchmarks"
+    _benchmark(benchmarks, "tau-bench", tmp_path)
+
+    run = runner.invoke(app, ["bench", "run", "tau-bench", "--benchmarks", str(benchmarks)])
+    assert run.exit_code == 0, run.output
+    assert "0.750" in run.output
+    # The run persisted under the benchmark's results/ dir.
+    assert list((benchmarks / "tau-bench" / "results").glob("*.json"))
+
+    board = runner.invoke(app, ["bench", "--benchmarks", str(benchmarks)])
+    assert board.exit_code == 0, board.output
+    assert "tau-bench" in board.output
+    assert "0.750" in board.output
+
+
+def test_bench_run_unknown_benchmark_is_clean_error(tmp_path) -> None:  # noqa: ANN001
+    result = runner.invoke(
+        app, ["bench", "run", "ghost", "--benchmarks", str(tmp_path / "benchmarks")]
+    )
+    assert result.exit_code != 0
+    assert not isinstance(result.exception, (FileNotFoundError, ValueError))
+
+
+def test_bench_run_missing_trace_is_clean_error(tmp_path) -> None:  # noqa: ANN001
+    benchmarks = tmp_path / "benchmarks"
+    bench_dir = benchmarks / "tau-bench"
+    bench_dir.mkdir(parents=True)
+    (bench_dir / "benchmark.toml").write_text('traces = ["gone.jsonl"]\n', encoding="utf-8")
+    result = runner.invoke(app, ["bench", "run", "tau-bench", "--benchmarks", str(benchmarks)])
+    assert result.exit_code != 0
+    assert "missing" in result.output
