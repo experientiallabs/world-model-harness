@@ -19,3 +19,5 @@ benchmarks/*/results/
 
 # Local-only design notes; not committed.
 DESIGN.md
+
+demos/
