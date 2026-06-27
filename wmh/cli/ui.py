@@ -20,6 +20,7 @@ from collections.abc import Callable
 
 from pydantic import BaseModel
 from rich.console import Console
+from rich.markup import escape
 from rich.panel import Panel
 from rich.progress import (
     BarColumn,
@@ -92,9 +93,17 @@ def run_build_wizard(
     file = defaults.file
     vendor = defaults.vendor
     if not file and not vendor:
-        file = _prompt_text(console, ask, "Path to exported traces (OTLP-JSON / JSONL)", None)
-        if not file:
-            raise ValueError("a traces file is required to build (or pass --vendor)")
+        # A trace source is required, so re-prompt on empty input rather than erroring out.
+        while not file:
+            file = _prompt_text(
+                console,
+                ask,
+                "Path to exported traces (OTLP-JSON / JSONL)",
+                None,
+                example="examples/tau2-bench.otel.jsonl",
+            )
+            if not file:
+                console.print("[red]a traces path is required (or pass --vendor)[/red]")
 
     provider = _prompt_text(console, ask, "Serve provider", defaults.provider)
     model_default = defaults.model or _DEFAULT_MODELS.get(provider, defaults.model)
@@ -153,15 +162,30 @@ def select_model(
         console.print(f"[red]pick 1-{len(infos)} or a model name[/red]")
 
 
-def _prompt_text(console: Console, ask: PromptReader, label: str, default: str | None) -> str:
-    suffix = f" [dim][{default}][/dim]" if default else ""
+def _prompt_text(
+    console: Console,
+    ask: PromptReader,
+    label: str,
+    default: str | None,
+    *,
+    example: str | None = None,
+) -> str:
+    # Escape interpolated values: "default" or anything with [...] is valid rich markup and would
+    # otherwise be swallowed (rendered invisibly) instead of shown. A prompt with no default can
+    # carry a grey `example` hint so the user sees the expected shape of the answer.
+    if default:
+        suffix = f" [dim]\\[{escape(default)}][/dim]"
+    elif example:
+        suffix = f" [dim](e.g. {escape(example)})[/dim]"
+    else:
+        suffix = ""
     value = ask(f"[bold]{label}[/bold]{suffix}: ").strip()
     return value or (default or "")
 
 
 def _prompt_int(console: Console, ask: PromptReader, label: str, default: int) -> int:
     while True:
-        raw = ask(f"[bold]{label}[/bold] [dim][{default}][/dim]: ").strip()
+        raw = ask(f"[bold]{label}[/bold] [dim]\\[{default}][/dim]: ").strip()
         if not raw:
             return default
         value = _parse_int(raw)
