@@ -13,5 +13,9 @@ dist/
 .ty_cache/
 .DS_Store
 
+# Benchmark run outputs (the leaderboard reads these). Definitions (benchmark.toml) are committed;
+# the per-run JSON scorecards are reproducible artifacts, so they stay out of the tree.
+benchmarks/*/results/
+
 # Local-only design notes; not committed.
 DESIGN.md
