@@ -1,0 +1,38 @@
+# swe-bench — open-loop reconstruction-fidelity benchmark.
+#
+# A committed, versioned benchmark definition ("filesystem as DB"). `wmh bench run swe-bench` replays
+# the held-out steps of the trace(s) below teacher-forced, has the world model predict each
+# observation, and scores it against the recorded one with the pinned rubric judge. Results land in
+# `benchmarks/swe-bench/results/` and surface on `wmh bench`. `wmh bench race swe-bench` replays one
+# recorded scenario live and times it (the sandbox-vs-world-model demo).
+#
+# Trace paths resolve relative to this directory; they point at the shared corpus under `examples/`
+# (captured from real SWE-bench Verified via tools/swe-bench-capture/) so there is one source of
+# truth.
+#
+# NOTE: SWE-bench observations are arbitrary code-execution output (command stdout, tracebacks,
+# pytest logs), the LOW-fidelity end of the spectrum for an LLM world model — by design. It is the
+# benchmark with the heaviest real-sandbox boot (per-instance multi-GB Docker images), which is what
+# makes it the dramatic "what it costs to boot the real thing" side of the race.
+
+version = "1"
+description = "SWE-bench Verified shell transitions (real repo containers); reconstruction fidelity."
+traces = ["../../examples/swe-bench.otel.jsonl"]
+
+[eval]
+# "sampled" uses Qwen-AgentWorld's 5-turn protocol (cheaper); "all" scores every held-out step.
+sample_turns = "sampled"
+# Reserved variance knob — inert until the providers forward a sampling temperature; 1/0.0 keeps the
+# committed run reproducible and cheap.
+rollouts = 1
+temperature = 0.0
+seeds = [0]
+train_split = 0.7
+top_k = 5
+
+[eval.judge]
+# Reference-grounded 5-dimension rubric judge (wmh.optimize.judge.RubricJudge). Pinned for
+# reproducibility (Bedrock Opus 4.8).
+provider = "bedrock"
+model = "us.anthropic.claude-opus-4-8"
+region = "us-east-1"
