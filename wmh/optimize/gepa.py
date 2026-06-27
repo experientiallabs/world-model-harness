@@ -105,15 +105,19 @@ def predict_observation(
 
 @dataclass
 class _EvalStep:
-    """A held-out step bundled with the demos the serving world model would retrieve for it.
+    """A held-out step bundled with the demos the serving world model would retrieve for it, plus
+    the teacher-forced `history` (the recorded steps before it in its trace).
 
-    This is GEPA's DataInst. Bundling the demos with the step (rather than a side lookup) keeps
+    This is GEPA's DataInst. Bundling demos + history with the step (not a side lookup) keeps
     evaluation self-contained and robust to however the engine slices/forwards the dataset. `demos`
-    is empty in the zero-shot configuration (no embedder).
+    is empty in the zero-shot configuration (no embedder); `history` is the recorded prefix so a
+    candidate prompt is scored predicting each step WITH its prior turns in scope — matching serving
+    (which passes `session.history`) and replay eval (which passes the recorded prefix).
     """
 
     step: Step
     demos: list[Step]
+    history: list[Step]
 
 
 @dataclass
@@ -169,6 +173,7 @@ class WorldModelGEPAAdapter(GEPAAdapter[_EvalStep, _StepTrajectory, Observation]
                     step.state_before,
                     step.action,
                     demos=item.demos,
+                    history=item.history,
                 )
                 result = self._judge.score(predicted, step.observation, step)
                 score, critique = result.score, result.critique
@@ -340,11 +345,17 @@ class GEPAOptimizer:
 
 
 def _eval_steps(traces: list[Trace], demos: DemoRetriever) -> list[_EvalStep]:
-    """Bundle each step with the (leak-free) demos the serving model would retrieve for it."""
+    """Bundle each step with its (leak-free) demos AND its teacher-forced history.
+
+    `history` is the recorded steps before this one in its own trace, so a candidate prompt is
+    scored predicting the step WITH its prior turns in scope — matching serving and replay eval.
+    Demos still come from the train corpus (never the own trace); history is the within-trace
+    recorded prefix, which is the context the real environment actually had.
+    """
     return [
-        _EvalStep(step=step, demos=demos.demos_for(trace.trace_id, step))
+        _EvalStep(step=step, demos=demos.demos_for(trace.trace_id, step), history=trace.steps[:i])
         for trace in traces
-        for step in trace.steps
+        for i, step in enumerate(trace.steps)
     ]
 
 

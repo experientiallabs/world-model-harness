@@ -535,29 +535,38 @@ def bench_run(
     _console.print(f"[dim]wrote run {run.run_id[:8]} -> {out}[/dim]")
 
 
-@bench_app.command("race")
-def bench_race(
+@bench_app.command("scenario")
+def bench_scenario(
     name: str = typer.Argument(..., help="Benchmark name (benchmarks/<name>/benchmark.toml)."),
     model: str = typer.Option(
         None, "--model", help="World model to serve (default: the benchmark name)."
     ),
-    trace_index: int = typer.Option(0, "--trace", help="Which held-out trace to replay."),
+    trace_index: int = typer.Option(
+        None, "--trace", help="Held-out trace to replay (default: the simplest = fewest steps)."
+    ),
     benchmarks: str = typer.Option(BENCHMARKS_DIR, "--benchmarks", help="Benchmark defs dir."),
     root: str = typer.Option(ARTIFACT_DIR, help="Project dir (for --model)."),
 ) -> None:
-    """Replay one recorded scenario through the world model, timing each step (demo's right side).
+    """Open-loop replay one recorded scenario through the world model, timing + costing each step.
 
-    Loads the world model (no container to boot — load is file I/O, the provider is lazy), picks a
-    held-out trace from the benchmark's corpus, and steps its recorded actions through the live
-    serving path, printing each predicted observation as it lands with its latency. The first
-    observation's time is the world model's cost-to-first-step — the number to race a real sandbox's
-    boot against. Fidelity shows as predicted-vs-recorded alongside each step.
+    The world-model half of the scenario comparison. Picks a held-out trace from the benchmark's
+    corpus — by default the SIMPLEST (fewest recorded steps), so the demo scenario is short; pass
+    `--trace N` for a specific one — and predicts each recorded step **teacher-forced, exactly as
+    `wmh eval` does** (from the recorded state + history + leak-free demos from the train split; a
+    step never sees the model's own prior predictions), printing each predicted observation as it
+    lands. Ends with total time, tokens, cost, and fidelity. Run the SAME scenario against the real
+    environment with the matching `tools/<benchmark>-capture/` runner (closed-loop) and compare.
     """
     from pathlib import Path
 
-    from wmh.bench import RaceStep, load_benchmark, race_trace
+    from wmh.bench import ScenarioStep, load_benchmark, run_scenario
+    from wmh.config import ArtifactPaths, load_config
     from wmh.engine.build import split_traces
+    from wmh.engine.prompts import BASE_ENV_PROMPT
     from wmh.ingest import get_adapter
+    from wmh.providers import get_provider
+    from wmh.retrieval import EmbeddingRetriever, get_embedder
+    from wmh.retrieval.leakfree import DemoRetriever
 
     bench_dir = Path(benchmarks) / name
     try:
@@ -571,30 +580,52 @@ def bench_race(
             + ", ".join(str(p) for p in missing)
         )
 
-    # Ingest the benchmark's corpus and pick a held-out trace deterministically (same split the
-    # scorer uses), so the raced scenario is one the model was NOT optimized on.
+    # Ingest the benchmark's corpus and split it the SAME way the scorer does: replay a held-out
+    # trace (one the model was NOT optimized on) and retrieve leak-free demos from the train split.
     adapter = get_adapter("otel-genai")
     traces = [t for f in bench_def.trace_files() for t in adapter.from_file(str(f))]
     if not traces:
         raise typer.BadParameter(f"benchmark {name!r} ingested no traces")
-    _train, holdout = split_traces(traces, bench_def.eval.train_split)
+    train, holdout = split_traces(traces, bench_def.eval.train_split)
     pool = holdout or traces  # tiny corpora may have no held-out trace; fall back to all
     kind = "held-out" if holdout else "(no held-out split; all)"
-    if not 0 <= trace_index < len(pool):
-        raise typer.BadParameter(
-            f"--trace {trace_index} out of range; {name!r} has {len(pool)} {kind} trace(s)"
-        )
-    trace = pool[trace_index]
+    if trace_index is None:
+        # Default: the simplest scenario — the held-out trace with the fewest recorded steps (ties
+        # broken by corpus order). Keeps the demo short without the user hunting for a small trace.
+        trace = min(pool, key=lambda t: len(t.steps))
+    else:
+        if not 0 <= trace_index < len(pool):
+            raise typer.BadParameter(
+                f"--trace {trace_index} out of range; {name!r} has {len(pool)} {kind} trace(s)"
+            )
+        trace = pool[trace_index]
 
-    # Default the served model to the benchmark name (the bundled canonical model, e.g. tau-bench).
-    world_model, resolved_name, _provider = _load_model(model or name, root)
+    # Resolve the model dir (default: the benchmark name -> the bundled canonical model), then load
+    # its serve provider + optimized prompt + embedder — the exact pieces the eval path uses.
+    store = WorldModelStore(root)
+    try:
+        model_dir = store.resolve(model or name)
+    except (FileNotFoundError, ValueError) as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    config = load_config(str(model_dir))
+    paths = ArtifactPaths(model_dir)
+    env_prompt = (
+        paths.optimized_prompt.read_text(encoding="utf-8")
+        if paths.optimized_prompt.exists()
+        else BASE_ENV_PROMPT
+    )
+    provider = get_provider(config.serve_provider_config())
+    # Leak-free demos from the TRAIN split only (never the query's own trace), identical to eval.
+    retriever = EmbeddingRetriever(get_embedder(config))
+    demos = DemoRetriever(retriever, train or traces, top_k=config.top_k)
+
     n_steps = len(trace.steps)
     _console.print(
-        f"[bold]racing[/bold] {name} trace [cyan]{trace.trace_id[:8]}[/cyan] "
-        f"({n_steps} steps) against world model [cyan]{resolved_name}[/cyan] — no sandbox to boot"
+        f"[bold]world model[/bold] {model or name}: open-loop replay of {name} scenario "
+        f"[cyan]{trace.trace_id[:8]}[/cyan] ({n_steps} steps) — no environment to stand up"
     )
 
-    def on_step(step: RaceStep) -> None:
+    def on_step(step: ScenarioStep) -> None:
         # Light live-fidelity signal: error flag agreed and a non-empty prediction landed.
         ok = step.is_error_predicted == step.is_error_actual and bool(step.predicted.strip())
         mark = "[green]✓[/green]" if ok else "[yellow]≈[/yellow]"
@@ -603,12 +634,14 @@ def bench_race(
             f"      [dim]predicted[/dim] {_clip(step.predicted)}"
         )
 
-    report = race_trace(world_model, trace, benchmark=name, model=resolved_name, on_step=on_step)
+    report = run_scenario(
+        provider, env_prompt, trace, demos, benchmark=name, model=(model or name), on_step=on_step
+    )
     _console.print(f"[bold]done[/bold]: {report.summary()}")
 
 
 def _clip(text: str, limit: int = 160) -> str:
-    """One-line clip of an observation for the live race view."""
+    """One-line clip of an observation for the live scenario view."""
     flat = " ".join(text.split())
     return flat if len(flat) <= limit else flat[: limit - 1] + "…"
 
