@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from wmh.bench.race import RaceReport, race_trace
+from wmh.bench.scenario import ScenarioReport, run_scenario
 from wmh.core.types import Action, ActionKind, EnvState, Observation, Step, Trace
 from wmh.engine.world_model import WorldModel
 from wmh.providers.base import Completion, Message, ProviderConfig, ProviderKind, TokenUsage
@@ -45,7 +45,7 @@ class FakeClock:
         if self._i >= len(self._ticks):
             raise AssertionError(
                 f"FakeClock exhausted after {len(self._ticks)} ticks; "
-                "the test needs more (race_trace calls monotonic twice per step)"
+                "the test needs more (run_scenario calls monotonic twice per step)"
             )
         value = self._ticks[self._i]
         self._i += 1
@@ -76,11 +76,11 @@ def test_race_times_each_step_and_captures_predictions() -> None:
     provider = FakeProvider()
     # Two steps; clock pairs (start, end) per step: deltas 0.5s then 1.5s.
     clock = FakeClock([10.0, 10.5, 20.0, 21.5])
-    report = race_trace(
+    report = run_scenario(
         _world_model(provider), _trace("t", n=2), benchmark="b", model="m", clock=clock
     )
 
-    assert isinstance(report, RaceReport)
+    assert isinstance(report, ScenarioReport)
     assert report.benchmark == "b" and report.model == "m" and report.trace_id == "t"
     assert provider.calls == 2  # one LLM call per recorded step
     assert [s.seconds for s in report.steps] == [0.5, 1.5]
@@ -93,7 +93,7 @@ def test_race_times_each_step_and_captures_predictions() -> None:
 
 
 def test_race_empty_trace_is_safe() -> None:
-    report = race_trace(_world_model(FakeProvider()), _trace("empty", n=0))
+    report = run_scenario(_world_model(FakeProvider()), _trace("empty", n=0))
     assert report.steps == []
     assert report.startup_seconds == 0.0
     assert report.total_seconds == 0.0
@@ -101,7 +101,7 @@ def test_race_empty_trace_is_safe() -> None:
 
 def test_race_default_clock_runs_without_a_fake() -> None:
     # No clock injected -> SystemClock; just assert it completes and times are non-negative.
-    report = race_trace(_world_model(FakeProvider()), _trace("t", n=1))
+    report = run_scenario(_world_model(FakeProvider()), _trace("t", n=1))
     assert len(report.steps) == 1
     assert report.steps[0].seconds >= 0.0
     assert report.steps[0].predicted == "predicted obs"
@@ -133,7 +133,7 @@ class MeteredProvider(FakeProvider):
 
 def test_race_reports_tokens_cost_and_fidelity() -> None:
     # Two steps, 120 tokens each at Opus 4.8 rates -> tokens + cost rolled up from session metering.
-    report = race_trace(_world_model(MeteredProvider()), _trace("t", n=2))
+    report = run_scenario(_world_model(MeteredProvider()), _trace("t", n=2))
     assert report.tokens == 240  # (100 + 20) * 2 steps
     # 200 input @ $5/Mtok + 40 output @ $25/Mtok = $0.001 + $0.001 = $0.002.
     assert abs(report.cost_usd - 0.002) < 1e-9
@@ -143,7 +143,7 @@ def test_race_reports_tokens_cost_and_fidelity() -> None:
 
 
 def test_race_fidelity_zero_for_empty_trace() -> None:
-    report = race_trace(_world_model(FakeProvider()), _trace("empty", n=0))
+    report = run_scenario(_world_model(FakeProvider()), _trace("empty", n=0))
     assert report.fidelity == 0.0
     assert report.tokens == 0
     assert report.cost_usd == 0.0

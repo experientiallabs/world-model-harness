@@ -19,7 +19,6 @@ from wmh.bench.definition import (
     load_benchmark,
 )
 from wmh.bench.leaderboard import LeaderboardRow, build_leaderboard
-from wmh.bench.race import RaceReport, RaceStep, race_trace
 from wmh.bench.results import (
     BenchRun,
     SeedResult,
@@ -28,6 +27,7 @@ from wmh.bench.results import (
     save_run,
 )
 from wmh.bench.runner import RolloutScore, ScoreOnce, run_benchmark
+from wmh.bench.scenario import ScenarioReport, ScenarioStep, run_scenario
 from wmh.bench.scoring import evaluate_files_once
 
 __all__ = [
@@ -38,9 +38,9 @@ __all__ = [
     "load_benchmark",
     "LeaderboardRow",
     "build_leaderboard",
-    "RaceReport",
-    "RaceStep",
-    "race_trace",
+    "ScenarioReport",
+    "ScenarioStep",
+    "run_scenario",
     "BenchRun",
     "SeedResult",
     "load_runs",

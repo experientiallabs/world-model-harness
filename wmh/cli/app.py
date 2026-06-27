@@ -535,8 +535,8 @@ def bench_run(
     _console.print(f"[dim]wrote run {run.run_id[:8]} -> {out}[/dim]")
 
 
-@bench_app.command("race")
-def bench_race(
+@bench_app.command("scenario")
+def bench_scenario(
     name: str = typer.Argument(..., help="Benchmark name (benchmarks/<name>/benchmark.toml)."),
     model: str = typer.Option(
         None, "--model", help="World model to serve (default: the benchmark name)."
@@ -545,17 +545,17 @@ def bench_race(
     benchmarks: str = typer.Option(BENCHMARKS_DIR, "--benchmarks", help="Benchmark defs dir."),
     root: str = typer.Option(ARTIFACT_DIR, help="Project dir (for --model)."),
 ) -> None:
-    """Replay one recorded scenario through the world model, timing each step (demo's right side).
+    """Replay one recorded scenario through the world model (open-loop), timing + costing each step.
 
     Loads the world model (no container to boot — load is file I/O, the provider is lazy), picks a
     held-out trace from the benchmark's corpus, and steps its recorded actions through the live
-    serving path, printing each predicted observation as it lands with its latency. The first
-    observation's time is the world model's cost-to-first-step — the number to race a real sandbox's
-    boot against. Fidelity shows as predicted-vs-recorded alongside each step.
+    serving path, printing each predicted observation as it lands with its latency. Ends with the
+    total time, tokens, cost, and fidelity. Run the SAME scenario against the real environment with
+    the matching `tools/<benchmark>-capture/` runner and compare the two end times.
     """
     from pathlib import Path
 
-    from wmh.bench import RaceStep, load_benchmark, race_trace
+    from wmh.bench import ScenarioStep, load_benchmark, run_scenario
     from wmh.engine.build import split_traces
     from wmh.ingest import get_adapter
 
@@ -572,7 +572,7 @@ def bench_race(
         )
 
     # Ingest the benchmark's corpus and pick a held-out trace deterministically (same split the
-    # scorer uses), so the raced scenario is one the model was NOT optimized on.
+    # scorer uses), so the replayed scenario is one the model was NOT optimized on.
     adapter = get_adapter("otel-genai")
     traces = [t for f in bench_def.trace_files() for t in adapter.from_file(str(f))]
     if not traces:
@@ -590,11 +590,11 @@ def bench_race(
     world_model, resolved_name, _provider = _load_model(model or name, root)
     n_steps = len(trace.steps)
     _console.print(
-        f"[bold]racing[/bold] {name} trace [cyan]{trace.trace_id[:8]}[/cyan] "
-        f"({n_steps} steps) against world model [cyan]{resolved_name}[/cyan] — no sandbox to boot"
+        f"[bold]world model[/bold] {resolved_name}: replaying {name} scenario "
+        f"[cyan]{trace.trace_id[:8]}[/cyan] ({n_steps} steps) — no container to boot"
     )
 
-    def on_step(step: RaceStep) -> None:
+    def on_step(step: ScenarioStep) -> None:
         # Light live-fidelity signal: error flag agreed and a non-empty prediction landed.
         ok = step.is_error_predicted == step.is_error_actual and bool(step.predicted.strip())
         mark = "[green]✓[/green]" if ok else "[yellow]≈[/yellow]"
@@ -603,12 +603,12 @@ def bench_race(
             f"      [dim]predicted[/dim] {_clip(step.predicted)}"
         )
 
-    report = race_trace(world_model, trace, benchmark=name, model=resolved_name, on_step=on_step)
+    report = run_scenario(world_model, trace, benchmark=name, model=resolved_name, on_step=on_step)
     _console.print(f"[bold]done[/bold]: {report.summary()}")
 
 
 def _clip(text: str, limit: int = 160) -> str:
-    """One-line clip of an observation for the live race view."""
+    """One-line clip of an observation for the live scenario view."""
     flat = " ".join(text.split())
     return flat if len(flat) <= limit else flat[: limit - 1] + "…"
 
