@@ -1,16 +1,16 @@
-"""Timed open-loop scenario replay through a live world model.
+"""Timed OPEN-LOOP scenario replay through a world model (the eval predict path, with timing).
 
-Where `wmh.bench.runner` *scores fidelity* over many seeds, this *plays one recorded scenario* and
-**times it**: it replays a recorded trace's `(state, action)` steps through the real serving path
-(`WorldModel.step`) in order, measuring how long each predicted observation takes and the LLM cost,
-and comparing each prediction to the recorded ground truth. It is the world-model half of a
-scenario comparison — `wmh bench scenario <name>` reconstructs the environment with the LLM (no
-container to boot); the real environment runs the same recorded commands separately (see the
-`tools/<benchmark>-capture/` runners) and you compare the two end times.
+`wmh bench scenario <name>` is the world-model half of a scenario comparison. It replays a recorded
+trace's `(state, action)` steps through the model **teacher-forced — exactly as `wmh eval` /
+`wmh.engine.replay` do**: each step predicts from the RECORDED `state_before` (not the model's own
+prior predictions) with leak-free demos retrieved from the train corpus. It is open-loop on purpose
+— the same measurement the evaluator runs — but it adds per-step wall-clock timing and LLM
+tokens/cost, and prints each predicted observation as it lands. The real environment runs the SAME
+scenario closed-loop (see the `tools/<benchmark>-capture/` runners); you compare the two end times.
 
-This module owns no I/O and no LLM specifics: it takes an already-loaded `WorldModel`, an
-already-ingested `Trace`, and an injectable `Clock`, so it is unit-testable with a fake provider and
-a scripted clock. The CLI (`wmh bench scenario`) does the loading and rendering.
+Prediction goes through the shared `predict_observation` (the one rollout primitive GEPA, replay,
+and eval all use), so the numbers here are directly comparable to a `wmh eval` run on the same step.
+Metering is via a `MeteredProvider` so tokens/cost come from the real completion usage.
 """
 
 from __future__ import annotations
@@ -21,13 +21,17 @@ from pydantic import BaseModel, Field
 
 from wmh.core.render import render_action
 from wmh.core.types import Trace
-from wmh.engine.world_model import WorldModel
+from wmh.optimize.gepa import predict_observation
+from wmh.providers.base import Provider
+from wmh.retrieval.leakfree import DemoRetriever
 from wmh.tracking.clock import Clock, SystemClock
+from wmh.tracking.metered import MeteredProvider
+from wmh.tracking.tracker import Phase, RunTracker
 
 
 class ScenarioStep(BaseModel):
     """One replayed step: the action, what the world model predicted, the recorded truth, and how
-    long the prediction took (seconds, wall-clock for that single `step` call)."""
+    long the prediction took (seconds, wall-clock for that single teacher-forced prediction)."""
 
     index: int
     action: str  # rendered action, for a human-readable scorecard
@@ -42,11 +46,10 @@ class ScenarioReport(BaseModel):
     """The outcome of replaying one scenario: per-step records plus wall-clock + cost totals.
 
     `startup_seconds` is the world model's cost-to-first-observation — the analogue of the real
-    environment's container boot — which for the world model is just one LLM round-trip (the first
-    `step`), so it equals `steps[0].seconds`. `total_seconds` is the sum across all steps.
-    `tokens`/`cost_usd` come from the world model's serve-time metering (`session_usage`) — the LLM
-    spend to reconstruct the whole scenario. These are the numbers `wmh bench scenario` prints; the
-    real environment (run separately) is the comparison.
+    environment's container build — which for the world model is just one LLM round-trip (the first
+    prediction), so it equals `steps[0].seconds`. `total_seconds` is the sum across all steps.
+    `tokens`/`cost_usd` are the metered LLM spend to reconstruct the whole scenario. The real
+    environment (run separately, closed-loop) is the comparison.
     """
 
     benchmark: str = ""
@@ -80,35 +83,44 @@ class ScenarioReport(BaseModel):
 
 
 def run_scenario(
-    world_model: WorldModel,
+    provider: Provider,
+    env_prompt: str,
     trace: Trace,
+    demos: DemoRetriever,
     *,
     benchmark: str = "",
     model: str = "",
     clock: Clock | None = None,
     on_step: Callable[[ScenarioStep], None] | None = None,
 ) -> ScenarioReport:
-    """Replay `trace`'s recorded steps through `world_model`, timing each prediction.
+    """Open-loop teacher-forced replay of `trace` through `provider`/`env_prompt`, timed + metered.
 
-    Seeds a session from the trace's task and the first step's `state_before`, then steps each
-    recorded action in order through the live serving path. Each step is timed with `clock`
-    (`SystemClock` by default; a fake clock makes the timing deterministic in tests). The predicted
-    observation is captured alongside the recorded one so the comparison can show them converging.
+    For each recorded step, predict the observation from the step's RECORDED `state_before` + action
+    and its leak-free `demos` (via the shared `predict_observation` — the exact eval predict path),
+    timing the call and capturing predicted-vs-recorded. This is open-loop: a step never sees the
+    model's own prior predictions, so the result matches what `wmh eval` would score for that step.
 
-    `on_step` is invoked with each `ScenarioStep` as it completes, so a caller (the CLI) can render
-    observations live as the world model fills the scenario in.
+    `demos` is a `DemoRetriever` built over the TRAIN corpus (it excludes the query's own trace), so
+    retrieval is identical to evaluation. `on_step` is invoked with each `ScenarioStep` as it
+    completes, for live rendering. Tokens/cost are metered off the real completion usage.
     """
     the_clock = clock or SystemClock()
-    # The task is recorded per-step (the originating instruction); take it from the first step.
-    task = trace.steps[0].task if trace.steps else None
-    seed_state = trace.steps[0].state_before if trace.steps else None
-    session = world_model.new_session(task=task, seed_state=seed_state)
+    tracker = RunTracker(run_id=trace.trace_id, kind="scenario")
+    metered = MeteredProvider(provider, tracker, base_phase=Phase.SERVE)
 
+    task = trace.steps[0].task if trace.steps else None
     steps: list[ScenarioStep] = []
     total = 0.0
     for i, recorded in enumerate(trace.steps):
         start = the_clock.monotonic()
-        predicted = world_model.step(session.id, recorded.action)
+        predicted = predict_observation(
+            metered,
+            env_prompt,
+            recorded.task,
+            recorded.state_before,
+            recorded.action,
+            demos=demos.demos_for(trace.trace_id, recorded),
+        )
         elapsed = the_clock.monotonic() - start
         total += elapsed
         scenario_step = ScenarioStep(
@@ -124,9 +136,7 @@ def run_scenario(
         if on_step is not None:
             on_step(scenario_step)
 
-    # Serve-time metering: the world model meters every `step`'s LLM tokens/cost onto the session's
-    # tracker, so read the scenario's total spend back from `session_usage` (no extra LLM calls).
-    usage = world_model.session_usage(session.id)
+    usage = tracker.record_summary()
     return ScenarioReport(
         benchmark=benchmark,
         model=model,
