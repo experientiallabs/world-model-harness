@@ -541,18 +541,21 @@ def bench_scenario(
     model: str = typer.Option(
         None, "--model", help="World model to serve (default: the benchmark name)."
     ),
-    trace_index: int = typer.Option(0, "--trace", help="Which held-out trace to replay."),
+    trace_index: int = typer.Option(
+        None, "--trace", help="Held-out trace to replay (default: the simplest = fewest steps)."
+    ),
     benchmarks: str = typer.Option(BENCHMARKS_DIR, "--benchmarks", help="Benchmark defs dir."),
     root: str = typer.Option(ARTIFACT_DIR, help="Project dir (for --model)."),
 ) -> None:
     """Open-loop replay one recorded scenario through the world model, timing + costing each step.
 
     The world-model half of the scenario comparison. Picks a held-out trace from the benchmark's
-    corpus and predicts each recorded step **teacher-forced — exactly as `wmh eval` does** (from the
-    recorded state + leak-free demos from the train split; a step never sees the model's own prior
-    predictions), printing each predicted observation as it lands with its latency. Ends with total
-    time, tokens, cost, and fidelity. Run the SAME scenario against the real environment with the
-    matching `tools/<benchmark>-capture/` runner (closed-loop) and compare the two end times.
+    corpus — by default the SIMPLEST (fewest recorded steps), so the demo scenario is short; pass
+    `--trace N` for a specific one — and predicts each recorded step **teacher-forced, exactly as
+    `wmh eval` does** (from the recorded state + history + leak-free demos from the train split; a
+    step never sees the model's own prior predictions), printing each predicted observation as it
+    lands. Ends with total time, tokens, cost, and fidelity. Run the SAME scenario against the real
+    environment with the matching `tools/<benchmark>-capture/` runner (closed-loop) and compare.
     """
     from pathlib import Path
 
@@ -586,11 +589,16 @@ def bench_scenario(
     train, holdout = split_traces(traces, bench_def.eval.train_split)
     pool = holdout or traces  # tiny corpora may have no held-out trace; fall back to all
     kind = "held-out" if holdout else "(no held-out split; all)"
-    if not 0 <= trace_index < len(pool):
-        raise typer.BadParameter(
-            f"--trace {trace_index} out of range; {name!r} has {len(pool)} {kind} trace(s)"
-        )
-    trace = pool[trace_index]
+    if trace_index is None:
+        # Default: the simplest scenario — the held-out trace with the fewest recorded steps (ties
+        # broken by corpus order). Keeps the demo short without the user hunting for a small trace.
+        trace = min(pool, key=lambda t: len(t.steps))
+    else:
+        if not 0 <= trace_index < len(pool):
+            raise typer.BadParameter(
+                f"--trace {trace_index} out of range; {name!r} has {len(pool)} {kind} trace(s)"
+            )
+        trace = pool[trace_index]
 
     # Resolve the model dir (default: the benchmark name -> the bundled canonical model), then load
     # its serve provider + optimized prompt + embedder — the exact pieces the eval path uses.

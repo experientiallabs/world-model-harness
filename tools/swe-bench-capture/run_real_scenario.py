@@ -113,7 +113,10 @@ def _exists(image: str) -> bool:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--corpus", default=str(_DEFAULT_CORPUS), help="swe-bench OTel JSONL corpus.")
-    parser.add_argument("--trace", type=int, default=0, help="Which held-out trace to replay.")
+    parser.add_argument(
+        "--trace", type=int, default=None,
+        help="Held-out trace to replay (default: the simplest = fewest commands).",
+    )
     parser.add_argument("--train-split", type=float, default=0.7, help="Train/holdout ratio.")
     parser.add_argument(
         "--dataset", default="SWE-bench/SWE-bench_Verified", help="HF dataset for the build spec."
@@ -128,9 +131,13 @@ def main() -> None:
 
     traces = _load_traces(Path(args.corpus))
     pool = _holdout(traces, args.train_split)
-    if not 0 <= args.trace < len(pool):
+    if args.trace is None:
+        # Default: the simplest scenario — fewest recorded commands (matches the wmh side's default).
+        trace = min(pool, key=lambda t: len(t["commands"]))
+    elif 0 <= args.trace < len(pool):
+        trace = pool[args.trace]
+    else:
         raise SystemExit(f"--trace {args.trace} out of range; {len(pool)} held-out trace(s)")
-    trace = pool[args.trace]
     instance_id, commands = trace["instance_id"], trace["commands"]
     if not instance_id:
         raise SystemExit(f"trace {trace['trace_id'][:8]} has no instance_id in metadata")

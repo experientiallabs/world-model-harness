@@ -115,7 +115,10 @@ def _build_tools_image(*, no_cache: bool) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--corpus", default=str(_DEFAULT_CORPUS), help="terminal-tasks OTel corpus.")
-    parser.add_argument("--trace", type=int, default=0, help="Which held-out trace to replay.")
+    parser.add_argument(
+        "--trace", type=int, default=None,
+        help="Held-out trace to replay (default: the simplest = fewest commands).",
+    )
     parser.add_argument("--train-split", type=float, default=0.7, help="Train/holdout ratio.")
     parser.add_argument(
         "--cache",
@@ -127,9 +130,13 @@ def main() -> None:
 
     traces = _load_traces(Path(args.corpus))
     pool = _holdout(traces, args.train_split)
-    if not 0 <= args.trace < len(pool):
+    if args.trace is None:
+        # Default: the simplest scenario — fewest recorded commands (matches the wmh side's default).
+        trace = min(pool, key=lambda t: len(t["commands"]))
+    elif 0 <= args.trace < len(pool):
+        trace = pool[args.trace]
+    else:
         raise SystemExit(f"--trace {args.trace} out of range; {len(pool)} held-out trace(s)")
-    trace = pool[args.trace]
     commands = trace["commands"]
     task = (trace["task"] or "").strip().splitlines()[0] if trace["task"] else ""
     no_cache = not args.cache

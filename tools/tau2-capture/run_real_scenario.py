@@ -80,15 +80,22 @@ def _holdout(traces: list[dict[str, Any]], train_split: float) -> list[dict[str,
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--corpus", default=str(_DEFAULT_CORPUS), help="tau2-bench OTel corpus.")
-    parser.add_argument("--trace", type=int, default=0, help="Which held-out trace to replay.")
+    parser.add_argument(
+        "--trace", type=int, default=None,
+        help="Held-out trace to replay (default: the simplest = fewest tool calls).",
+    )
     parser.add_argument("--train-split", type=float, default=0.7, help="Train/holdout ratio.")
     args = parser.parse_args()
 
     traces = _load_traces(Path(args.corpus))
     pool = _holdout(traces, args.train_split)
-    if not 0 <= args.trace < len(pool):
+    if args.trace is None:
+        # Default: the simplest scenario — fewest recorded tool calls (matches the wmh side).
+        trace = min(pool, key=lambda t: len(t["calls"]))
+    elif 0 <= args.trace < len(pool):
+        trace = pool[args.trace]
+    else:
         raise SystemExit(f"--trace {args.trace} out of range; {len(pool)} held-out trace(s)")
-    trace = pool[args.trace]
     domain, calls = trace["domain"] or "airline", trace["calls"]
 
     print(
