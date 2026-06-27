@@ -44,8 +44,8 @@ The OTel GenAI parser is schema-only. Transport is handled by `TraceSource` impl
 - `file` — local OTLP JSON / JSONL exports (`wmh build --file traces.otel.jsonl`).
 - `otlp` — a generic HTTP query endpoint returning OTLP JSON (`WMH_OTLP_QUERY_ENDPOINT` or
   `--trace-endpoint`).
-- `braintrust` — Braintrust BTQL (`BRAINTRUST_API_KEY`, `BRAINTRUST_PROJECT`, optional
-  `--trace-query`).
+- `braintrust` — Braintrust BTQL (`BRAINTRUST_API_KEY`, `BRAINTRUST_PROJECT`,
+  `--trace-since` for the default range-bounded query, or `--trace-query`).
 - `phoenix` — Arize Phoenix OTLP spans (`GET /v1/projects/{project}/spans/otlpv1` under
   `PHOENIX_BASE_URL`, with `PHOENIX_API_KEY` / `PHOENIX_PROJECT_ID`).
 

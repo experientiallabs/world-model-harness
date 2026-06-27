@@ -26,7 +26,7 @@ uv sync
 wmh providers verify                       # confirm Anthropic / Bedrock / Azure OpenAI / OpenAI creds
 wmh build                                  # guided creation wizard (prompts for name, traces, provider…)
 wmh build --name airline --file traces.jsonl   # …or fully scriptable with flags -> .wmh/models/airline/
-wmh build --name airline --vendor braintrust --trace-project prod-airline
+wmh build --name airline --vendor braintrust --trace-project prod-airline --trace-since 2026-06-01T00:00:00Z
 wmh build --name airline --vendor phoenix --trace-project default
 wmh list                                   # show every built world model
 wmh eval traces.jsonl                      # score reconstruction fidelity (replay + LLM judge)
@@ -58,12 +58,13 @@ same `otel-genai` adapter, so they may return either OTLP JSON (`resourceSpans`)
 | Source | Command | Credentials / config |
 |---|---|---|
 | Generic OTLP HTTP | `--vendor otlp --trace-endpoint <url>` | `WMH_OTLP_QUERY_ENDPOINT`, `WMH_OTLP_API_KEY` |
-| Braintrust BTQL | `--vendor braintrust --trace-project <project>` | `BRAINTRUST_API_KEY`, optional `BRAINTRUST_API_URL`, `BRAINTRUST_PROJECT` |
+| Braintrust BTQL | `--vendor braintrust --trace-project <project> --trace-since <iso-time>` | `BRAINTRUST_API_KEY`, optional `BRAINTRUST_API_URL`, `BRAINTRUST_PROJECT` |
 | Arize Phoenix | `--vendor phoenix --trace-project <project>` | `PHOENIX_BASE_URL`, `PHOENIX_API_KEY`, `PHOENIX_PROJECT_ID` |
 
-Common filters: `--trace-since`, `--trace-until`, `--trace-limit`. Braintrust also accepts
-`--trace-query` for a custom BTQL query when the default `project_logs(..., shape => 'traces')`
-query does not match your workspace layout.
+Common filters: `--trace-since`, `--trace-until`, `--trace-limit`. Braintrust default BTQL imports
+require `--trace-since` so `project_logs(..., shape => 'traces')` stays range-bounded; Braintrust
+also accepts `--trace-query` for a custom BTQL query when the default query does not match your
+workspace layout.
 
 Phoenix defaults to `GET /v1/projects/{project}/spans/otlpv1` under `PHOENIX_BASE_URL`; pass
 `--trace-endpoint` to target a custom Phoenix-compatible spans route directly.

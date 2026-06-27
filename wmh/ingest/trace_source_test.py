@@ -152,7 +152,11 @@ def test_braintrust_source_posts_btql_and_normalizes_rows(monkeypatch) -> None: 
 
     monkeypatch.setattr(module.httpx, "post", fake_post)
     traces = load_traces(
-        TraceSourceConfig(kind=TraceSourceKind.BRAINTRUST, limit=4),
+        TraceSourceConfig(
+            kind=TraceSourceKind.BRAINTRUST,
+            since="2026-06-01T00:00:00Z",
+            limit=4,
+        ),
         OtelGenAIAdapter(),
     )
 
@@ -161,16 +165,30 @@ def test_braintrust_source_posts_btql_and_normalizes_rows(monkeypatch) -> None: 
     body = seen["body"]
     assert isinstance(body, dict)
     assert "project_logs('customer-support'" in str(body["query"])
+    assert "created >= '2026-06-01T00:00:00Z'" in str(body["query"])
     assert traces[0].source == "braintrust:customer-support"
     assert traces[0].steps[0].action.name == "search"
     assert traces[0].steps[0].action.arguments == {"q": "otel"}
     assert traces[0].steps[0].observation.content == "3 docs"
 
 
+def test_braintrust_default_query_requires_since(monkeypatch) -> None:  # noqa: ANN001
+    monkeypatch.setenv(BRAINTRUST_PROJECT_ENV, "customer-support")
+    with pytest.raises(ValueError, match="require --trace-since"):
+        load_traces(
+            TraceSourceConfig(kind=TraceSourceKind.BRAINTRUST),
+            OtelGenAIAdapter(),
+        )
+
+
 def test_phoenix_source_fetches_spans_endpoint_and_normalizes_rows(monkeypatch) -> None:  # noqa: ANN001
     monkeypatch.setenv(PHOENIX_BASE_URL_ENV, "https://phoenix.example")
     monkeypatch.setenv(PHOENIX_API_KEY_ENV, "px-key")
-    seen: dict[str, JsonValue] = {}
+    calls: list[tuple[str, dict[str, str], dict[str, str], float]] = []
+    pages = [
+        {"data": _phoenix_otlp_rows()[:1], "next_cursor": "next-page"},
+        {"data": _phoenix_otlp_rows()[1:], "next_cursor": "ignored"},
+    ]
 
     def fake_get(
         endpoint: str,
@@ -179,11 +197,8 @@ def test_phoenix_source_fetches_spans_endpoint_and_normalizes_rows(monkeypatch) 
         params: dict[str, str],
         timeout: float,
     ) -> httpx.Response:
-        seen["endpoint"] = endpoint
-        seen["headers"] = headers
-        seen["params"] = params
-        seen["timeout"] = timeout
-        return _response(endpoint, {"data": _phoenix_otlp_rows(), "next_cursor": None})
+        calls.append((endpoint, headers, params, timeout))
+        return _response(endpoint, pages[len(calls) - 1])
 
     import wmh.ingest.trace_source as module
 
@@ -194,18 +209,21 @@ def test_phoenix_source_fetches_spans_endpoint_and_normalizes_rows(monkeypatch) 
             project="42",
             since="2026-06-01T00:00:00Z",
             until="2026-06-02T00:00:00Z",
-            limit=4,
+            limit=2,
         ),
         OtelGenAIAdapter(),
     )
 
-    assert seen["endpoint"] == "https://phoenix.example/v1/projects/42/spans/otlpv1"
-    assert seen["headers"] == {"Authorization": "Bearer px-key"}
-    assert seen["params"] == {
+    assert len(calls) == 2
+    endpoint, headers, params, _timeout = calls[0]
+    assert endpoint == "https://phoenix.example/v1/projects/42/spans/otlpv1"
+    assert headers == {"Authorization": "Bearer px-key"}
+    assert params == {
         "start_time": "2026-06-01T00:00:00Z",
         "end_time": "2026-06-02T00:00:00Z",
-        "limit": "4",
+        "limit": "2",
     }
+    assert calls[1][2] == {**params, "cursor": "next-page"}
     assert traces[0].source == "phoenix:42"
     assert traces[0].steps[0].observation.content == "3 docs"
 
@@ -220,7 +238,7 @@ def test_trace_source_aliases() -> None:
 def _vendor_rows() -> list[JsonValue]:
     return [
         {
-            "trace_id": "vendor-trace",
+            "root_span_id": "vendor-trace",
             "span_id": "a",
             "name": "chat",
             "start_time": "2026-06-01T00:00:00Z",
@@ -232,8 +250,9 @@ def _vendor_rows() -> list[JsonValue]:
             },
         },
         {
-            "trace_id": "vendor-trace",
+            "root_span_id": "vendor-trace",
             "span_id": "b",
+            "span_parents": ["a"],
             "name": "execute_tool search",
             "start_time": "2026-06-01T00:00:01Z",
             "attributes": {

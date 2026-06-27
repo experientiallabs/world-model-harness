@@ -18,7 +18,7 @@ from typing import Protocol, cast, runtime_checkable
 from urllib.parse import quote, urljoin
 
 import httpx
-from pydantic import BaseModel, JsonValue
+from pydantic import BaseModel, Field, JsonValue
 
 from wmh.core.types import JsonObject, Trace
 from wmh.ingest.adapter import TraceAdapter
@@ -56,7 +56,7 @@ class TraceSourceConfig(BaseModel):
     project: str | None = None
     since: str | None = None
     until: str | None = None
-    limit: int | None = None
+    limit: int | None = Field(default=None, gt=0)
     query: str | None = None
 
 
@@ -212,6 +212,7 @@ class PhoenixTraceSource:
         params = _phoenix_params(config, include_project=config.endpoint is not None)
         payloads: list[JsonValue] = []
         next_cursor: str | None = None
+        fetched_records = 0
         while True:
             page_params = dict(params)
             if next_cursor is not None:
@@ -219,7 +220,13 @@ class PhoenixTraceSource:
             page = _get_json(endpoint, api_key=api_key, params=page_params)
             payloads.append(page)
             records = _extract_records(page)
-            if config.limit is not None and records is not None and len(records) >= config.limit:
+            if records is not None:
+                fetched_records += len(records)
+            if (
+                config.limit is not None
+                and records is not None
+                and fetched_records >= config.limit
+            ):
                 break
             next_cursor = _next_cursor(page)
             if next_cursor is None:
@@ -248,10 +255,12 @@ def _braintrust_default_query(project: str | None, config: TraceSourceConfig) ->
         project,
         f"set ${BRAINTRUST_PROJECT_ENV}, pass --trace-project, or pass --trace-query",
     )
+    since = _required(
+        config.since,
+        "Braintrust default queries require --trace-since; pass --trace-query for custom SQL",
+    )
     query = f"select * from project_logs('{_btql_quote(project)}', shape => 'traces')"
-    clauses: list[str] = []
-    if config.since is not None:
-        clauses.append(f"created >= '{_btql_quote(config.since)}'")
+    clauses = [f"created >= '{_btql_quote(since)}'"]
     if config.until is not None:
         clauses.append(f"created <= '{_btql_quote(config.until)}'")
     if clauses:
@@ -357,7 +366,9 @@ def _next_cursor(payload: JsonValue) -> str | None:
 
 def _vendor_record_to_span(record: JsonObject) -> JsonValue | None:
     attrs = _record_attributes(record)
-    trace_id = _first_str(record, "trace_id", "traceId") or _first_str(attrs, "trace_id", "traceId")
+    trace_id = _first_str(record, "trace_id", "traceId", "root_span_id") or _first_str(
+        attrs, "trace_id", "traceId", "root_span_id"
+    )
     if trace_id is None:
         return None
     span_id = (
@@ -368,9 +379,7 @@ def _vendor_record_to_span(record: JsonObject) -> JsonValue | None:
     span: JsonObject = {
         "traceId": trace_id,
         "spanId": span_id,
-        "parentSpanId": _first_str(record, "parent_span_id", "parentSpanId", "parent_id")
-        or _first_str(attrs, "parent_span_id", "parentSpanId", "parent_id")
-        or "",
+        "parentSpanId": _parent_span_id(record, attrs),
         "name": _first_str(record, "name", "span_name")
         or _first_str(attrs, "name", "span_name")
         or "",
@@ -450,6 +459,22 @@ def _first_str(record: JsonObject, *keys: str) -> str | None:
         if isinstance(value, str) and value:
             return value
     return None
+
+
+def _parent_span_id(record: JsonObject, attrs: JsonObject) -> str:
+    parent = _first_str(record, "parent_span_id", "parentSpanId", "parent_id")
+    if parent is not None:
+        return parent
+    parent = _first_str(attrs, "parent_span_id", "parentSpanId", "parent_id")
+    if parent is not None:
+        return parent
+    for source in (record, attrs):
+        span_parents = source.get("span_parents")
+        if isinstance(span_parents, list):
+            for candidate in reversed(span_parents):
+                if isinstance(candidate, str) and candidate:
+                    return candidate
+    return ""
 
 
 def _time_nanos(value: JsonValue | None) -> int:
@@ -554,7 +579,8 @@ def _status(record: JsonObject) -> JsonObject:
     status = _first_str(record, "status_code", "statusCode", "status")
     if status is not None and status.lower() in {"error", "errored", "failed"}:
         return {"code": "STATUS_CODE_ERROR"}
-    if record.get("error") is True:
+    error = record.get("error")
+    if error not in (None, False, ""):
         return {"code": "STATUS_CODE_ERROR"}
     return {"code": "STATUS_CODE_OK"}
 

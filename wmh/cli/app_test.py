@@ -254,6 +254,28 @@ def test_build_rejects_unknown_trace_source(tmp_path) -> None:  # noqa: ANN001
     assert "unknown trace source" in result.output
 
 
+def test_build_rejects_non_positive_trace_limit(tmp_path) -> None:  # noqa: ANN001
+    result = runner.invoke(
+        app,
+        [
+            "build",
+            "--name",
+            "x",
+            "--vendor",
+            "otlp",
+            "--trace-endpoint",
+            "https://otel.example/query",
+            "--trace-limit",
+            "0",
+            "--root",
+            str(tmp_path / ".wmh"),
+            "--no-interactive",
+        ],
+    )
+    assert result.exit_code != 0
+    assert "trace-limit" in result.output
+
+
 def test_build_aborts_when_provider_sdk_missing(monkeypatch, tmp_path) -> None:  # noqa: ANN001
     """A missing SDK must abort the build before any rollouts, with the `uv sync` extra hint.
 

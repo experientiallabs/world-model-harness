@@ -119,9 +119,10 @@ def build(
         "--trace-until",
         help="Trace source upper time bound (ISO-8601; provider support varies).",
     ),
-    trace_limit: int = typer.Option(
+    trace_limit: int | None = typer.Option(
         None,
         "--trace-limit",
+        min=1,
         help="Maximum traces to import after source normalization.",
     ),
     trace_query: str = typer.Option(
@@ -145,7 +146,7 @@ def build(
         help="Guided creation wizard. Default: on at a TTY when inputs are missing.",
     ),
 ) -> None:
-    """Ingest traces (file upload or vendor SDK pull) and build a named world model.
+    """Ingest traces (file upload or provider trace source) and build a named world model.
 
     Stores the artifact under `<root>/models/<name>/`: ingest -> normalize -> split(train/test) ->
     embed/index -> GEPA optimize -> write. Re-running with the same `--name` rebuilds it.
