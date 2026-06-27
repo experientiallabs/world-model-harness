@@ -355,27 +355,27 @@ def test_bench_run_then_leaderboard(monkeypatch, tmp_path) -> None:  # noqa: ANN
     assert "0.750" in board.output
 
 
-def test_bench_race_replays_a_scenario_through_the_model(patched_provider, tmp_path) -> None:  # noqa: ANN001
-    # Build a model, define a benchmark over the same trace, then race the recorded scenario.
+def test_bench_scenario_replays_through_the_model(patched_provider, tmp_path) -> None:  # noqa: ANN001
+    # Build a model, define a benchmark over the same trace, then replay the recorded scenario.
     root = tmp_path / ".wmh"
-    _build(root, "racer", tmp_path)
+    _build(root, "scen", tmp_path)
     benchmarks = tmp_path / "benchmarks"
-    _benchmark(benchmarks, "racer", tmp_path)  # benchmark name == model name (race default)
+    _benchmark(benchmarks, "scen", tmp_path)  # benchmark name == model name (scenario default)
 
     result = runner.invoke(
         app,
-        ["bench", "race", "racer", "--benchmarks", str(benchmarks), "--root", str(root)],
+        ["bench", "scenario", "scen", "--benchmarks", str(benchmarks), "--root", str(root)],
     )
     assert result.exit_code == 0, result.output
-    assert "racing" in result.output
+    assert "world model" in result.output
     # The fake provider's canned observation shows up as the live prediction, and the run finishes.
     assert "user u1 found" in result.output
     assert "done" in result.output
 
 
-def test_bench_race_unknown_benchmark_is_clean_error(tmp_path) -> None:  # noqa: ANN001
+def test_bench_scenario_unknown_benchmark_is_clean_error(tmp_path) -> None:  # noqa: ANN001
     result = runner.invoke(
-        app, ["bench", "race", "ghost", "--benchmarks", str(tmp_path / "benchmarks")]
+        app, ["bench", "scenario", "ghost", "--benchmarks", str(tmp_path / "benchmarks")]
     )
     assert result.exit_code != 0
     assert not isinstance(result.exception, (FileNotFoundError, ValueError))

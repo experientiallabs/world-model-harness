@@ -89,3 +89,36 @@ Pure-reasoning turns (assistant messages with no command) are not Steps: open-lo
 predicted observation for `(state, action)`, and a reasoning turn has no environment observation.
 
 The output is OTel-GenAI span JSONL that `wmh.ingest.otel_genai` reads directly.
+
+## Run ONE real scenario (the real-environment side of the comparison)
+
+### One command: `run.sh`
+
+`./run.sh [--trace N]` does it end to end — sets up the venv/deps if missing, builds the
+environment from scratch, runs the recorded scenario, and streams all stdout, ending with the
+total time. That whole standup is the cost the world-model side (`wmh bench scenario`) skips.
+Defaults to the simplest held-out scenario; `--trace N` pins one. Details below.
+
+## Run ONE real scenario (manual)
+
+`run_real_scenario.py` is the real half of the scenario comparison. The world model side is
+`wmh bench scenario swe-bench --trace N`; this runs the SAME held-out scenario for real — and
+crucially it **builds the environment from scratch** before running anything: the SWE-bench base
+image → the environment image (the real conda/pip **dependency install**) → the instance image
+(clone repo + checkout commit + install). Every `docker build` line is streamed and the whole
+standup is counted in the total time, *then* the recorded commands are `docker exec`'d. That build
+is the slow, multi-minute cost the world model skips entirely.
+
+```bash
+# from the swebench .venv; same --trace index the world-model side uses (same held-out split)
+.venv/bin/python run_real_scenario.py --trace 0           # cold --no-cache build (default)
+.venv/bin/python run_real_scenario.py --trace 0 --cache   # reuse cached layers after the first build
+```
+
+Imports `swebench` (for the official base/env/instance Dockerfiles + setup scripts) but never `wmh`;
+reads the committed `examples/swe-bench.otel.jsonl` and re-implements the harness's blake2b
+train/holdout split inline so `--trace N` selects the SAME scenario as the world-model side.
+
+Observed (astropy__astropy-13453, `--trace 0`, cold `--no-cache`): **build from scratch 339.5s + 19
+commands, 362.0s total** — vs. the world model reconstructing the same 19-step scenario in ~96s with
+**zero** standup. The dependency install is the gap.

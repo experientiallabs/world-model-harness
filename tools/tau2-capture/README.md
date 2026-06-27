@@ -78,3 +78,35 @@ observations for `(state, action)`, and a chat turn has no environment observati
 
 The output is OTel-GenAI span JSONL that `wmh.ingest.otel_genai` reads directly (the per-step state
 and gold travel as optional `wmh.state.*` / `wmh.trace.metadata` attributes).
+
+## Run ONE real scenario (the real-environment side of the comparison)
+
+### One command: `run.sh`
+
+`./run.sh [--trace N]` does it end to end — sets up the venv/deps if missing, builds the
+environment from scratch, runs the recorded scenario, and streams all stdout, ending with the
+total time. That whole standup is the cost the world-model side (`wmh bench scenario`) skips.
+Defaults to the simplest held-out scenario; `--trace N` pins one. Details below.
+
+## Run ONE real scenario (manual)
+
+`run_real_scenario.py` is the real half of the scenario comparison. The world model side is
+`wmh bench scenario tau-bench --trace N`; this runs the SAME held-out scenario for real — it stands
+up Sierra's real tau2 domain environment **from scratch** (import the heavy `tau2` package →
+register components → load the domain JSON DB), times that standup and counts it in the total, then
+calls the exact recorded tool calls in order, printing the real tool results. Compare the two end
+times by eye.
+
+Because tau2 actions are tool calls (not shell commands), this imports the real `tau2` package and
+must run in the `.venv` from the Setup section above (NOT under `wmh`, which never imports tau2):
+
+```bash
+TAU2_DATA_DIR="$PWD/tau2-bench/data" .venv/bin/python run_real_scenario.py --trace 0
+```
+
+Stdlib + tau2 only; reads the committed `examples/tau2-bench.otel.jsonl`, re-implements the harness's
+blake2b train/holdout split inline so trace selection matches the world-model side, and reads the
+`domain` from each trace's metadata. The per-run standup timed here is import + registry + DB load
+(the one-time `pip install tau2-bench` is the venv Setup above). Observed (`--trace 0`, airline):
+standup 1.74s + 10 tool calls, 1.74s total. tau2's env is an in-memory DB, so the comparison here is
+less about speed than about not needing to stand up Sierra's stack at all.

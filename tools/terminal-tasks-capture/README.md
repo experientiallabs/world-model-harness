@@ -48,3 +48,32 @@ Per trajectory, one Step per tool call:
 reconstructs from action + retrieved steps + teacher-forced history).
 
 The output is OTel-GenAI span JSONL that `wmh.ingest.otel_genai` reads directly.
+
+## Run ONE real scenario (the real-environment side of the comparison)
+
+### One command: `run.sh`
+
+`./run.sh [--trace N]` does it end to end — sets up the venv/deps if missing, builds the
+environment from scratch, runs the recorded scenario, and streams all stdout, ending with the
+total time. That whole standup is the cost the world-model side (`wmh bench scenario`) skips.
+Defaults to the simplest held-out scenario; `--trace N` pins one. Details below.
+
+## Run ONE real scenario (manual)
+
+`run_real_scenario.py` is the real half of the scenario comparison. The world model side is
+`wmh bench scenario terminal-tasks --trace N`; this runs the SAME held-out scenario for real — and
+to be honest about the standup the world model skips, it **builds a fresh container from scratch**
+first (a `debian:bookworm-slim` base + the real `apt-get install` of `curl`, `python3`, `jq`,
+`ca-certificates`), streams that build, counts it in the total time, *then* `docker exec`s the exact
+recorded `bash` commands. Compare the two end times by eye.
+
+```bash
+python run_real_scenario.py --trace 1            # cold --no-cache build (default)
+python run_real_scenario.py --trace 1 --cache    # reuse the cached tools image
+```
+
+Stdlib-only (needs Docker); reads the committed `examples/terminal-tasks.otel.jsonl` and
+re-implements the harness's blake2b train/holdout split inline so `--trace N` matches the world-model
+side. These commands hit live public APIs, so a real re-run reflects *current* data and the output
+may differ from the recorded observation (rates change, releases bump) — that is the honest real
+environment. Observed (`--trace 1`, cold): build from scratch 8.7s + 10 commands, 10.8s total.
