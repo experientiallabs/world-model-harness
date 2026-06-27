@@ -89,16 +89,20 @@ telecom + airline + retail), comparing the un-evolved base prompt to a GEPA-opti
 
 | Prompt | held-out steps | fidelity | error-flag acc |
 |---|---|---|---|
-| Base | 84 | 0.755 ± 0.34 | 0.81 |
-| **GEPA-optimized** | 84 | **0.864 ± 0.19** | **1.00** |
+| Base | 84 | ~0.74 ± 0.35 | ~0.80 |
+| **GEPA-optimized** | 84 | **~0.86 ± 0.20** | **~1.00** |
 
-GEPA lifts every dimension and tightens variance:
+GEPA lifts every dimension and tightens variance (optimized prompt):
 
 | | format | factuality | consistency | realism | quality |
 |---|---|---|---|---|---|
 | Base | 0.82 | 0.65 | 0.75 | 0.88 | 0.68 |
 | Optimized | 0.99 | 0.72 | 0.88 | 0.97 | 0.76 |
 | Δ | +0.17 | +0.08 | +0.13 | +0.09 | +0.08 |
+
+Per-step reports are committed at `benchmarks/results/tau2-{base,optimized}.json`; the LLM judge is
+non-deterministic, so two runs gave base 0.755/0.723 and optimized 0.864/0.854 — a consistent
+**+0.11 to +0.13** lift.
 
 **Reading these:** the model reproduces response *shape* and success/error status near-perfectly
 (format 0.99, error-flag 1.00); the ceiling is **factuality (0.72)** — predicting concrete values the
@@ -110,6 +114,7 @@ artifact, not an optimizer failure.
 > Numbers are one corpus / one seed on an 84-step holdout (±0.19–0.34) — directional, not a
 > leaderboard. Retrieval uses the offline lexical embedder (semantic untested). The largest
 > factuality lever is **state grounding** — see the design note below.
+> **Reproduce them** (exact `wmh eval` commands + caveats): [`docs/benchmark_results.md`](./docs/benchmark_results.md).
 
 ### Design note: the world model's internal database
 
