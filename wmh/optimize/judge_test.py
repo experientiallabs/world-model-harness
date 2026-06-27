@@ -14,6 +14,7 @@ from wmh.optimize.judge import (
     JudgeResult,
     LLMJudge,
     RubricJudge,
+    _build_judge_prompt,
     _parse_judgement,
 )
 from wmh.providers.base import Completion, Message, ProviderConfig, ProviderKind
@@ -74,6 +75,18 @@ def test_score_parses_bare_json() -> None:
     # The judge actually saw both observations in its prompt.
     assert provider.last_user is not None
     assert "pred" in provider.last_user and "actual" in provider.last_user
+
+
+def test_judge_prompt_makes_empty_prediction_explicit() -> None:
+    prompt = _build_judge_prompt(
+        Observation(content="", is_error=False),
+        Observation(content="HTTP 200\n", is_error=False),
+        _ctx(),
+    )
+    assert '"content": ""' in prompt
+    assert '"content_length": 0' in prompt
+    assert '"empty_content": true' in prompt
+    assert "PREDICTED OBSERVATION JSON" in prompt
 
 
 def test_parse_handles_fenced_json() -> None:
