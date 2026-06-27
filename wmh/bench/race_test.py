@@ -42,6 +42,11 @@ class FakeClock:
         self._i = 0
 
     def monotonic(self) -> float:
+        if self._i >= len(self._ticks):
+            raise AssertionError(
+                f"FakeClock exhausted after {len(self._ticks)} ticks; "
+                "the test needs more (race_trace calls monotonic twice per step)"
+            )
         value = self._ticks[self._i]
         self._i += 1
         return value

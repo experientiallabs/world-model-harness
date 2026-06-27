@@ -107,11 +107,21 @@ def _observation_of(message: dict[str, Any]) -> tuple[str, bool]:
 
     extra = message.get("extra")
     if isinstance(extra, dict) and extra.get("returncode") is not None:
-        # Structured returncode from the tool-call format is authoritative.
-        return body, extra["returncode"] != 0
+        # Structured returncode from the tool-call format is authoritative. Coerce via int() so a
+        # JSON returncode that arrives as a string ("0") still compares correctly (str "0" != int 0).
+        return body, _nonzero(extra["returncode"])
     rc_match = _RETURNCODE_RE.search(text)
     is_error = bool(rc_match) and rc_match.group(1) != "0"
     return body, is_error
+
+
+def _nonzero(returncode: Any) -> bool:  # noqa: ANN401 - loosely-typed source JSON
+    """True if `returncode` is a non-zero exit code, tolerant of int or numeric-string encodings."""
+    try:
+        return int(returncode) != 0
+    except (TypeError, ValueError):
+        # Unparseable returncode: treat a truthy non-empty value as an error, else not.
+        return bool(returncode)
 
 
 def _task_of(messages: list[dict[str, Any]], info: dict[str, Any]) -> str:
@@ -236,7 +246,14 @@ def main() -> None:
     n_traces = n_spans = n_skipped = 0
     with Path(args.out).open("w", encoding="utf-8") as out:
         for traj_file in traj_files:
-            traj = json.loads(traj_file.read_text(encoding="utf-8"))
+            try:
+                traj = json.loads(traj_file.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError) as exc:
+                # One corrupt/partial trajectory must not abort the whole batch (and leave a
+                # truncated --out): skip it, count it, and report at the end.
+                print(f"skipping unreadable trajectory {traj_file}: {exc}")
+                n_skipped += 1
+                continue
             # instance id: the dict field, else the filename stem (strip the .traj suffix).
             instance_id = (
                 traj.get("instance_id")

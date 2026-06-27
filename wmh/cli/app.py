@@ -579,9 +579,10 @@ def bench_race(
         raise typer.BadParameter(f"benchmark {name!r} ingested no traces")
     _train, holdout = split_traces(traces, bench_def.eval.train_split)
     pool = holdout or traces  # tiny corpora may have no held-out trace; fall back to all
+    kind = "held-out" if holdout else "(no held-out split; all)"
     if not 0 <= trace_index < len(pool):
         raise typer.BadParameter(
-            f"--trace {trace_index} out of range; {name!r} has {len(pool)} held-out trace(s)"
+            f"--trace {trace_index} out of range; {name!r} has {len(pool)} {kind} trace(s)"
         )
     trace = pool[trace_index]
 
