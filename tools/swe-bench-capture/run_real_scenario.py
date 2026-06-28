@@ -27,6 +27,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import platform
 import subprocess
 import tempfile
 import time
@@ -82,7 +83,7 @@ def _holdout(traces: list[dict[str, Any]], train_split: float) -> list[dict[str,
 
 
 def _docker_build(
-    tag: str, dockerfile: str, scripts: dict[str, str], platform: str, *, no_cache: bool
+    tag: str, dockerfile: str, scripts: dict[str, str], platform_str: str, *, no_cache: bool
 ) -> None:
     """Write a build context (Dockerfile + setup scripts) and `docker build` it, streaming output.
 
@@ -94,7 +95,7 @@ def _docker_build(
         (ctx_dir / "Dockerfile").write_text(dockerfile, encoding="utf-8")
         for name, body in scripts.items():
             (ctx_dir / name).write_text(body, encoding="utf-8")
-        cmd = ["docker", "build", "-t", tag, "--platform", platform]
+        cmd = ["docker", "build", "-t", tag, "--platform", platform_str]
         if no_cache:
             cmd.append("--no-cache")
         cmd.append(str(ctx_dir))
@@ -110,6 +111,34 @@ def _exists(image: str) -> bool:
     ).returncode == 0
 
 
+def _pull_image(instance_id: str, platform_str: str) -> str:
+    """`docker pull` the official prebuilt per-instance image, streaming progress; return its tag.
+
+    The standup for the `pull` mode: a multi-GB image download (the environment + its installed
+    dependencies, prebuilt) — a real, timed cost, just not a from-scratch compile. This is the path
+    that works under emulation (the from-scratch `build` mode's `apt`/conda steps fail under qemu on
+    non-x86 hosts). Raises on a failed pull.
+    """
+    compat = instance_id.replace("__", "_1776_")
+    image = f"docker.io/swebench/sweb.eval.x86_64.{compat}:latest".lower()
+    cmd = ["docker", "pull", "--platform", platform_str, image]
+    print(f"$ {' '.join(cmd)}")
+    rc = subprocess.run(cmd).returncode
+    if rc != 0:
+        raise SystemExit(f"docker pull failed for {image} (exit {rc})")
+    return image
+
+
+def _default_mode() -> str:
+    """`build` from scratch on a native x86_64 host, else `pull` the prebuilt image.
+
+    SWE-bench's base/env Dockerfiles run `apt`/conda steps that fail under qemu emulation (the apt
+    GPG "invalid signature" error) on Apple-Silicon/arm64 hosts, so building from scratch only works
+    natively. Everywhere else, pulling the prebuilt image is the robust real-environment standup.
+    """
+    return "build" if platform.machine().lower() in ("x86_64", "amd64") else "pull"
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--corpus", default=str(_DEFAULT_CORPUS), help="swe-bench OTel JSONL corpus.")
@@ -122,6 +151,16 @@ def main() -> None:
         "--dataset", default="SWE-bench/SWE-bench_Verified", help="HF dataset for the build spec."
     )
     parser.add_argument(
+        "--mode",
+        choices=("auto", "build", "pull"),
+        default="auto",
+        help=(
+            "How to stand up the env: 'build' compiles base/env/instance from scratch (native "
+            "x86_64/Linux only — apt/conda fail under qemu emulation); 'pull' downloads the prebuilt "
+            "multi-GB image (works under emulation). 'auto' (default): build on x86_64, else pull."
+        ),
+    )
+    parser.add_argument(
         "--cache",
         action="store_true",
         help="Reuse cached Docker layers (skip already-built images). Default: cold --no-cache.",
@@ -131,6 +170,8 @@ def main() -> None:
 
     traces = _load_traces(Path(args.corpus))
     pool = _holdout(traces, args.train_split)
+    if not pool:
+        raise SystemExit(f"no traces in {args.corpus}; nothing to run")
     if args.trace is None:
         # Default: the simplest scenario — fewest recorded commands (matches the wmh side's default).
         trace = min(pool, key=lambda t: len(t["commands"]))
@@ -142,81 +183,98 @@ def main() -> None:
     if not instance_id:
         raise SystemExit(f"trace {trace['trace_id'][:8]} has no instance_id in metadata")
 
+    mode = _default_mode() if args.mode == "auto" else args.mode
+
+    print(f"=== resolving SWE-bench dataset spec for {instance_id} (first run downloads it) ===")
     # Official SWE-bench build spec: the real base/env/instance Dockerfiles + setup scripts.
     try:
         from swebench.harness.test_spec.test_spec import make_test_spec
         from swebench.harness.utils import load_swebench_dataset
     except ImportError as exc:  # pragma: no cover - depends on the isolated venv
         raise SystemExit(
-            "swebench is not importable; run this from tools/swe-bench-capture/ in the .venv "
-            "(see this directory's README). Docker must be running."
+            "swebench is not importable; run via ./run.sh (it sets up the .venv) or install "
+            "swebench in tools/swe-bench-capture/.venv. Docker must be running."
         ) from exc
 
     ds = load_swebench_dataset(args.dataset, "test", instance_ids=[instance_id])
     if not ds:
         raise SystemExit(f"instance {instance_id} not found in {args.dataset}")
     spec = make_test_spec(ds[0])
-    no_cache = not args.cache
 
     print(
-        f"REAL sandbox: {instance_id} ({len(commands)} commands) — building the environment from "
-        f"scratch (base -> env deps -> instance), then exec'ing the recorded commands"
-        f"{' [--no-cache]' if no_cache else ' [cached]'}\n"
+        f"\nREAL sandbox: {instance_id} ({len(commands)} commands) — standing up the env "
+        f"[mode={mode}], then exec'ing the recorded commands\n"
     )
     start = time.monotonic()
 
-    # 1) base image, 2) env image (the real conda/pip dependency install), 3) instance image
-    #    (clone repo + checkout + install). Each streams its build log and counts toward the clock.
-    layers = [
-        ("base", spec.base_image_key, spec.base_dockerfile, {}),
-        (
-            "env (dependency install)",
-            spec.env_image_key,
-            spec.env_dockerfile,
-            {"setup_env.sh": spec.setup_env_script},
-        ),
-        (
-            "instance (repo + install)",
-            spec.instance_image_key,
-            spec.instance_dockerfile,
-            {"setup_repo.sh": spec.install_repo_script},
-        ),
-    ]
-    for label, tag, dockerfile, scripts in layers:
-        if args.cache and _exists(tag):
-            print(f"--- {label}: {tag} already built (cached) ---\n")
-            continue
-        print(f"--- building {label}: {tag} ---")
-        _docker_build(tag, dockerfile, scripts, spec.platform, no_cache=no_cache)
+    if mode == "build":
+        # base image -> env image (the real conda/pip dependency install) -> instance image (clone
+        # repo + checkout + install). Each streams its build log and counts toward the clock.
+        no_cache = not args.cache
+        layers = [
+            ("base", spec.base_image_key, spec.base_dockerfile, {}),
+            (
+                "env (dependency install)",
+                spec.env_image_key,
+                spec.env_dockerfile,
+                {"setup_env.sh": spec.setup_env_script},
+            ),
+            (
+                "instance (repo + install)",
+                spec.instance_image_key,
+                spec.instance_dockerfile,
+                {"setup_repo.sh": spec.install_repo_script},
+            ),
+        ]
+        for label, tag, dockerfile, scripts in layers:
+            if args.cache and _exists(tag):
+                print(f"--- {label}: {tag} already built (cached) ---\n")
+                continue
+            print(f"=== building {label}: {tag} ===")
+            _docker_build(tag, dockerfile, scripts, spec.platform, no_cache=no_cache)
+            print()
+        run_image = spec.instance_image_key
+    else:  # pull
+        print("=== pulling the prebuilt instance image (multi-GB download — this is the standup) ===")
+        run_image = _pull_image(instance_id, spec.platform)
         print()
     build_done = time.monotonic()
-    print(f"[environment built from scratch in {build_done - start:.1f}s]\n")
+    print(f"[environment stood up ({mode}) in {build_done - start:.1f}s]\n")
 
-    # Run the recorded scenario in a fresh container off the just-built instance image.
+    # Run the recorded scenario in a fresh container off the stood-up instance image.
     container = f"wmh-real-{uuid.uuid4().hex[:8]}"
     rc = subprocess.run(
         ["docker", "run", "-d", "--name", container, "--platform", spec.platform,
-         "-w", "/testbed", "--rm", spec.instance_image_key, "sleep", "2h"],
+         "-w", "/testbed", "--rm", run_image, "sleep", "2h"],
         stdout=subprocess.DEVNULL,
     ).returncode
     if rc != 0:
         raise SystemExit(f"failed to start container (docker run exit {rc})")
+    failures = 0
     try:
         for i, command in enumerate(commands):
             print(f"--- step {i} ---\n$ {command}")
-            subprocess.run(
-                ["docker", "exec", "-w", "/testbed", container, "bash", "-lc", command],
-                timeout=args.exec_timeout,
-            )
+            try:
+                proc = subprocess.run(
+                    ["docker", "exec", "-w", "/testbed", container, "bash", "-lc", command],
+                    timeout=args.exec_timeout,
+                )
+                if proc.returncode != 0:
+                    failures += 1
+                    print(f"[exit {proc.returncode}]")
+            except subprocess.TimeoutExpired:
+                failures += 1
+                print(f"[timed out after {args.exec_timeout}s]")
             print()
     finally:
         subprocess.run(["docker", "rm", "-f", container], stdout=subprocess.DEVNULL,
                        stderr=subprocess.DEVNULL)
 
     total = time.monotonic() - start
+    note = "" if failures == 0 else f" ({failures} command(s) errored/timed out)"
     print(
-        f"done (REAL sandbox): build {build_done - start:.1f}s + "
-        f"{len(commands)} commands, {total:.1f}s total"
+        f"done (REAL sandbox): standup {build_done - start:.1f}s + "
+        f"{len(commands)} commands, {total:.1f}s total{note}"
     )
 
 

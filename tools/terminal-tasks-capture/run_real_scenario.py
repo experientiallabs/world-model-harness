@@ -130,6 +130,8 @@ def main() -> None:
 
     traces = _load_traces(Path(args.corpus))
     pool = _holdout(traces, args.train_split)
+    if not pool:
+        raise SystemExit(f"no traces in {args.corpus}; nothing to run")
     if args.trace is None:
         # Default: the simplest scenario — fewest recorded commands (matches the wmh side's default).
         trace = min(pool, key=lambda t: len(t["commands"]))

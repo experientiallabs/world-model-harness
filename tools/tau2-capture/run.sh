@@ -12,9 +12,16 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-if [ ! -x .venv/bin/python ]; then
+# Guard on tau2 actually importing, not just the venv dir existing — a half-finished prior setup
+# (venv created, pip install interrupted) must re-run, not skip.
+if ! .venv/bin/python -c 'import tau2' >/dev/null 2>&1; then
   echo "=== setting up the tau2 venv + data (one-time; counts as standup) ==="
-  [ -d tau2-bench ] || git clone --depth 1 https://github.com/sierra-research/tau2-bench.git
+  # A complete clone has the package's pyproject.toml; a partial/interrupted clone gets removed and
+  # retried rather than silently used.
+  if [ ! -f tau2-bench/pyproject.toml ]; then
+    rm -rf tau2-bench
+    git clone --depth 1 https://github.com/sierra-research/tau2-bench.git
+  fi
   uv venv --python 3.13 .venv
   # audioop-lts: backport of the audioop module removed from 3.13 stdlib (tau2 imports it).
   uv pip install --python .venv ./tau2-bench audioop-lts boto3
