@@ -1,5 +1,5 @@
 providers = [
-    { kind = "bedrock", model = "us.anthropic.claude-opus-4-8", region = "us-east-1" },
+    { kind = "bedrock", model = "us.anthropic.claude-haiku-4-5-20251001-v1:0", region = "us-east-1" },
 ]
 serve_provider = "bedrock"
 embed_provider = "hashing"

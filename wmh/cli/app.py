@@ -661,8 +661,7 @@ def bench_scenario(
 
     n_steps = len(trace.steps)
     _console.print(
-        f"\n[bold]world model[/bold] [cyan]{model or name}[/cyan] "
-        f"[dim](LLM: {serve_config.model})[/dim] — open-loop replay of {name} "
+        f"\n[bold]world model[/bold] [cyan]{model or name}[/cyan] — open-loop replay of {name} "
         f"scenario [cyan]{trace.trace_id[:8]}[/cyan] ({n_steps} steps), no environment to stand up"
     )
     # The task the agent was pursuing (the recorded instruction), shown briefly for context.
