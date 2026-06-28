@@ -567,6 +567,15 @@ def bench_scenario(
     model: str = typer.Option(
         None, "--model", help="World model to serve (default: the benchmark name)."
     ),
+    serve_model: str = typer.Option(
+        None,
+        "--serve-model",
+        help=(
+            "Override the LLM that plays the environment, keeping the model's prompt + demos "
+            "(e.g. a Bedrock id like us.anthropic.claude-haiku-4-5-20251001-v1:0). Default: the "
+            "model's configured serve model."
+        ),
+    ),
     trace_index: int = typer.Option(
         None, "--trace", help="Held-out trace to replay (default: the simplest = fewest steps)."
     ),
@@ -640,14 +649,20 @@ def bench_scenario(
         if paths.optimized_prompt.exists()
         else BASE_ENV_PROMPT
     )
-    provider = get_provider(config.serve_provider_config())
+    serve_config = config.serve_provider_config()
+    if serve_model:
+        # Swap only the LLM id, keeping the same provider backend + the model's prompt/demos — so we
+        # can measure a cheaper/faster model (Haiku, Sonnet) against the same scenario and prompt.
+        serve_config = serve_config.model_copy(update={"model": serve_model})
+    provider = get_provider(serve_config)
     # Leak-free demos from the TRAIN split only (never the query's own trace), identical to eval.
     retriever = EmbeddingRetriever(get_embedder(config))
     demos = DemoRetriever(retriever, train or traces, top_k=config.top_k)
 
     n_steps = len(trace.steps)
     _console.print(
-        f"\n[bold]world model[/bold] [cyan]{model or name}[/cyan] — open-loop replay of {name} "
+        f"\n[bold]world model[/bold] [cyan]{model or name}[/cyan] "
+        f"[dim](LLM: {serve_config.model})[/dim] — open-loop replay of {name} "
         f"scenario [cyan]{trace.trace_id[:8]}[/cyan] ({n_steps} steps), no environment to stand up"
     )
     # The task the agent was pursuing (the recorded instruction), shown briefly for context.
