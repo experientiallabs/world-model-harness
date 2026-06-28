@@ -141,6 +141,32 @@ def _pull_image(instance_id: str, platform_str: str, *, no_cache: bool) -> str:
     return image
 
 
+def _purge_swebench_images() -> int:
+    """Remove ALL local swebench/sweb.* images so a pull re-downloads every layer (truly cold).
+
+    `docker rmi <image>` only drops the tag; Docker keeps the underlying layer blobs as long as any
+    sibling image references them, so a re-pull of one instance only fetches its ~1 instance-specific
+    layer and reuses the ~12 shared base layers (the ~3s "warm-ish" standup). The swebench eval
+    images all derive from the same base, so evicting the whole family is what forces the next pull
+    to download the full multi-GB image cold. Targeted to the swebench family — it does NOT touch
+    unrelated images. Returns the count removed.
+    """
+    listed = subprocess.run(
+        ["docker", "images", "--format", "{{.Repository}}:{{.Tag}}"],
+        capture_output=True, text=True,
+    )
+    refs = [
+        r for r in listed.stdout.splitlines()
+        if r.startswith("swebench/") or r.startswith(("sweb.eval", "sweb.env", "sweb.base"))
+    ]
+    removed = 0
+    for ref in refs:
+        if subprocess.run(["docker", "rmi", "-f", ref],
+                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0:
+            removed += 1
+    return removed
+
+
 def _wind_down(images: list[str]) -> None:
     """Remove the stood-up images in a detached background process; return immediately.
 
@@ -199,6 +225,15 @@ def main() -> None:
     )
     parser.add_argument("--exec-timeout", type=int, default=600, help="Per-command timeout (s).")
     parser.add_argument(
+        "--cold",
+        action="store_true",
+        help=(
+            "Truly-cold standup: purge ALL local swebench/sweb.* images first so the standup "
+            "re-downloads every layer (no shared-base reuse). Shows the real cold multi-GB cost; "
+            "evicts other swebench images too. Implies a non-cached standup."
+        ),
+    )
+    parser.add_argument(
         "--keep-image",
         action="store_true",
         help=(
@@ -245,8 +280,17 @@ def main() -> None:
         f"\nREAL sandbox: {instance_id} ({len(commands)} commands) — standing up the env "
         f"[mode={mode}], then exec'ing the recorded commands\n"
     )
+    # Truly-cold: evict the whole swebench image family BEFORE the clock starts, so shared base
+    # layers can't be reused and the timed standup is a full from-zero download/build. The eviction
+    # itself is teardown of prior state, so it is deliberately not counted in the standup time.
+    if args.cold:
+        print("=== --cold: purging all local swebench/sweb.* images (no shared-layer reuse) ===")
+        n = _purge_swebench_images()
+        print(f"--- purged {n} swebench image(s); the standup below is a true cold download ---\n")
     start = time.monotonic()
-    no_cache = not args.cache  # cold by default: build with --no-cache, pull after removing cache
+    # Cold by default: build with --no-cache, pull after removing the target image. `--cold` forces
+    # this even if `--cache` was passed (the whole point is to not reuse anything).
+    no_cache = args.cold or not args.cache
     created: list[str] = []  # images this run stood up (for the wind-down cleanup)
 
     if mode == "build":
