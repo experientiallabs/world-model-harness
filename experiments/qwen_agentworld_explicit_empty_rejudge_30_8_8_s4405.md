@@ -76,3 +76,53 @@ Notes:
   `optimized_test`; both suites were rejudged with the explicit-empty prompt.
 - The previous `eval_30_8_8_opus48_judge.json` files should be treated as superseded by the
   `eval_30_8_8_opus48_explicit_empty_judge.json` reports.
+
+## Merged-Main AgentWorld SWE No-RAG Rerun
+
+Date: 2026-06-28
+
+Context: merged latest `origin/main` (`f495791`) into
+`codex/separate-rag-optimization-corpus` and regenerated only the
+Qwen/Qwen-AgentWorld-35B-A3B AgentWorld SWE prompt, no-RAG test predictions with the updated eval
+prompt rendering. No RAG demos were supplied.
+
+Report:
+
+`.wmh/models/qwen-agentworld-35b-a3b-no-rag-agentworld-swe-main-f495791-30train-8val-8test-s4405/eval_30_8_8_opus48_explicit_empty_judge.json`
+
+Serving:
+
+- Machine: `h100-dev-box`, GPUs `0,1`
+- vLLM: `0.23.0`
+- Model: `Qwen/Qwen-AgentWorld-35B-A3B`
+- Max model length: 131072
+- Target sampling: temperature 0.6, max tokens 2048, thinking disabled
+- Prompt: Qwen AgentWorld SWE system prompt from `/private/tmp/Qwen-AgentWorld/prompts/swe/system_prompt.txt`
+- Judge: Bedrock `us.anthropic.claude-opus-4-8`, match judge, `us-west-2`
+
+Result:
+
+| Variant | Mean | Std | Error flag accuracy | n |
+| --- | ---: | ---: | ---: | ---: |
+| AgentWorld SWE prompt, no RAG, merged-main eval prompt | 0.5259 | 0.4126 | 0.8711 | 225 |
+
+Comparison against prior explicit-empty reports:
+
+| Comparison | Delta mean |
+| --- | ---: |
+| vs prior AgentWorld SWE no-RAG | +0.0057 |
+| vs AgentWorld SWE + train-only RAG | -0.0102 |
+| vs Bedrock BASE_ENV_PROMPT baseline | +0.1322 |
+| vs Bedrock optimized prompt baseline | +0.0140 |
+
+Operational notes:
+
+- The run completed all 225 held-out steps with the same whole-trace split: train 841, validation
+  223, test 225.
+- Target transport hit a local tunnel read-timeout around row 79 and a transient remote protocol
+  disconnect around row 156. The runner resumed from partial artifacts and skipped already-judged
+  rows; no completed row was regenerated during resume.
+- `scripts/run_agentworld_benchmark.py` was hardened to close vLLM HTTP connections and retry
+  transient target transport/5xx errors.
+- The final JSON includes all 225 rows. Its usage block is explicitly scoped to the final resumed
+  segment, rows 156-225; earlier segment token/cost usage was not persisted by the ad hoc runner.
