@@ -41,6 +41,25 @@ _EVAL_FILES = typer.Argument(..., help="OTel trace files to score (one corpus ea
 BENCHMARKS_DIR = "benchmarks"
 
 
+def _resolve_benchmarks_dir(benchmarks: str) -> str:
+    """Resolve the benchmarks dir, tolerant of the current working directory.
+
+    `--benchmarks` defaults to the relative `"benchmarks"`, which only exists at the repo root — so
+    running `wmh bench …` from a subdir (e.g. `tools/<bench>-capture/`) would miss it. When the
+    given path doesn't exist as-is but the repo's committed `benchmarks/` does, fall back to that
+    (located relative to this package, like `default_bundled_dir` does for `world-models/`). An
+    explicit `--benchmarks <path>` that exists is always honored.
+    """
+    from pathlib import Path
+
+    if Path(benchmarks).exists():
+        return benchmarks
+    repo_root_benchmarks = Path(__file__).resolve().parent.parent.parent / BENCHMARKS_DIR
+    if benchmarks == BENCHMARKS_DIR and repo_root_benchmarks.is_dir():
+        return str(repo_root_benchmarks)
+    return benchmarks  # leave as-is; the caller surfaces a clear "not found" error
+
+
 @providers_app.command("verify")
 def providers_verify(
     name: str = typer.Option(None, "--name", help="Verify one model's providers (default: all)."),
@@ -414,7 +433,7 @@ def bench(
     from wmh.bench import build_leaderboard, discover_benchmarks, load_runs, results_dir_for
     from wmh.cli.ui import leaderboard_table
 
-    defs = discover_benchmarks(benchmarks)
+    defs = discover_benchmarks(_resolve_benchmarks_dir(benchmarks))
     if not defs:
         _console.print(
             f"[yellow]no benchmarks under {benchmarks}/[/yellow]; "
@@ -439,7 +458,7 @@ def bench_list(
     from wmh.bench import discover_benchmarks
     from wmh.cli.ui import benchmarks_table
 
-    defs = discover_benchmarks(benchmarks)
+    defs = discover_benchmarks(_resolve_benchmarks_dir(benchmarks))
     if not defs:
         _console.print(
             f"[yellow]no benchmarks under {benchmarks}/[/yellow]; "
@@ -479,7 +498,7 @@ def bench_run(
         save_run,
     )
 
-    bench_dir = Path(benchmarks) / name
+    bench_dir = Path(_resolve_benchmarks_dir(benchmarks)) / name
     try:
         bench_def: BenchmarkDef = load_benchmark(bench_dir)
     except (FileNotFoundError, ValueError) as exc:
@@ -573,7 +592,7 @@ def bench_scenario(
     from wmh.retrieval import EmbeddingRetriever, get_embedder
     from wmh.retrieval.leakfree import DemoRetriever
 
-    bench_dir = Path(benchmarks) / name
+    bench_dir = Path(_resolve_benchmarks_dir(benchmarks)) / name
     try:
         bench_def = load_benchmark(bench_dir)
     except (FileNotFoundError, ValueError) as exc:
