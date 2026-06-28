@@ -3,8 +3,8 @@
 # A committed, versioned benchmark definition ("filesystem as DB"). `wmh bench run swe-bench` replays
 # the held-out steps of the trace(s) below teacher-forced, has the world model predict each
 # observation, and scores it against the recorded one with the pinned rubric judge. Results land in
-# `benchmarks/swe-bench/results/` and surface on `wmh bench`. `wmh bench race swe-bench` replays one
-# recorded scenario live and times it (the sandbox-vs-world-model demo).
+# `benchmarks/swe-bench/results/` and surface on `wmh bench`. `wmh bench scenario swe-bench` replays
+# one recorded scenario open-loop and times it (the sandbox-vs-world-model demo).
 #
 # Trace paths resolve relative to this directory; they point at the shared corpus under `examples/`
 # (captured from real SWE-bench Verified via tools/swe-bench-capture/) so there is one source of
