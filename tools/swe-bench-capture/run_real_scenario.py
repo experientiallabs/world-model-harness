@@ -111,16 +111,24 @@ def _exists(image: str) -> bool:
     ).returncode == 0
 
 
-def _pull_image(instance_id: str, platform_str: str) -> str:
+def _pull_image(instance_id: str, platform_str: str, *, no_cache: bool) -> str:
     """`docker pull` the official prebuilt per-instance image, streaming progress; return its tag.
 
     The standup for the `pull` mode: a multi-GB image download (the environment + its installed
     dependencies, prebuilt) — a real, timed cost, just not a from-scratch compile. This is the path
     that works under emulation (the from-scratch `build` mode's `apt`/conda steps fail under qemu on
     non-x86 hosts). Raises on a failed pull.
+
+    Cold by default (`no_cache=True`): a locally-cached image makes `docker pull` a no-op (~0.5s
+    "up to date" check), which would silently hide the real download cost the comparison is about —
+    so we remove it first, mirroring the build path's `--no-cache`. Pass `--cache` to reuse it.
     """
     compat = instance_id.replace("__", "_1776_")
     image = f"docker.io/swebench/sweb.eval.x86_64.{compat}:latest".lower()
+    if no_cache and _exists(image):
+        print(f"--- removing cached image for a cold pull (pass --cache to reuse): {image} ---")
+        subprocess.run(["docker", "rmi", "-f", image], stdout=subprocess.DEVNULL,
+                       stderr=subprocess.DEVNULL)
     cmd = ["docker", "pull", "--platform", platform_str, image]
     print(f"$ {' '.join(cmd)}")
     rc = subprocess.run(cmd).returncode
@@ -206,11 +214,11 @@ def main() -> None:
         f"[mode={mode}], then exec'ing the recorded commands\n"
     )
     start = time.monotonic()
+    no_cache = not args.cache  # cold by default: build with --no-cache, pull after removing cache
 
     if mode == "build":
         # base image -> env image (the real conda/pip dependency install) -> instance image (clone
         # repo + checkout + install). Each streams its build log and counts toward the clock.
-        no_cache = not args.cache
         layers = [
             ("base", spec.base_image_key, spec.base_dockerfile, {}),
             (
@@ -236,7 +244,7 @@ def main() -> None:
         run_image = spec.instance_image_key
     else:  # pull
         print("=== pulling the prebuilt instance image (multi-GB download — this is the standup) ===")
-        run_image = _pull_image(instance_id, spec.platform)
+        run_image = _pull_image(instance_id, spec.platform, no_cache=no_cache)
         print()
     build_done = time.monotonic()
     print(f"[environment stood up ({mode}) in {build_done - start:.1f}s]\n")
