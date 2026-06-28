@@ -9,21 +9,24 @@ install) — streaming every `docker build` line and counting the whole standup 
 *then* `docker exec`s the recorded commands. That build is the slow, multi-minute cost the world
 model skips entirely; it must be in the stdout and the clock, or the comparison is dishonest.
 
-By default it builds with `--no-cache` so the standup cost is the true cold number every run; pass
-`--cache` to reuse Docker layers across runs once you've built once.
+By default the standup is TRULY COLD: it first purges all local swebench/sweb.* images (so no shared
+base layers are reused) and builds with `--no-cache`, so the timed standup is the real from-zero
+multi-GB cost every run. Pass `--warm` (optionally with `--cache`) to reuse existing images/layers
+for a faster repeat run.
 
 Needs the swebench `.venv` from this directory's README (it imports `swebench` to get the official
 Dockerfiles + setup scripts) and a running local Docker daemon. It never imports `wmh`; it reads the
 committed `examples/swe-bench.otel.jsonl` and re-implements the harness's deterministic blake2b
-held-out split inline so `--trace N` selects the SAME scenario the world-model side does.
+held-out split inline so `--trace N` selects the SAME scenario the world-model side does (default 0;
+pass -1 for the simplest = fewest commands).
 
 By default the stood-up image(s) are wound down in the background after the run (they are multi-GB
-and a cold run re-creates them); pass `--keep-image` to keep them, or `--cache` to reuse them.
+and a cold run re-creates them); pass `--keep-image` to keep them.
 
 Usage (from tools/swe-bench-capture/, in the swebench venv):
-    .venv/bin/python run_real_scenario.py --trace 0               # cold build (default), then clean up
-    .venv/bin/python run_real_scenario.py --trace 0 --cache       # reuse cached layers, keep image
-    .venv/bin/python run_real_scenario.py --trace 0 --keep-image  # cold, but keep the image
+    .venv/bin/python run_real_scenario.py                          # trace 0, truly cold, then clean up
+    .venv/bin/python run_real_scenario.py --warm --cache           # reuse existing image/layers
+    .venv/bin/python run_real_scenario.py --trace 2 --keep-image   # a specific trace, keep the image
 """
 
 from __future__ import annotations
@@ -201,8 +204,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--corpus", default=str(_DEFAULT_CORPUS), help="swe-bench OTel JSONL corpus.")
     parser.add_argument(
-        "--trace", type=int, default=None,
-        help="Held-out trace to replay (default: the simplest = fewest commands).",
+        "--trace", type=int, default=0,
+        help="Held-out trace to replay (default: 0). Pass -1 for the simplest = fewest commands.",
     )
     parser.add_argument("--train-split", type=float, default=0.7, help="Train/holdout ratio.")
     parser.add_argument(
@@ -225,12 +228,12 @@ def main() -> None:
     )
     parser.add_argument("--exec-timeout", type=int, default=600, help="Per-command timeout (s).")
     parser.add_argument(
-        "--cold",
+        "--warm",
         action="store_true",
         help=(
-            "Truly-cold standup: purge ALL local swebench/sweb.* images first so the standup "
-            "re-downloads every layer (no shared-base reuse). Shows the real cold multi-GB cost; "
-            "evicts other swebench images too. Implies a non-cached standup."
+            "Skip the truly-cold purge. By default the standup purges ALL local swebench/sweb.* "
+            "images first so it re-downloads every layer (no shared-base reuse) and reports the real "
+            "cold multi-GB cost. --warm keeps existing images, for a faster repeat run."
         ),
     )
     parser.add_argument(
@@ -247,8 +250,8 @@ def main() -> None:
     pool = _holdout(traces, args.train_split)
     if not pool:
         raise SystemExit(f"no traces in {args.corpus}; nothing to run")
-    if args.trace is None:
-        # Default: the simplest scenario — fewest recorded commands (matches the wmh side's default).
+    if args.trace == -1:
+        # The simplest scenario — fewest recorded commands (matches the wmh side's `min` default).
         trace = min(pool, key=lambda t: len(t["commands"]))
     elif 0 <= args.trace < len(pool):
         trace = pool[args.trace]
@@ -280,17 +283,18 @@ def main() -> None:
         f"\nREAL sandbox: {instance_id} ({len(commands)} commands) — standing up the env "
         f"[mode={mode}], then exec'ing the recorded commands\n"
     )
-    # Truly-cold: evict the whole swebench image family BEFORE the clock starts, so shared base
-    # layers can't be reused and the timed standup is a full from-zero download/build. The eviction
-    # itself is teardown of prior state, so it is deliberately not counted in the standup time.
-    if args.cold:
-        print("=== --cold: purging all local swebench/sweb.* images (no shared-layer reuse) ===")
+    # Truly-cold by default: evict the whole swebench image family BEFORE the clock starts, so shared
+    # base layers can't be reused and the timed standup is a full from-zero download/build. The
+    # eviction is teardown of prior state, so it is deliberately not counted in the standup time.
+    # `--warm` skips it for a faster repeat run.
+    cold = not args.warm
+    if cold:
+        print("=== cold standup: purging all local swebench/sweb.* images (no shared-layer reuse) ===")
         n = _purge_swebench_images()
         print(f"--- purged {n} swebench image(s); the standup below is a true cold download ---\n")
     start = time.monotonic()
-    # Cold by default: build with --no-cache, pull after removing the target image. `--cold` forces
-    # this even if `--cache` was passed (the whole point is to not reuse anything).
-    no_cache = args.cold or not args.cache
+    # Cold (the default) never reuses anything; --warm + --cache reuses build layers / the image.
+    no_cache = cold or not args.cache
     created: list[str] = []  # images this run stood up (for the wind-down cleanup)
 
     if mode == "build":
