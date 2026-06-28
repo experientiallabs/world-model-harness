@@ -40,15 +40,25 @@ predicted vs. actual observation, the 5 rubric dimensions, and the judge critiqu
 Per-dimension (rubric judge), optimized prompt: format ~0.99, factuality ~0.72, consistency ~0.88,
 realism ~0.97, quality ~0.76.
 
-**On variance:** the LLM judge is non-deterministic, so the same split scores slightly differently
-run to run. Two independent runs of the commands above gave base **0.755 / 0.723** and optimized
-**0.864 / 0.854** — a consistent **+0.11 to +0.13** lift either way. The committed report JSONs are
-one such run; treat the table as approximate (≈±0.02 run-to-run on top of the per-step std).
+**On variance / repeatability (multi-run hardening).** The LLM judge is non-deterministic, so the
+same split scores slightly differently run to run. Repeating both evals on the identical 84-step
+holdout:
+
+| Prompt | run 1 | run 2 | mean ± std |
+|---|---|---|---|
+| Base | 0.755 | 0.723 | 0.739 ± 0.016 |
+| GEPA-optimized | 0.864 | 0.854 | 0.859 ± 0.005 |
+
+The two distributions **do not overlap** (worst optimized 0.854 > best base 0.755), so the
+**+0.12 lift is stable, not run-to-run luck**. Treat the headline table as approximate (≈±0.02
+cross-run on top of the per-step std). The committed report JSONs are run 2 (base 0.723, optimized
+0.854). Both runs use the same single seed (`--seed 0`), so this measures judge non-determinism on
+one split — not seed-to-seed variance, which remains a GEPA-research follow-up.
 
 ## Caveats
 
-- **One corpus, one seed, 84-step holdout** (±0.19–0.34). Directional, not a leaderboard. Multi-seed
-  hardening is a GEPA-research follow-up.
+- **One corpus, 84-step holdout** (per-step std ±0.19–0.34; cross-run ≈±0.02). Directional, not a
+  leaderboard. More benchmarks/larger holdouts would tighten it further.
 - The judge is an LLM (Opus 4.8) at temperature 0, but still has some variance; the per-step scores
   in the committed reports are a single sample each.
 - Retrieval uses the offline lexical `HashingEmbedder` (semantic phi untested).

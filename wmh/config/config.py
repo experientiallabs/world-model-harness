@@ -35,7 +35,8 @@ class HarnessConfig(BaseModel):
     embed_provider: EmbedderKind = EmbedderKind.HASHING
     embed_dim: int = 512  # phi dimensionality; index + query embedder must agree on this
     top_k: int = 5  # demos retrieved per step (DreamGym k)
-    train_split: float = 0.8  # train/held-out ratio for GEPA
+    # train/held-out ratio for GEPA; a proper fraction so both splits can be non-empty
+    train_split: float = Field(default=0.8, gt=0.0, lt=1.0)
     gepa_budget: int = 50  # rollout budget for prompt evolution
     trace_adapter: str = "otel-genai"
 
@@ -74,6 +75,7 @@ class HarnessConfig(BaseModel):
         embed_model: str | None,
         embed_dim: int,
         gepa_budget: int,
+        train_split: float = 0.8,
     ) -> HarnessConfig:
         """Assemble a build config from the choices `wmh build` collects.
 
@@ -104,6 +106,7 @@ class HarnessConfig(BaseModel):
             embed_provider=embed_provider,
             embed_dim=embed_dim,
             gepa_budget=gepa_budget,
+            train_split=train_split,
         )
 
 

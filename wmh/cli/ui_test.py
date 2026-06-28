@@ -142,13 +142,15 @@ def test_build_wizard_collects_all_inputs() -> None:
             "hashing",
         ]
     )
-    params = run_build_wizard(console, BuildParams(name="default"), reader=reader)
+    # train_split has no wizard prompt; it must carry through from the flag-supplied defaults.
+    params = run_build_wizard(console, BuildParams(name="default", train_split=0.5), reader=reader)
     assert params.name == "tau2-airline"
     assert params.file == "/tmp/traces.jsonl"
     assert params.provider == "bedrock"
     assert params.region == "us-east-1"
     assert params.gepa_budget == 8
     assert params.embed_provider == "hashing"
+    assert params.train_split == 0.5
 
 
 def test_build_wizard_select_by_number() -> None:

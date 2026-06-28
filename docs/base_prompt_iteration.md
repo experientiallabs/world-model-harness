@@ -56,6 +56,28 @@ own error shape. It instructs the model to ground values in STATE/HISTORY (never
 output only the bytes that actually reach the agent (empty when nothing prints), and to decide
 success/error from what the action would really do.
 
+## Iteration: "a lookup of a record that exists returns populated data"
+
+Measured base-only (no GEPA) on both committed corpora (tau2-bench + terminal-tasks, 132 held-out
+steps, `--train-split 0.7 --seed 0`, rubric judge, Bedrock Opus 4.8):
+
+| base prompt | tau2-bench | terminal-tasks | overall |
+|---|---|---|---|
+| before this edit | 0.760 | 0.592 | 0.699 |
+| **after** | **0.805** | 0.582 | **0.724** |
+
+The dominant base failure on tau2 was catastrophic and uniform: for `get_reservation_details` on a
+reservation that **exists**, the empty `state_before` led the model to default to *"reservation not
+found"* — flipping the outcome to error (format/factuality/consistency all 0). The edit adds general
+guidance: a lookup/read of something the task implies EXISTS returns the full populated, schema-
+correct record, not a "not found" error. That lifted tau2 +0.045 and overall +0.025, with terminal
+flat within the ≈±0.02 cross-run judge noise.
+
+A more defensive variant that also warned "execution can still fail, don't assume success" was
+tested and **rejected** — it diluted the tau2 gain (0.805 → 0.778) without improving terminal. This
+is taste-driven hand-tuning: keep an edit only when it measurably helps across both, and the better
+base is the *starting point* GEPA specializes from, not a substitute for GEPA.
+
 ## Notes
 
 - This is deliberately NOT GEPA-on-the-base: we keep the base general and hand-tuned, then let GEPA

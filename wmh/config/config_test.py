@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 
 from wmh.config.config import HarnessConfig, load_config, save_config
 from wmh.providers.base import EmbedderKind, ProviderConfig, ProviderKind
@@ -161,3 +162,36 @@ def test_for_build_hashing_embedder_needs_no_embed_provider_config() -> None:
     )
     assert [pc.kind for pc in config.providers] == [ProviderKind.BEDROCK]
     assert config.embed_provider is EmbedderKind.HASHING
+
+
+def test_for_build_threads_train_split() -> None:
+    # train_split defaults to 0.8 but is overridable (so `wmh build --train-split` reaches GEPA).
+    default = HarnessConfig.for_build(
+        serve_provider=ProviderKind.BEDROCK,
+        serve_model="opus",
+        region=None,
+        embed_provider=EmbedderKind.HASHING,
+        embed_model=None,
+        embed_dim=512,
+        gepa_budget=10,
+    )
+    assert default.train_split == 0.8
+    custom = HarnessConfig.for_build(
+        serve_provider=ProviderKind.BEDROCK,
+        serve_model="opus",
+        region=None,
+        embed_provider=EmbedderKind.HASHING,
+        embed_model=None,
+        embed_dim=512,
+        gepa_budget=10,
+        train_split=0.5,
+    )
+    assert custom.train_split == 0.5
+
+
+@pytest.mark.parametrize("bad", [0.0, 1.0, -0.1, 1.5])
+def test_train_split_must_be_a_proper_fraction(bad: float) -> None:
+    # A degenerate ratio empties one side of the split; reject it up front rather than letting GEPA
+    # "succeed" on a leaked/empty valset.
+    with pytest.raises(ValidationError):
+        HarnessConfig(train_split=bad)

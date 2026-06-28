@@ -78,6 +78,7 @@ class BuildParams(BaseModel):
     model: str = "us.anthropic.claude-opus-4-8"
     region: str | None = None
     gepa_budget: int = 50
+    train_split: float = 0.8
     embed_provider: str = "hashing"
     embed_model: str | None = None
     embed_dim: int = 512
@@ -156,6 +157,7 @@ def run_build_wizard(
         model=model,
         region=region,
         gepa_budget=gepa_budget,
+        train_split=defaults.train_split,
         embed_provider=embed_provider,
         embed_model=embed_model,
         embed_dim=defaults.embed_dim,
