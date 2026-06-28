@@ -3,7 +3,7 @@
 # environment (build from scratch on native x86_64, else pull the prebuilt image) and run the
 # recorded scenario, streaming all stdout. One command.
 #
-#   tools/swe-bench-capture/run.sh [--trace N] [--mode build|pull|auto] [--cache] [...]
+#   tools/swe-bench-capture/run.sh [--trace N] [--mode build|pull|auto] [--cache] [--keep-image] [...]
 #
 # The whole thing — Python venv creation, `swebench` install, the Docker standup (a from-scratch
 # conda/pip build on x86_64, or a multi-GB prebuilt-image pull under emulation), and the recorded
@@ -11,7 +11,8 @@
 # the real environment cold. The standup is cold by default (build with --no-cache; pull after
 # removing any cached image, so the multi-GB download is actually paid) — that is the cost the world
 # model side (`wmh bench scenario swe-bench`) skips. Re-runs reuse the venv; pass --cache to also
-# reuse the Docker build layers / the already-pulled image.
+# reuse the Docker build layers / the already-pulled image. After the run the stood-up image(s) are
+# wound down in the background (multi-GB; a cold run rebuilds them) — pass --keep-image to keep them.
 set -euo pipefail
 cd "$(dirname "$0")"
 

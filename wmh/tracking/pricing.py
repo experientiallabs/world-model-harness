@@ -8,9 +8,16 @@ surface "cost unavailable" rather than silently under-reporting.
 
 from __future__ import annotations
 
+import re
+
 from pydantic import BaseModel
 
 from wmh.providers.base import TokenUsage
+
+# Bedrock appends a snapshot date and/or version to the model id, e.g.
+# `claude-haiku-4-5-20251001-v1:0` or `claude-opus-4-6-v1`. Strip them so the lookup key matches the
+# undated table rows (`claude-haiku-4-5`). Only applied to `claude-*` ids.
+_BEDROCK_SUFFIX = re.compile(r"(-\d{8})?(-v\d+)?(:\d+)?$")
 
 
 class ModelPrice(BaseModel):
@@ -66,6 +73,10 @@ def _normalize(model: str) -> str:
             break
     if normalized.startswith("anthropic."):
         normalized = normalized[len("anthropic.") :]
+    if normalized.startswith("claude-"):
+        # Drop a trailing Bedrock snapshot date / version (`-20251001-v1:0`, `-v1`) so dated
+        # inference-profile ids match the undated table rows.
+        normalized = _BEDROCK_SUFFIX.sub("", normalized)
     return normalized
 
 

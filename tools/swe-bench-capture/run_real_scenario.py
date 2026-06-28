@@ -17,9 +17,13 @@ Dockerfiles + setup scripts) and a running local Docker daemon. It never imports
 committed `examples/swe-bench.otel.jsonl` and re-implements the harness's deterministic blake2b
 held-out split inline so `--trace N` selects the SAME scenario the world-model side does.
 
+By default the stood-up image(s) are wound down in the background after the run (they are multi-GB
+and a cold run re-creates them); pass `--keep-image` to keep them, or `--cache` to reuse them.
+
 Usage (from tools/swe-bench-capture/, in the swebench venv):
-    .venv/bin/python run_real_scenario.py --trace 0            # cold build (default)
-    .venv/bin/python run_real_scenario.py --trace 0 --cache    # reuse cached layers
+    .venv/bin/python run_real_scenario.py --trace 0               # cold build (default), then clean up
+    .venv/bin/python run_real_scenario.py --trace 0 --cache       # reuse cached layers, keep image
+    .venv/bin/python run_real_scenario.py --trace 0 --keep-image  # cold, but keep the image
 """
 
 from __future__ import annotations
@@ -137,6 +141,26 @@ def _pull_image(instance_id: str, platform_str: str, *, no_cache: bool) -> str:
     return image
 
 
+def _wind_down(images: list[str]) -> None:
+    """Remove the stood-up images in a detached background process; return immediately.
+
+    These instance images are multi-GB and a cold run re-creates them anyway, so we don't leave them
+    filling the disk. Detached (`Popen`, no wait) so the cleanup doesn't add to the reported run
+    time — `docker rmi` can take a moment to unwind layers. `--keep-image` skips this.
+    """
+    if not images:
+        return
+    # `docker rmi -f` each image; `|| true` so a missing/shared image doesn't abort the rest.
+    script = " ; ".join(f"docker rmi -f {img} >/dev/null 2>&1 || true" for img in images)
+    subprocess.Popen(  # noqa: S602 - fixed command, image tags are derived from the dataset spec
+        ["bash", "-c", script],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+    print(f"[winding down {len(images)} image(s) in the background: {', '.join(images)}]")
+
+
 def _default_mode() -> str:
     """`build` from scratch on a native x86_64 host, else `pull` the prebuilt image.
 
@@ -174,6 +198,14 @@ def main() -> None:
         help="Reuse cached Docker layers (skip already-built images). Default: cold --no-cache.",
     )
     parser.add_argument("--exec-timeout", type=int, default=600, help="Per-command timeout (s).")
+    parser.add_argument(
+        "--keep-image",
+        action="store_true",
+        help=(
+            "Keep the stood-up Docker image(s) after the run. Default: wind them down in the "
+            "background (these images are multi-GB; a cold run re-creates them anyway)."
+        ),
+    )
     args = parser.parse_args()
 
     traces = _load_traces(Path(args.corpus))
@@ -215,6 +247,7 @@ def main() -> None:
     )
     start = time.monotonic()
     no_cache = not args.cache  # cold by default: build with --no-cache, pull after removing cache
+    created: list[str] = []  # images this run stood up (for the wind-down cleanup)
 
     if mode == "build":
         # base image -> env image (the real conda/pip dependency install) -> instance image (clone
@@ -240,11 +273,13 @@ def main() -> None:
                 continue
             print(f"=== building {label}: {tag} ===")
             _docker_build(tag, dockerfile, scripts, spec.platform, no_cache=no_cache)
+            created.append(tag)
             print()
         run_image = spec.instance_image_key
     else:  # pull
         print("=== pulling the prebuilt instance image (multi-GB download — this is the standup) ===")
         run_image = _pull_image(instance_id, spec.platform, no_cache=no_cache)
+        created.append(run_image)
         print()
     build_done = time.monotonic()
     print(f"[environment stood up ({mode}) in {build_done - start:.1f}s]\n")
@@ -284,6 +319,11 @@ def main() -> None:
         f"done (REAL sandbox): standup {build_done - start:.1f}s + "
         f"{len(commands)} commands, {total:.1f}s total{note}"
     )
+
+    # Wind-down: drop the multi-GB image(s) this run stood up, in the background (after timing, so it
+    # never counts against the clock). `--keep-image` or `--cache` (you want to reuse it) opt out.
+    if not args.keep_image and not args.cache:
+        _wind_down(created)
 
 
 if __name__ == "__main__":

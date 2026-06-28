@@ -21,6 +21,16 @@ def test_bedrock_prefix_normalizes_to_same_price() -> None:
     assert cost_usd("us.anthropic.claude-opus-4-8", usage) == pytest.approx(5.0)
 
 
+def test_bedrock_dated_inference_profile_id_normalizes() -> None:
+    # Bedrock inference-profile ids carry a snapshot date + version, e.g.
+    # `us.anthropic.claude-haiku-4-5-20251001-v1:0`; they must price like the undated row.
+    usage = TokenUsage(input_tokens=1_000_000, output_tokens=0)
+    assert price_for("us.anthropic.claude-haiku-4-5-20251001-v1:0") is not None
+    assert cost_usd("us.anthropic.claude-haiku-4-5-20251001-v1:0", usage) == pytest.approx(1.0)
+    # The `-v1` version suffix alone is also stripped.
+    assert cost_usd("anthropic.claude-opus-4-6-v1", usage) == pytest.approx(5.0)
+
+
 def test_gpt_5_5_output_is_30_per_mtok() -> None:
     # Verified 2026-06-25 against OpenAI's live pricing page: gpt-5.5 is $5 in / $30 out.
     price = price_for("gpt-5.5")
