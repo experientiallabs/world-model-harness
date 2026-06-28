@@ -41,6 +41,25 @@ _EVAL_FILES = typer.Argument(..., help="OTel trace files to score (one corpus ea
 BENCHMARKS_DIR = "benchmarks"
 
 
+def _resolve_benchmarks_dir(benchmarks: str) -> str:
+    """Resolve the benchmarks dir, tolerant of the current working directory.
+
+    `--benchmarks` defaults to the relative `"benchmarks"`, which only exists at the repo root — so
+    running `wmh bench …` from a subdir (e.g. `tools/<bench>-capture/`) would miss it. When the
+    given path doesn't exist as-is but the repo's committed `benchmarks/` does, fall back to that
+    (located relative to this package, like `default_bundled_dir` does for `world-models/`). An
+    explicit `--benchmarks <path>` that exists is always honored.
+    """
+    from pathlib import Path
+
+    if Path(benchmarks).exists():
+        return benchmarks
+    repo_root_benchmarks = Path(__file__).resolve().parent.parent.parent / BENCHMARKS_DIR
+    if benchmarks == BENCHMARKS_DIR and repo_root_benchmarks.is_dir():
+        return str(repo_root_benchmarks)
+    return benchmarks  # leave as-is; the caller surfaces a clear "not found" error
+
+
 @providers_app.command("verify")
 def providers_verify(
     name: str = typer.Option(None, "--name", help="Verify one model's providers (default: all)."),
@@ -414,10 +433,11 @@ def bench(
     from wmh.bench import build_leaderboard, discover_benchmarks, load_runs, results_dir_for
     from wmh.cli.ui import leaderboard_table
 
-    defs = discover_benchmarks(benchmarks)
+    resolved = _resolve_benchmarks_dir(benchmarks)
+    defs = discover_benchmarks(resolved)
     if not defs:
         _console.print(
-            f"[yellow]no benchmarks under {benchmarks}/[/yellow]; "
+            f"[yellow]no benchmarks under {resolved}/[/yellow]; "
             "add one as benchmarks/<name>/benchmark.toml"
         )
         return
@@ -439,10 +459,11 @@ def bench_list(
     from wmh.bench import discover_benchmarks
     from wmh.cli.ui import benchmarks_table
 
-    defs = discover_benchmarks(benchmarks)
+    resolved = _resolve_benchmarks_dir(benchmarks)
+    defs = discover_benchmarks(resolved)
     if not defs:
         _console.print(
-            f"[yellow]no benchmarks under {benchmarks}/[/yellow]; "
+            f"[yellow]no benchmarks under {resolved}/[/yellow]; "
             "add one as benchmarks/<name>/benchmark.toml"
         )
         return
@@ -479,7 +500,7 @@ def bench_run(
         save_run,
     )
 
-    bench_dir = Path(benchmarks) / name
+    bench_dir = Path(_resolve_benchmarks_dir(benchmarks)) / name
     try:
         bench_def: BenchmarkDef = load_benchmark(bench_dir)
     except (FileNotFoundError, ValueError) as exc:
@@ -573,7 +594,7 @@ def bench_scenario(
     from wmh.retrieval import EmbeddingRetriever, get_embedder
     from wmh.retrieval.leakfree import DemoRetriever
 
-    bench_dir = Path(benchmarks) / name
+    bench_dir = Path(_resolve_benchmarks_dir(benchmarks)) / name
     try:
         bench_def = load_benchmark(bench_dir)
     except (FileNotFoundError, ValueError) as exc:
@@ -626,23 +647,30 @@ def bench_scenario(
 
     n_steps = len(trace.steps)
     _console.print(
-        f"[bold]world model[/bold] {model or name}: open-loop replay of {name} scenario "
-        f"[cyan]{trace.trace_id[:8]}[/cyan] ({n_steps} steps) — no environment to stand up"
+        f"\n[bold]world model[/bold] [cyan]{model or name}[/cyan] — open-loop replay of {name} "
+        f"scenario [cyan]{trace.trace_id[:8]}[/cyan] ({n_steps} steps), no environment to stand up"
     )
+    # The task the agent was pursuing (the recorded instruction), shown briefly for context.
+    task = trace.steps[0].task if trace.steps else None
+    if task:
+        _console.print(f"[bold]task[/bold] [dim]{_clip(task, 240)}[/dim]\n")
 
     def on_step(step: ScenarioStep) -> None:
         # Light live-fidelity signal: error flag agreed and a non-empty prediction landed.
         ok = step.is_error_predicted == step.is_error_actual and bool(step.predicted.strip())
         mark = "[green]✓[/green]" if ok else "[yellow]≈[/yellow]"
+        err = " [red](error)[/red]" if step.is_error_predicted else ""
+        # Show the agent's CALL to the environment, then the world model's OBSERVATION back.
         _console.print(
-            f"  {mark} [{step.seconds:5.2f}s] {step.action}\n"
-            f"      [dim]predicted[/dim] {_clip(step.predicted)}"
+            f"{mark} [dim]step {step.index} ({step.seconds:.2f}s)[/dim]\n"
+            f"  [bold blue]agent →[/bold blue] {_clip(step.action, 200)}\n"
+            f"  [bold green]world model →[/bold green]{err} {_clip(step.predicted)}"
         )
 
     report = run_scenario(
         provider, env_prompt, trace, demos, benchmark=name, model=(model or name), on_step=on_step
     )
-    _console.print(f"[bold]done[/bold]: {report.summary()}")
+    _console.print(f"\n[bold]done[/bold]: {report.summary()}")
 
 
 def _clip(text: str, limit: int = 160) -> str:

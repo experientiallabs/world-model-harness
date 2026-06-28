@@ -1,23 +1,28 @@
 #!/usr/bin/env bash
-# End-to-end REAL swe-bench scenario: set up the venv + deps (timed standup), then build the
-# environment from scratch and run the recorded scenario, streaming all stdout. One command.
+# End-to-end REAL swe-bench scenario: set up the venv + deps (timed standup), then stand up the
+# environment (build from scratch on native x86_64, else pull the prebuilt image) and run the
+# recorded scenario, streaming all stdout. One command.
 #
-#   tools/swe-bench-capture/run.sh [--trace N] [--cache] [...]
+#   tools/swe-bench-capture/run.sh [--trace N] [--mode build|pull|auto] [--cache] [...]
 #
-# The whole thing — Python venv creation, `swebench` install, the base/env/instance Docker build
-# (real conda/pip dependency install), and the recorded commands — runs and prints here, so the
-# total wall-clock is the true cost of standing up + running the real environment cold. That is the
-# cost the world model side (`wmh bench scenario swe-bench`) skips. Re-runs reuse the venv; pass
-# --cache to also reuse Docker layers.
+# The whole thing — Python venv creation, `swebench` install, the Docker standup (a from-scratch
+# conda/pip build on x86_64, or a multi-GB prebuilt-image pull under emulation), and the recorded
+# commands — runs and prints here, so the total wall-clock is the true cost of standing up + running
+# the real environment cold. The standup is cold by default (build with --no-cache; pull after
+# removing any cached image, so the multi-GB download is actually paid) — that is the cost the world
+# model side (`wmh bench scenario swe-bench`) skips. Re-runs reuse the venv; pass --cache to also
+# reuse the Docker build layers / the already-pulled image.
 set -euo pipefail
 cd "$(dirname "$0")"
 
-if [ ! -x .venv/bin/python ]; then
+# Guard on the package actually importing, not just the venv dir existing — a half-finished prior
+# setup (venv created, pip install interrupted) must re-run the install, not skip it.
+if ! .venv/bin/python -c 'import swebench' >/dev/null 2>&1; then
   echo "=== setting up the swebench venv (one-time; counts as standup) ==="
   uv venv --python 3.12 .venv
   uv pip install --python .venv swebench boto3
 fi
 
 export AWS_REGION="${AWS_REGION:-us-east-1}" AWS_REGION_NAME="${AWS_REGION_NAME:-us-east-1}"
-echo "=== running the real swe-bench scenario (build from scratch + exec) ==="
+echo "=== running the real swe-bench scenario (stand up env + exec) ==="
 exec .venv/bin/python run_real_scenario.py "$@"
