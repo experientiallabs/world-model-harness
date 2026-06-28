@@ -8,8 +8,10 @@
 # The whole thing — Python venv creation, `swebench` install, the Docker standup (a from-scratch
 # conda/pip build on x86_64, or a multi-GB prebuilt-image pull under emulation), and the recorded
 # commands — runs and prints here, so the total wall-clock is the true cost of standing up + running
-# the real environment cold. That is the cost the world model side (`wmh bench scenario swe-bench`)
-# skips. Re-runs reuse the venv; pass --cache to also reuse Docker build layers.
+# the real environment cold. The standup is cold by default (build with --no-cache; pull after
+# removing any cached image, so the multi-GB download is actually paid) — that is the cost the world
+# model side (`wmh bench scenario swe-bench`) skips. Re-runs reuse the venv; pass --cache to also
+# reuse the Docker build layers / the already-pulled image.
 set -euo pipefail
 cd "$(dirname "$0")"
 
