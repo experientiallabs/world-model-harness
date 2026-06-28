@@ -51,7 +51,9 @@ holdout:
 
 The two distributions **do not overlap** (worst optimized 0.854 > best base 0.755), so the
 **+0.12 lift is stable, not run-to-run luck**. Treat the headline table as approximate (≈±0.02
-cross-run on top of the per-step std). The committed report JSONs are run 1.
+cross-run on top of the per-step std). The committed report JSONs are run 2 (base 0.723, optimized
+0.854). Both runs use the same single seed (`--seed 0`), so this measures judge non-determinism on
+one split — not seed-to-seed variance, which remains a GEPA-research follow-up.
 
 ## Caveats
 

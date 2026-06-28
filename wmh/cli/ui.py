@@ -157,6 +157,7 @@ def run_build_wizard(
         model=model,
         region=region,
         gepa_budget=gepa_budget,
+        train_split=defaults.train_split,
         embed_provider=embed_provider,
         embed_model=embed_model,
         embed_dim=defaults.embed_dim,
