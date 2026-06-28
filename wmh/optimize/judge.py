@@ -29,6 +29,9 @@ outcomes, flipped success/error status, and missing or fabricated salient facts.
 The observations are encoded as JSON strings. If `content` is `""` and `content_length` is `0`, the
 observation is the empty string; do not infer or fill in missing content from the action or actual
 observation.
+An empty predicted observation is also marked with `empty_sentinel: "<EMPTY_PREDICTION>"`.
+If the predicted observation is empty and the actual observation is non-empty, assign a very low
+score because the prediction omitted the environment's response.
 
 Respond with ONLY a JSON object, no prose around it:
 {"score": <float 0..1>, "critique": "<one or two sentences: what matched, what diverged, and how \
@@ -76,8 +79,8 @@ class LLMJudge:
 def _build_judge_prompt(predicted: Observation, actual: Observation, context: Step) -> str:
     action = context.action
     action_desc = action.name or action.content or "(none)"
-    actual_payload = _observation_payload(actual)
-    predicted_payload = _observation_payload(predicted)
+    actual_payload = _observation_payload(actual, empty_sentinel="<EMPTY_ACTUAL_OBSERVATION>")
+    predicted_payload = _observation_payload(predicted, empty_sentinel="<EMPTY_PREDICTION>")
     return (
         f"AGENT ACTION ({action.kind.value}): {action_desc}\n"
         f"ACTION ARGUMENTS: {json.dumps(action.arguments, sort_keys=True, default=str)}\n\n"
@@ -88,12 +91,13 @@ def _build_judge_prompt(predicted: Observation, actual: Observation, context: St
     )
 
 
-def _observation_payload(observation: Observation) -> dict[str, object]:
+def _observation_payload(observation: Observation, *, empty_sentinel: str) -> dict[str, object]:
     return {
         "is_error": observation.is_error,
         "content_length": len(observation.content),
         "content": observation.content,
         "empty_content": observation.content == "",
+        "empty_sentinel": empty_sentinel if observation.content == "" else None,
     }
 
 
