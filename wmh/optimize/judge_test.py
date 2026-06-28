@@ -86,6 +86,11 @@ def test_judge_prompt_makes_empty_prediction_explicit() -> None:
     assert '"content": ""' in prompt
     assert '"content_length": 0' in prompt
     assert '"empty_content": true' in prompt
+    assert '"empty_sentinel": "<EMPTY_PREDICTION>"' in prompt
+    assert "<EMPTY_ACTUAL_OBSERVATION>" not in prompt
+    assert "If the predicted observation is empty and the actual observation is non-empty" in (
+        JUDGE_SYSTEM
+    )
     assert "PREDICTED OBSERVATION JSON" in prompt
 
 
