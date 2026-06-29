@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import pytest
 from typer.testing import CliRunner
@@ -67,6 +68,41 @@ def _traces_file(tmp_path) -> str:  # noqa: ANN001 - pytest fixture path
     }
     path = tmp_path / "traces.jsonl"
     path.write_text(json.dumps(span_llm) + "\n" + json.dumps(span_tool) + "\n", encoding="utf-8")
+    return str(path)
+
+
+def _multi_traces_file(tmp_path, trace_ids: list[str]) -> str:  # noqa: ANN001 - pytest fixture path
+    lines: list[str] = []
+    for i, trace_id in enumerate(trace_ids):
+        span_llm = {
+            "traceId": trace_id,
+            "spanId": f"s{i}a",
+            "name": "chat",
+            "startTimeUnixNano": i * 10,
+            "attributes": [
+                {"key": "gen_ai.operation.name", "value": {"stringValue": "chat"}},
+                {"key": "gen_ai.tool.name", "value": {"stringValue": "get_user"}},
+                {
+                    "key": "gen_ai.tool.call.arguments",
+                    "value": {"stringValue": json.dumps({"id": f"u{i}"})},
+                },
+                {"key": "gen_ai.prompt", "value": {"stringValue": f"look up u{i}"}},
+            ],
+        }
+        span_tool = {
+            "traceId": trace_id,
+            "spanId": f"s{i}b",
+            "name": "execute_tool",
+            "startTimeUnixNano": i * 10 + 1,
+            "attributes": [
+                {"key": "gen_ai.operation.name", "value": {"stringValue": "execute_tool"}},
+                {"key": "gen_ai.tool.message", "value": {"stringValue": f"found u{i}"}},
+            ],
+        }
+        lines.append(json.dumps(span_llm))
+        lines.append(json.dumps(span_tool))
+    path = tmp_path / "multi_traces.jsonl"
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return str(path)
 
 
@@ -307,6 +343,14 @@ def _benchmark(benchmarks_root, name: str, tmp_path) -> None:  # noqa: ANN001 - 
     )
 
 
+def _benchmark_with_trace(benchmarks_root, name: str, trace: str) -> None:  # noqa: ANN001
+    bench_dir = benchmarks_root / name
+    bench_dir.mkdir(parents=True)
+    (bench_dir / "benchmark.toml").write_text(
+        f'version = "1"\ntraces = ["{trace}"]\n[eval]\nseeds = [0]\n', encoding="utf-8"
+    )
+
+
 def test_bench_list_shows_definitions(tmp_path) -> None:  # noqa: ANN001
     benchmarks = tmp_path / "benchmarks"
     _benchmark(benchmarks, "tau-bench", tmp_path)
@@ -371,6 +415,220 @@ def test_bench_scenario_replays_through_the_model(patched_provider, tmp_path) ->
     # The fake provider's canned observation shows up as the live prediction, and the run finishes.
     assert "user u1 found" in result.output
     assert "done" in result.output
+
+
+def test_bench_scenario_runs_multiple_replays_concurrently(
+    patched_provider: object, tmp_path: Path
+) -> None:
+    root = tmp_path / ".wmh"
+    _build(root, "scen", tmp_path)
+    benchmarks = tmp_path / "benchmarks"
+    trace = _multi_traces_file(tmp_path, ["a" * 32, "b" * 32])
+    _benchmark_with_trace(benchmarks, "scen", trace)
+
+    result = runner.invoke(
+        app,
+        [
+            "bench",
+            "scenario",
+            "scen",
+            "--scenarios",
+            "2",
+            "--concurrency",
+            "2",
+            "--benchmarks",
+            str(benchmarks),
+            "--root",
+            str(root),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "2 scen scenarios" in result.output
+    assert "trace 0 ✓ step 0" in result.output
+    assert "world model →" in result.output
+    assert "world-model scenario batch" in result.output
+    assert "fidelity 100%" in result.output
+
+
+def test_bench_scenario_demo_batch_falls_back_to_all_traces(
+    patched_provider: object, tmp_path: Path
+) -> None:
+    root = tmp_path / ".wmh"
+    _build(root, "scen", tmp_path)
+    benchmarks = tmp_path / "benchmarks"
+    # "a" is held out at train_split=0.7; "c" is train. Requesting two scenarios from trace 0
+    # exceeds the one-trace held-out pool but fits in the full corpus, matching the 8-way demo path.
+    trace = _multi_traces_file(tmp_path, ["a" * 32, "c" * 32])
+    _benchmark_with_trace(benchmarks, "scen", trace)
+
+    result = runner.invoke(
+        app,
+        [
+            "bench",
+            "scenario",
+            "scen",
+            "--trace",
+            "0",
+            "--scenarios",
+            "2",
+            "--concurrency",
+            "2",
+            "--benchmarks",
+            str(benchmarks),
+            "--root",
+            str(root),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "using all 2 traces instead" in result.output
+    assert "2 scen scenarios" in result.output
+
+
+def test_bench_side_by_side_runs_world_model_and_real_runner(
+    patched_provider: object, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    import wmh.bench.side_by_side as side_by_side
+    from wmh.bench.side_by_side import RealSandboxResult
+
+    root = tmp_path / ".wmh"
+    _build(root, "scen", tmp_path)
+    benchmarks = tmp_path / "benchmarks"
+    _benchmark(benchmarks, "swe-bench", tmp_path)
+
+    def fake_run(spec, *, timeout_seconds=None):  # noqa: ANN001, ANN202
+        return RealSandboxResult(
+            spec=spec,
+            returncode=0,
+            seconds=1.2,
+            stdout="REAL OUTPUT",
+        )
+
+    monkeypatch.setattr(side_by_side, "run_real_sandbox", fake_run)
+
+    result = runner.invoke(
+        app,
+        [
+            "bench",
+            "side-by-side",
+            "swe-bench",
+            "--model",
+            "scen",
+            "--benchmarks",
+            str(benchmarks),
+            "--root",
+            str(root),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "side-by-side scenario summary" in result.output
+    assert "mini-SWE-agent" in result.output
+    assert "user u1 found" in result.output
+    assert "REAL OUTPUT" in result.output
+
+
+def test_bench_side_by_side_runs_multiple_scenarios_concurrently(
+    patched_provider: object, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    import wmh.bench.side_by_side as side_by_side
+    from wmh.bench.side_by_side import RealSandboxResult
+
+    root = tmp_path / ".wmh"
+    _build(root, "scen", tmp_path)
+    benchmarks = tmp_path / "benchmarks"
+    trace = _multi_traces_file(tmp_path, ["a" * 32, "b" * 32])
+    _benchmark_with_trace(benchmarks, "swe-bench", trace)
+    seen: list[list[str]] = []
+
+    def fake_run(spec, *, timeout_seconds=None):  # noqa: ANN001, ANN202
+        seen.append(spec.command)
+        return RealSandboxResult(spec=spec, returncode=0, seconds=1.2, stdout="REAL OUTPUT")
+
+    monkeypatch.setattr(side_by_side, "run_real_sandbox", fake_run)
+
+    result = runner.invoke(
+        app,
+        [
+            "bench",
+            "side-by-side",
+            "swe-bench",
+            "--model",
+            "scen",
+            "--scenarios",
+            "2",
+            "--concurrency",
+            "2",
+            "--benchmarks",
+            str(benchmarks),
+            "--root",
+            str(root),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "adding --warm" in result.output
+    assert "2" in result.output
+    assert len(seen) == 2
+    assert all("--warm" in command for command in seen)
+    assert all("--cache" in command for command in seen)
+    assert any(command[command.index("--trace") + 1] == "0" for command in seen)
+    assert any(command[command.index("--trace") + 1] == "1" for command in seen)
+
+
+def test_bench_side_by_side_forwards_trace_pool_on_full_corpus_fallback(
+    patched_provider: object, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # When the world side outgrows the held-out pool and switches to the full corpus, the real
+    # runner must be told (--trace-pool all) so it resolves the SAME index against the full corpus.
+    import wmh.bench.side_by_side as side_by_side
+    from wmh.bench.side_by_side import RealSandboxResult
+
+    root = tmp_path / ".wmh"
+    _build(root, "scen", tmp_path)
+    benchmarks = tmp_path / "benchmarks"
+    # "a" is held out at split 0.7; "c" is train -> 1 held-out, 2 total. Two scenarios from trace 0
+    # exceed the held-out pool but fit the full corpus, triggering the fallback.
+    trace = _multi_traces_file(tmp_path, ["a" * 32, "c" * 32])
+    _benchmark_with_trace(benchmarks, "swe-bench", trace)
+    seen: list[list[str]] = []
+
+    def fake_run(spec, *, timeout_seconds=None):  # noqa: ANN001, ANN202
+        seen.append(spec.command)
+        return RealSandboxResult(spec=spec, returncode=0, seconds=1.0, stdout="REAL OUTPUT")
+
+    monkeypatch.setattr(side_by_side, "run_real_sandbox", fake_run)
+
+    result = runner.invoke(
+        app,
+        ["bench", "side-by-side", "swe-bench", "--model", "scen", "--trace", "0",
+         "--scenarios", "2", "--concurrency", "2", "--benchmarks", str(benchmarks),
+         "--root", str(root)],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "using all 2 traces instead" in result.output
+    assert len(seen) == 2
+    assert all("--trace-pool" in command for command in seen)
+    assert all(command[command.index("--trace-pool") + 1] == "all" for command in seen)
+
+
+def test_bench_side_by_side_rejects_zero_concurrency(
+    patched_provider: object, tmp_path: Path
+) -> None:
+    # An explicit --concurrency 0 must be rejected, not silently treated as unset.
+    root = tmp_path / ".wmh"
+    _build(root, "scen", tmp_path)
+    benchmarks = tmp_path / "benchmarks"
+    _benchmark(benchmarks, "swe-bench", tmp_path)
+    result = runner.invoke(
+        app,
+        ["bench", "side-by-side", "swe-bench", "--model", "scen", "--concurrency", "0",
+         "--benchmarks", str(benchmarks), "--root", str(root)],
+    )
+    assert result.exit_code != 0
+    assert "at least 1" in result.output
 
 
 def test_bench_scenario_unknown_benchmark_is_clean_error(tmp_path) -> None:  # noqa: ANN001

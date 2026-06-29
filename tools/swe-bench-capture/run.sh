@@ -3,7 +3,8 @@
 # environment (build from scratch on native x86_64, else pull the prebuilt image) and run the
 # recorded scenario, streaming all stdout. One command.
 #
-#   tools/swe-bench-capture/run.sh [--trace N] [--mode build|pull|auto] [--warm] [--cache] [--keep-image] [...]
+#   tools/swe-bench-capture/run.sh [--trace N] [--scenarios N] [--concurrency N]
+#                                    [--mode build|pull|auto] [--warm] [--cache] [...]
 #
 # The whole thing — Python venv creation, `swebench` install, the Docker standup (a from-scratch
 # conda/pip build on x86_64, or a multi-GB prebuilt-image pull under emulation), and the recorded
@@ -14,6 +15,10 @@
 # skips. Re-runs reuse the venv; pass --warm (optionally with --cache) to reuse existing images /
 # build layers for a faster repeat run. After the run the stood-up image(s) are wound down in the
 # background (multi-GB; a cold run rebuilds them) — pass --keep-image to keep them.
+# For multi-scenario runs, run_real_scenario.py streams each child runner with a trace prefix and
+# forces --warm --cache to avoid concurrent runners deleting Docker images from under each other.
+# Docker Desktop / remote daemons can lag the local CLI API; pin a compatible API unless the user
+# deliberately overrides it.
 set -euo pipefail
 cd "$(dirname "$0")"
 
@@ -26,5 +31,6 @@ if ! .venv/bin/python -c 'import swebench' >/dev/null 2>&1; then
 fi
 
 export AWS_REGION="${AWS_REGION:-us-east-1}" AWS_REGION_NAME="${AWS_REGION_NAME:-us-east-1}"
+export DOCKER_API_VERSION="${DOCKER_API_VERSION:-1.41}"
 echo "=== running the real swe-bench scenario (stand up env + exec) ==="
 exec .venv/bin/python run_real_scenario.py "$@"

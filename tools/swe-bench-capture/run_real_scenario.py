@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run ONE real SWE-bench scenario against the real Docker sandbox — BUILT FROM SCRATCH — + timing.
+"""Run real SWE-bench scenario(s) against the real Docker sandbox, with timing.
 
 The **real-environment** half of the scenario comparison. `wmh bench scenario swe-bench --trace N`
 reconstructs a held-out scenario with the world model (no container, just LLM calls); this runs the
@@ -17,8 +17,9 @@ for a faster repeat run.
 Needs the swebench `.venv` from this directory's README (it imports `swebench` to get the official
 Dockerfiles + setup scripts) and a running local Docker daemon. It never imports `wmh`; it reads the
 committed `examples/swe-bench.otel.jsonl` and re-implements the harness's deterministic blake2b
-held-out split inline so `--trace N` selects the SAME scenario the world-model side does (default 0;
-pass -1 for the simplest = fewest commands).
+held-out split inline so `--trace N` selects the SAME scenario the world-model side does. If a demo
+batch is larger than the held-out pool but fits in the full corpus, it switches both sides to the
+full corpus so 8-way demos can run from the same trace indexes.
 
 By default the stood-up image(s) are wound down in the background after the run (they are multi-GB
 and a cold run re-creates them); pass `--keep-image` to keep them.
@@ -27,16 +28,21 @@ Usage (from tools/swe-bench-capture/, in the swebench venv):
     .venv/bin/python run_real_scenario.py                          # trace 0, truly cold, then clean up
     .venv/bin/python run_real_scenario.py --warm --cache           # reuse existing image/layers
     .venv/bin/python run_real_scenario.py --trace 2 --keep-image   # a specific trace, keep the image
+    .venv/bin/python run_real_scenario.py --trace 0 --scenarios 8 --concurrency 8
 """
 
 from __future__ import annotations
 
 import argparse
+import concurrent.futures as cf
 import hashlib
 import json
+import os
 import platform
 import subprocess
+import sys
 import tempfile
+import threading
 import time
 import uuid
 from pathlib import Path
@@ -50,16 +56,23 @@ def _attr_map(span: dict[str, Any]) -> dict[str, str]:
 
 
 def _load_traces(corpus: Path) -> "list[dict[str, Any]]":
-    """Group the OTel spans into ordered traces: [{trace_id, instance_id, commands:[...]}]."""
+    """Group the OTel spans into ordered traces: [{trace_id, instance_id, commands:[...]}].
+
+    Traces are ordered by their earliest span's (startTimeUnixNano, spanId) — IDENTICAL to the wmh
+    adapter (wmh/ingest/otel_genai.py), NOT by first appearance in the file. `--trace N` must select
+    the SAME scenario index on both sides; ordering by file position would silently diverge from the
+    world-model side whenever the corpus is not already start-time sorted.
+    """
     spans = [json.loads(line) for line in corpus.read_text(encoding="utf-8").splitlines() if line]
-    order: list[str] = []
     by_trace: dict[str, list[dict[str, Any]]] = {}
     for span in spans:
-        tid = span["traceId"]
-        if tid not in by_trace:
-            by_trace[tid] = []
-            order.append(tid)
-        by_trace[tid].append(span)
+        by_trace.setdefault(span["traceId"], []).append(span)
+
+    def _span_key(span: dict[str, Any]) -> tuple[int, str]:
+        return (int(span.get("startTimeUnixNano") or 0), str(span.get("spanId") or ""))
+
+    # Earliest span per trace = its sort key; matches otel_genai's group[0] inter-trace ordering.
+    order = sorted(by_trace, key=lambda tid: _span_key(min(by_trace[tid], key=_span_key)))
 
     traces: list[dict[str, Any]] = []
     for tid in order:
@@ -86,7 +99,7 @@ def _holdout(traces: list[dict[str, Any]], train_split: float) -> list[dict[str,
         fraction = int.from_bytes(digest, "big") / 2**64
         if fraction >= train_split:
             held.append(trace)
-    return held or traces  # tiny corpora: no held-out -> fall back to all (matches the wmh side)
+    return held
 
 
 def _docker_build(
@@ -200,12 +213,201 @@ def _default_mode() -> str:
     return "build" if platform.machine().lower() in ("x86_64", "amd64") else "pull"
 
 
+def _select_traces(
+    pool: list[dict[str, Any]], trace_index: int, scenarios: int, *, pool_name: str
+) -> list[tuple[int, dict[str, Any]]]:
+    """Select traces by the same semantics as the world-model side."""
+    if scenarios < 1:
+        raise SystemExit("--scenarios must be at least 1")
+    if trace_index == -1:
+        selected = sorted(enumerate(pool), key=lambda item: len(item[1]["commands"]))[:scenarios]
+    elif 0 <= trace_index < len(pool):
+        end = trace_index + scenarios
+        if end > len(pool):
+            raise SystemExit(
+                f"--trace {trace_index} with --scenarios {scenarios} exceeds "
+                f"{len(pool)} {pool_name} trace(s)"
+            )
+        selected = [(i, pool[i]) for i in range(trace_index, end)]
+    else:
+        raise SystemExit(f"--trace {trace_index} out of range; {len(pool)} {pool_name} trace(s)")
+    if len(selected) < scenarios:
+        raise SystemExit(
+            f"requested {scenarios} scenario(s), but only {len(selected)} {pool_name} trace(s) exist"
+        )
+    return selected
+
+
+def _run_many(
+    args: argparse.Namespace, selected: list[tuple[int, dict[str, Any]]], *, pool_name: str
+) -> int:
+    """Run several single-scenario invocations concurrently and summarize their timings."""
+    # `args.concurrency or args.scenarios` would treat an explicit --concurrency 0 as unset; reject
+    # it before defaulting.
+    if args.concurrency is not None and args.concurrency < 1:
+        raise SystemExit("--concurrency must be at least 1")
+    workers = args.concurrency or args.scenarios
+    warm = args.warm
+    cache = args.cache
+    if not warm or not cache:
+        # A cold single run purges the whole swebench image family. Running that concurrently would
+        # make children delete images from under each other, so batch mode uses warm cached semantics.
+        warm = True
+        cache = True
+        print(
+            "=== multi-scenario run: forcing --warm --cache to avoid concurrent image purges ==="
+        )
+
+    def child_cmd(trace_i: int) -> list[str]:
+        cmd = [
+            sys.executable,
+            str(Path(__file__).resolve()),
+            "--corpus",
+            str(args.corpus),
+            "--trace",
+            str(trace_i),
+            "--trace-pool",
+            pool_name,
+            "--train-split",
+            str(args.train_split),
+            "--dataset",
+            str(args.dataset),
+            "--mode",
+            str(args.mode),
+            "--exec-timeout",
+            str(args.exec_timeout),
+        ]
+        if warm:
+            cmd.append("--warm")
+        if cache:
+            cmd.append("--cache")
+        if args.keep_image:
+            cmd.append("--keep-image")
+        return cmd
+
+    print_lock = threading.Lock()
+
+    def stream(pipe, prefix: str) -> None:  # noqa: ANN001 - subprocess pipe object
+        try:
+            for line in pipe:
+                with print_lock:
+                    print(f"{prefix}{line}", end="", flush=True)
+        finally:
+            pipe.close()
+
+    def run_child(item: tuple[int, dict[str, Any]]) -> dict[str, Any]:
+        trace_i, trace = item
+        start = time.monotonic()
+        proc = subprocess.Popen(
+            child_cmd(trace_i),
+            cwd=Path(__file__).resolve().parent,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            bufsize=1,
+        )
+        stdout_thread = threading.Thread(
+            target=stream, args=(proc.stdout, f"[trace {trace_i} out] "), daemon=True
+        )
+        stderr_thread = threading.Thread(
+            target=stream, args=(proc.stderr, f"[trace {trace_i} err] "), daemon=True
+        )
+        stdout_thread.start()
+        stderr_thread.start()
+        returncode = proc.wait()
+        stdout_thread.join()
+        stderr_thread.join()
+        seconds = time.monotonic() - start
+        return {
+            "trace_index": trace_i,
+            "trace_id": trace["trace_id"],
+            "instance_id": trace["instance_id"],
+            "commands": len(trace["commands"]),
+            "returncode": returncode,
+            "seconds": seconds,
+        }
+
+    print(
+        f"REAL sandbox batch: {len(selected)} SWE-bench scenario(s) from {pool_name}, "
+        f"concurrency={workers}\n"
+    )
+    batch_start = time.monotonic()
+    results: list[dict[str, Any]] = []
+    with cf.ThreadPoolExecutor(max_workers=workers) as ex:
+        futures = {ex.submit(run_child, item): item for item in selected}
+        for fut in cf.as_completed(futures):
+            trace_i, trace = futures[fut]
+            try:
+                result = fut.result()
+            except Exception as exc:  # noqa: BLE001 - record a failed child, keep the batch going
+                # e.g. the child failed to even spawn (bad interpreter, fd exhaustion). Record it as
+                # a failure rather than aborting the batch and orphaning sibling children.
+                result = {
+                    "trace_index": trace_i,
+                    "trace_id": trace["trace_id"],
+                    "instance_id": trace["instance_id"],
+                    "commands": len(trace["commands"]),
+                    "returncode": 1,
+                    "seconds": 0.0,
+                }
+                print(f"[done] trace {trace_i} {trace['instance_id']}: failed to run: {exc}")
+                results.append(result)
+                continue
+            results.append(result)
+            status = "ok" if result["returncode"] == 0 else f"exit {result['returncode']}"
+            print(
+                f"[done] trace {result['trace_index']} {result['instance_id']} "
+                f"({result['commands']} commands): {status}, {result['seconds']:.1f}s"
+            )
+
+    batch_wall = time.monotonic() - batch_start
+    ok = sum(1 for r in results if r["returncode"] == 0)
+    work = sum(float(r["seconds"]) for r in results)
+    print(
+        f"\ndone (REAL sandbox batch): {ok}/{len(results)} ok, "
+        f"batch wall {batch_wall:.1f}s, summed runner wall {work:.1f}s"
+    )
+    for result in sorted(results, key=lambda r: r["trace_index"]):
+        status = "ok" if result["returncode"] == 0 else f"exit {result['returncode']}"
+        print(
+            f"  trace {result['trace_index']}: {result['instance_id']} "
+            f"{result['commands']} commands, {status}, {result['seconds']:.1f}s"
+        )
+        if result["returncode"] != 0:
+            print(f"    see streamed trace {result['trace_index']} output above")
+    return 0 if ok == len(results) else 1
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--corpus", default=str(_DEFAULT_CORPUS), help="swe-bench OTel JSONL corpus.")
     parser.add_argument(
         "--trace", type=int, default=0,
-        help="Held-out trace to replay (default: 0). Pass -1 for the simplest = fewest commands.",
+        help=(
+            "Trace index to replay (default: 0). Uses held-out indexes when possible; switches to "
+            "all traces for larger demo batches. Pass -1 for the simplest = fewest commands."
+        ),
+    )
+    parser.add_argument(
+        "--scenarios",
+        type=int,
+        default=1,
+        help=(
+            "Number of scenarios to run. With --trace N, runs N consecutive indexes; with "
+            "--trace -1, runs the simplest N traces."
+        ),
+    )
+    parser.add_argument(
+        "--concurrency",
+        type=int,
+        default=None,
+        help="Concurrent scenario runners. Default: --scenarios.",
+    )
+    parser.add_argument(
+        "--trace-pool",
+        choices=("auto", "held-out", "all"),
+        default="auto",
+        help=argparse.SUPPRESS,
     )
     parser.add_argument("--train-split", type=float, default=0.7, help="Train/holdout ratio.")
     parser.add_argument(
@@ -245,18 +447,35 @@ def main() -> None:
         ),
     )
     args = parser.parse_args()
+    # Docker Desktop/remote daemons can support an older API than the locally installed Docker CLI.
+    # Pin the client API unless the caller deliberately chose a different value.
+    os.environ.setdefault("DOCKER_API_VERSION", "1.41")
 
     traces = _load_traces(Path(args.corpus))
-    pool = _holdout(traces, args.train_split)
+    heldout = _holdout(traces, args.train_split)
+    if args.trace_pool == "all":
+        pool = traces
+        pool_name = "all"
+    elif args.trace_pool == "held-out":
+        pool = heldout
+        pool_name = "held-out"
+    else:
+        pool = heldout or traces
+        pool_name = "held-out" if heldout else "all"
+    requested_end = args.trace + args.scenarios if args.trace >= 0 else args.scenarios
+    if args.trace_pool == "auto" and heldout and requested_end > len(pool) and requested_end <= len(traces):
+        print(
+            f"=== requested {args.scenarios} scenario(s) from trace {args.trace}, but only "
+            f"{len(pool)} held-out traces exist; using all {len(traces)} traces instead ==="
+        )
+        pool = traces
+        pool_name = "all"
     if not pool:
         raise SystemExit(f"no traces in {args.corpus}; nothing to run")
-    if args.trace == -1:
-        # The simplest scenario — fewest recorded commands (matches the wmh side's `min` default).
-        trace = min(pool, key=lambda t: len(t["commands"]))
-    elif 0 <= args.trace < len(pool):
-        trace = pool[args.trace]
-    else:
-        raise SystemExit(f"--trace {args.trace} out of range; {len(pool)} held-out trace(s)")
+    selected = _select_traces(pool, args.trace, args.scenarios, pool_name=pool_name)
+    if args.scenarios > 1:
+        raise SystemExit(_run_many(args, selected, pool_name=pool_name))
+    trace = selected[0][1]
     instance_id, commands = trace["instance_id"], trace["commands"]
     if not instance_id:
         raise SystemExit(f"trace {trace['trace_id'][:8]} has no instance_id in metadata")
