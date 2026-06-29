@@ -77,16 +77,21 @@ It draws batch wall-clock vs. concurrency (log-log, mean±std error bars), the w
 ideal-linear, and — when the report has both sides — the time differential T_real/T_world. Pass
 several report JSONs to overlay them (e.g. tau-bench vs. swe-bench).
 
-### Measured (tau-bench, Haiku 4.5, N=4, `--side world`)
+### Measured (tau-bench, Haiku 4.5, N=16, `--side world`)
 
 | W | batch wall | speedup | efficiency |
 |---|-----------|---------|-----------|
-| 1 | 66.5s | 1.00× | 100% |
-| 2 | 37.1s | 1.79× | 90% |
-| 4 | 24.9s | 2.67× | 67% |
+| 1 | 135.5s | 1.00× | 100% |
+| 2 | 70.6s | 1.92× | 96% |
+| 4 | 38.3s | 3.53× | 88% |
+| 8 | 20.6s | 6.59× | 82% |
+| 16 | 14.0s | **9.70×** | 61% |
 
-Wall-clock falls with concurrency; efficiency tapers as provider/network contention grows. Fidelity
-stays 100% and cost is flat across levels — concurrency buys latency, not accuracy or money.
+![Concurrency scaling law on tau-bench](./img/concurrency_scaling_tau_world.png)
+
+Wall-clock falls ~10× from W=1 to W=16; the speedup curve tracks ideal-linear early (96% efficiency
+at W=2) then bends away as provider/network contention grows (61% at W=16). Fidelity stays 100% and
+cost is flat across levels — concurrency buys latency, not accuracy or money.
 
 ## The tau-bench caveat (and why swe-bench is the punchline)
 

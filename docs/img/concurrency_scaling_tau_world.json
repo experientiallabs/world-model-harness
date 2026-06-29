@@ -1,0 +1,85 @@
+{
+  "name": "concurrency-scaling",
+  "benchmark": "tau-bench",
+  "side": "world",
+  "scenarios": 16,
+  "levels": [
+    1,
+    2,
+    4,
+    8,
+    16
+  ],
+  "points": [
+    {
+      "level": 1,
+      "trials": 1,
+      "world_wall_mean": 135.46568883303553,
+      "world_wall_std": 0.0,
+      "real_wall_mean": 0.0,
+      "real_wall_std": 0.0,
+      "world_fidelity_mean": 1.0,
+      "world_tokens_mean": 233873.0,
+      "world_cost_mean": 0.30445300000000003,
+      "speedup": 1.0,
+      "efficiency": 1.0,
+      "differential": 0.0
+    },
+    {
+      "level": 2,
+      "trials": 1,
+      "world_wall_mean": 70.61744225025177,
+      "world_wall_std": 0.0,
+      "real_wall_mean": 0.0,
+      "real_wall_std": 0.0,
+      "world_fidelity_mean": 1.0,
+      "world_tokens_mean": 233999.0,
+      "world_cost_mean": 0.30508300000000005,
+      "speedup": 1.9183035312009273,
+      "efficiency": 0.9591517656004637,
+      "differential": 0.0
+    },
+    {
+      "level": 4,
+      "trials": 1,
+      "world_wall_mean": 38.34313979186118,
+      "world_wall_std": 0.0,
+      "real_wall_mean": 0.0,
+      "real_wall_std": 0.0,
+      "world_fidelity_mean": 1.0,
+      "world_tokens_mean": 233941.0,
+      "world_cost_mean": 0.304793,
+      "speedup": 3.532983724556377,
+      "efficiency": 0.8832459311390942,
+      "differential": 0.0
+    },
+    {
+      "level": 8,
+      "trials": 1,
+      "world_wall_mean": 20.56005608337,
+      "world_wall_std": 0.0,
+      "real_wall_mean": 0.0,
+      "real_wall_std": 0.0,
+      "world_fidelity_mean": 1.0,
+      "world_tokens_mean": 234050.0,
+      "world_cost_mean": 0.305338,
+      "speedup": 6.588780122181035,
+      "efficiency": 0.8235975152726294,
+      "differential": 0.0
+    },
+    {
+      "level": 16,
+      "trials": 1,
+      "world_wall_mean": 13.97212937520817,
+      "world_wall_std": 0.0,
+      "real_wall_mean": 0.0,
+      "real_wall_std": 0.0,
+      "world_fidelity_mean": 1.0,
+      "world_tokens_mean": 233785.0,
+      "world_cost_mean": 0.304013,
+      "speedup": 9.695421878457752,
+      "efficiency": 0.6059638674036095,
+      "differential": 0.0
+    }
+  ]
+}
