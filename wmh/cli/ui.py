@@ -297,7 +297,7 @@ class RichBuildReporter:
         self._stage(f"indexed {steps} steps into the replay buffer")
 
     def optimize_start(self, budget: int) -> None:
-        self._stage(f"optimizing env prompt with GEPA (budget {budget} rollouts)")
+        self._stage(f"optimizing env prompt with GEPA (budget {budget} metric calls)")
         if self._tty and budget > 0:
             self._progress = Progress(
                 SpinnerColumn(),
@@ -311,7 +311,7 @@ class RichBuildReporter:
             )
             self._progress.start()
             self._task_id = self._progress.add_task(
-                "GEPA rollouts", total=budget, score="score n/a"
+                "GEPA metric calls", total=budget, score="score n/a"
             )
 
     def rollout(self, done: int, budget: int, score: float | None) -> None:
@@ -321,7 +321,10 @@ class RichBuildReporter:
         elif not self._tty:
             # Non-TTY: emit a sparse heartbeat so long runs still show life without flooding logs.
             if done == 1 or done % 10 == 0 or done >= budget:
-                self._console.print(f"  rollout {done}/{budget} ({label})")
+                progress = (
+                    f"{done}/{budget}" if done <= budget else f"{done} (budget target {budget})"
+                )
+                self._console.print(f"  GEPA metric call {progress} ({label})")
 
     def optimize_done(self, held_out_accuracy: float, frontier_size: int, rollouts: int) -> None:
         if self._progress is not None:
