@@ -1,10 +1,18 @@
-# Research directions (not yet run)
+# Research directions
 
 A backlog of optimization experiments for the GEPA research harness
 ([`gepa_research.md`](./gepa_research.md)). Each is "one new `Ablation` class" away — the framework
 (`run_ablation`, seed aggregation, `RubricJudge` scoring) is already in place. Adding one means
 writing a `conditions()` list and a `run(condition, seed)` that wires the knob, then a `scripts/`
 runner mirroring `scripts/run_seed_stability.py`.
+
+## Implemented
+
+- **Seed stability** (experiment 1) — how reproducible GEPA's evolved prompt is across seeds.
+  `SeedStabilityAblation`; runner `scripts/run_seed_stability.py`.
+- **Trace scaling law** — how reconstruction fidelity scales with the number of *training* traces,
+  against a fixed held-out test set. `TraceScalingAblation`; runner `scripts/run_trace_scaling.py`;
+  full writeup in [`trace_scaling.md`](./trace_scaling.md).
 
 ## Parked: train-vs-eval temperature
 
