@@ -33,6 +33,9 @@ def main() -> None:
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--embed-dim", type=int, default=512)
     ap.add_argument("--no-rag", action="store_true", help="Disable retrieval (zero-shot replay).")
+    # AgentWorld is a reasoning model: it emits a long hidden think-trace before the JSON. The eval
+    # default (1024) truncates mid-think -> empty observation, so give it generous room.
+    ap.add_argument("--max-tokens", type=int, default=16384)
     ap.add_argument("--out", type=Path, required=True)
     args = ap.parse_args()
 
@@ -59,6 +62,7 @@ def main() -> None:
         train_split=args.train_split,
         sample_turns="all",
         seed=args.seed,
+        max_tokens=args.max_tokens,
     )
     for name, rep in report.per_file.items():
         print(f"  {name:28} {rep.summary()}")

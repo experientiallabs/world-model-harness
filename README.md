@@ -80,41 +80,52 @@ One interface, four backends, verified on startup. Credentials are read from the
 recorded observation for each held-out `(state, action)`, scored 0–1 by a reference-grounded
 5-dimension LLM judge (format / factuality / consistency / realism / quality) with a
 deterministic-vs-volatile content split. Run with `wmh eval` (teacher-forced replay; the model never
-sees the observation it's scored against). Backend: Bedrock **Opus 4.8**, top-k=5 retrieval, 70/30
-split, seed 0.
+sees the observation it's scored against). Judge: Bedrock **Opus 4.8** for every row (so the numbers
+are comparable). Top-k=5 retrieval, 70/30 split, seed 0, all held-out turns scored.
 
-Measured on the **tau2-bench** corpus (66 traces / 433 steps captured from Sierra's real tau²-bench —
-telecom + airline + retail), comparing the un-evolved base prompt to a GEPA-optimized one
-(`world-models/tau-telecom/`, 317 reflection rollouts):
+We sweep **five baselines across three real-benchmark corpora** (tau2-bench, terminal-tasks,
+swe-bench — captured from the upstream benchmarks). Baselines 1–4 are Opus 4.8 prompted as the
+environment; #5 is **Qwen-AgentWorld-35B-A3B**, a *trained* world model served on an H100, scored by
+the same judge.
 
-| Prompt | held-out steps | fidelity | error-flag acc |
+![Open-loop fidelity: 5 baselines × 3 corpora](docs/img/baseline_grid.png)
+
+| Baseline | tau2-bench | terminal-tasks | swe-bench |
 |---|---|---|---|
-| Base | 84 | ~0.74 ± 0.35 | ~0.80 |
-| **GEPA-optimized** | 84 | **~0.86 ± 0.20** | **~1.00** |
+| Opus: base | 0.672 ± 0.179 | 0.645 ± 0.246 | 0.817 ± 0.199 |
+| Opus: base + RAG | 0.877 ± 0.176 | 0.704 ± 0.244 | 0.813 ± 0.208 |
+| Opus: GEPA | 0.665 ± 0.180 | 0.645 ± 0.237 | 0.805 ± 0.208 |
+| **Opus: GEPA + RAG** | 0.877 ± 0.176 | 0.692 ± 0.240 | 0.809 ± 0.211 |
+| **AgentWorld + RAG** | _(pending)_ | _(pending)_ | _(pending)_ |
 
-GEPA lifts every dimension and tightens variance (optimized prompt):
+_Held-out steps: tau2-bench 84, terminal-tasks 48, swe-bench 52. Full per-step reports under
+`benchmarks/results/grid-*.json`._
 
-| | format | factuality | consistency | realism | quality |
-|---|---|---|---|---|---|
-| Base | 0.82 | 0.65 | 0.75 | 0.88 | 0.68 |
-| Optimized | 0.99 | 0.72 | 0.88 | 0.97 | 0.76 |
-| Δ | +0.17 | +0.08 | +0.13 | +0.09 | +0.08 |
+**What the grid shows:**
 
-Per-step reports are committed at `benchmarks/results/tau2-{base,optimized}.json`; the LLM judge is
-non-deterministic, so two runs gave base 0.755/0.723 and optimized 0.864/0.854 — a consistent
-**+0.11 to +0.13** lift.
+1. **Retrieval (RAG) is the dominant lever — and it's corpus-dependent.** On tau2-bench, RAG lifts
+   fidelity **+0.205** (0.67 → 0.88): the structured API responses benefit enormously from retrieving
+   an analogous response's schema. On terminal-tasks it's a modest +0.06, and on swe-bench ~0 — the
+   base prompt already reproduces shell/patch output at 0.81 without examples.
 
-**Reading these:** the model reproduces response *shape* and success/error status near-perfectly
-(format 0.99, error-flag 1.00); the ceiling is **factuality (0.72)** — predicting concrete values the
-environment alone knows (a reservation's exact flights). GEPA gives a clean **+0.11** lift, but the
-signal only became trustworthy once the corpus was large enough: on an earlier 12-trace corpus GEPA
-selected candidates on a ~7-step validation set (noise) and showed no reliable lift — a measurement
-artifact, not an optimizer failure.
+2. **GEPA gives ≈0 lift over the *current* base — by design, not failure.** We re-ran GEPA
+   optimization on the improved base for all three corpora; for tau2-bench and swe-bench the evolved
+   prompt came back **byte-identical to the base** (GEPA explored 50+ rollouts and kept the seed).
+   The reason: the base prompt was hand-tuned to encode the one rule GEPA had previously discovered
+   (a lookup of a record that exists returns the populated record, not "not found"). Once that rule
+   is in the base, there is nothing left to specialize. **GEPA's historical "+0.11" was real against
+   the *old* base — it was absorbed into the base prompt, which is the outcome we wanted.** GEPA
+   remains the mechanism for specializing *from* a good starting point; it just has no gap to close
+   on these corpora today.
 
-> Numbers are one corpus / one seed on an 84-step holdout (±0.19–0.34) — directional, not a
-> leaderboard. Retrieval uses the offline lexical embedder (semantic untested). The largest
-> factuality lever is **state grounding** — see the design note below.
-> **Reproduce them** (exact `wmh eval` commands + caveats): [`docs/benchmark_results.md`](./docs/benchmark_results.md).
+3. **The factuality ceiling persists** (the dominant error mode): the model reproduces response
+   *shape* and success/error status near-perfectly, but cannot know concrete values the environment
+   alone holds (exact prices, ids, flights). The largest lever here is **state grounding** — see the
+   design note below.
+
+> Numbers are one seed on small held-out splits (per-step std ±0.18–0.25) — directional, not a
+> leaderboard. Retrieval uses the offline lexical embedder (semantic untested).
+> **Reproduce them** (exact commands + the 5-baseline grid runner): [`docs/benchmark_results.md`](./docs/benchmark_results.md).
 
 ### Design note: the world model's internal database
 

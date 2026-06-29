@@ -46,13 +46,15 @@ def evaluate_files(
     top_k: int = 5,
     sample_turns: str = "all",
     seed: int = 0,
+    max_tokens: int = 1024,
     adapter_name: str = "otel-genai",
 ) -> EvalReport:
     """Replay-score each trace file's held-out split. `embedder=None` -> zero-shot (no retrieval).
 
     Each file is split deterministically; tiny corpora with no held-out trace fall back to scoring
     every trace. RAG, when enabled, retrieves from that file's own train split only (leak-free).
-    `sample_turns`/`seed` are forwarded to `replay` (see its docstring).
+    `sample_turns`/`seed`/`max_tokens` are forwarded to `replay` (see its docstring); raise
+    `max_tokens` for a reasoning world model whose think-trace precedes the JSON observation.
     """
     adapter = get_adapter(adapter_name)
     per_file: dict[str, ReplayReport] = {}
@@ -76,6 +78,7 @@ def evaluate_files(
             top_k=top_k,
             sample_turns=sample_turns,
             seed=seed,
+            max_tokens=max_tokens,
         )
 
     # Step-weighted aggregate over every scored step across files.

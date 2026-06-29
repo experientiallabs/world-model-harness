@@ -81,6 +81,7 @@ def predict_observation(
     action: Action,
     demos: list[Step],
     history: list[Step] | None = None,
+    max_tokens: int = 1024,
 ) -> Observation:
     """Predict the observation for (state, action) under `prompt`, using only a Provider.
 
@@ -92,10 +93,15 @@ def predict_observation(
     Rollouts run deterministically: the providers (Opus 4.8 / GPT 5.5) reject sampling params, so no
     temperature is forwarded. A temperature sweep is parked until a sampling-capable provider exists
     (see docs/research_directions.md).
+
+    `max_tokens` bounds the completion. The default 1024 suits a frontier model that emits the JSON
+    observation directly; a *reasoning* world model (e.g. Qwen-AgentWorld) spends most of its budget
+    on a hidden think-trace before the JSON, so it needs a much larger cap or the observation is
+    truncated to an empty string.
     """
     system, user = build_env_prompt(prompt, task, state, action, history=history, demos=demos)
     completion = provider.complete(
-        system, [Message(role="user", content=user)], temperature=0.0, max_tokens=1024
+        system, [Message(role="user", content=user)], temperature=0.0, max_tokens=max_tokens
     )
     return parse_observation(completion.text)
 

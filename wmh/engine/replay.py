@@ -79,6 +79,7 @@ def replay(
     top_k: int = 5,
     sample_turns: str = "all",
     seed: int = 0,
+    max_tokens: int = 1024,
 ) -> ReplayReport:
     """Replay held-out steps, scoring predicted vs. actual observations.
 
@@ -86,6 +87,8 @@ def replay(
       (Qwen-AgentWorld's 5-turn protocol) using `seed` for reproducible turn selection.
     - `retriever` + `train` enable leak-free RAG (demos from the train corpus, never the own trace);
       omit either for zero-shot.
+    - `max_tokens` bounds each world-model completion; raise it well above the default for a
+      reasoning world model whose think-trace precedes the JSON observation (see `predict_observation`).
 
     Each step is scored once (the world model is queried deterministically). `score_std` is the
     spread of per-step scores *across steps*, not across repeated samples — sampling the world model
@@ -100,7 +103,9 @@ def replay(
             step = trace.steps[step_index]
             history = trace.steps[:step_index]
             results.append(
-                _score_step(prompt, trace.trace_id, step, provider, judge, demos, history)
+                _score_step(
+                    prompt, trace.trace_id, step, provider, judge, demos, history, max_tokens
+                )
             )
     return _aggregate(results)
 
@@ -123,12 +128,18 @@ def _score_step(
     judge: Judge,
     demos: DemoRetriever,
     history: list[Step],
+    max_tokens: int = 1024,
 ) -> StepResult:
     """Predict the observation for one step and score it against the recorded observation."""
     predicted = predict_observation(
-        provider, prompt, step.task, step.state_before, step.action,
+        provider,
+        prompt,
+        step.task,
+        step.state_before,
+        step.action,
         demos=demos.demos_for(trace_id, step),
         history=history,
+        max_tokens=max_tokens,
     )
     verdict = judge.score(predicted, step.observation, step)
     return StepResult(
