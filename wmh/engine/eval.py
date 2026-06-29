@@ -24,8 +24,7 @@ from wmh.retrieval import EmbeddingRetriever
 class EvalReport(BaseModel):
     """Per-file fidelity reports plus the step-weighted overall mean ± std.
 
-    This is the frozen contract the reporting/leaderboard layer consumes: `per_file` maps a trace
-    file's clean name to its `ReplayReport` (per-step `StepResult`s), and
+    `per_file` maps a trace file's clean name to its `ReplayReport` (per-step `StepResult`s), and
     `overall_fidelity`/`overall_std` are the step-weighted aggregates across files.
     """
 
