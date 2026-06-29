@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, TypedDict, cast
 
 from wmh.core.types import JsonValue
 from wmh.providers.base import (
+    DEFAULT_MAX_TOKENS,
     Completion,
     Message,
     ProviderConfig,
@@ -66,7 +67,7 @@ class BedrockProvider:
         messages: list[Message],
         *,
         temperature: float = 0.7,
-        max_tokens: int = 2048,
+        max_tokens: int = DEFAULT_MAX_TOKENS,
     ) -> Completion:
         # Claude 4.8 rejects sampling params, so temperature is intentionally not forwarded.
         body = {

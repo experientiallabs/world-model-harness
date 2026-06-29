@@ -21,7 +21,7 @@ class FakeProvider:
         messages: list[Message],
         *,
         temperature: float = 0.7,
-        max_tokens: int = 2048,
+        max_tokens: int = 8192,
     ) -> Completion:
         self.calls += 1
         return Completion(text='{"output": "predicted obs", "is_error": false}')
@@ -121,7 +121,7 @@ class MeteredProvider(FakeProvider):
         messages: list[Message],
         *,
         temperature: float = 0.7,
-        max_tokens: int = 2048,
+        max_tokens: int = 8192,
     ) -> Completion:
         self.calls += 1
         return Completion(

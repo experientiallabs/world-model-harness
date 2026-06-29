@@ -53,6 +53,9 @@ class Completion(BaseModel):
     usage: TokenUsage = Field(default_factory=TokenUsage)
 
 
+DEFAULT_MAX_TOKENS = 8192
+
+
 class VerifyResult(BaseModel):
     ok: bool
     kind: ProviderKind
@@ -101,7 +104,7 @@ class Provider(Protocol):
         messages: list[Message],
         *,
         temperature: float = 0.7,
-        max_tokens: int = 2048,
+        max_tokens: int = DEFAULT_MAX_TOKENS,
     ) -> Completion:
         """Generate a completion. Used by the world model, GEPA, the judge, and the demo agent."""
         ...

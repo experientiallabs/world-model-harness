@@ -21,7 +21,7 @@ class ScriptedProvider:
         messages: list[Message],
         *,
         temperature: float = 0.7,
-        max_tokens: int = 2048,
+        max_tokens: int = 8192,
     ) -> Completion:
         if "role-play an agent" in system:
             return Completion(text='{"name": "get_user", "arguments": {"id": "u1"}}')
