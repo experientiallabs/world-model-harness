@@ -13,9 +13,16 @@ Provider adapters (Braintrust, Phoenix/Arize, Langfuse, LangSmith) register when
 imported; their heavy SDKs are optional extras, imported lazily inside the adapter.
 """
 
-# Import for the registration side effect so `get_adapter(...)` works on package import.
+# Import for the registration side effect so `get_adapter(...)` works on package import. The
+# provider adapters are SDK-free (they parse exports as JSON and pull over httpx), so importing them
+# here is cheap and brings no heavy dependency — their optional extras only matter if a user drives
+# the provider's own SDK alongside `wmh ingest`.
+from wmh.ingest import braintrust as braintrust  # noqa: F401
+from wmh.ingest import langfuse as langfuse  # noqa: F401
+from wmh.ingest import langsmith as langsmith  # noqa: F401
 from wmh.ingest import messages as messages  # noqa: F401
 from wmh.ingest import otel_genai as otel_genai  # noqa: F401
+from wmh.ingest import phoenix as phoenix  # noqa: F401
 from wmh.ingest.adapter import (
     TraceAdapter,
     VendorPull,

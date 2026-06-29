@@ -16,9 +16,7 @@ def _trace() -> Trace:
         metadata={"benchmark": "demo", "gold": {"answer": "42"}},
         steps=[
             Step(
-                action=Action(
-                    kind=ActionKind.TOOL_CALL, name="get_user", arguments={"id": "u1"}
-                ),
+                action=Action(kind=ActionKind.TOOL_CALL, name="get_user", arguments={"id": "u1"}),
                 observation=Observation(content="found u1", is_error=False),
                 state_before=EnvState(structured={"cart": ["a"]}, scratchpad="logged in"),
                 task="look up u1",

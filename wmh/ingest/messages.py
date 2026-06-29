@@ -69,9 +69,9 @@ def _call_name_args(tc: JsonObject) -> tuple[str, str]:
     return name_s, args_s
 
 
-def _spans_for_conversation(messages: list[JsonValue], trace_id: str, metadata: JsonObject) -> list[
-    SpanRecord
-]:
+def _spans_for_conversation(
+    messages: list[JsonValue], trace_id: str, metadata: JsonObject
+) -> list[SpanRecord]:
     """Build ordered action/observation SpanRecords (GenAI vocab) for one conversation."""
     # Index tool results by tool_call_id; fall back to consumption in order for results lacking one.
     results_by_id: dict[str, str] = {}
@@ -119,9 +119,7 @@ def _spans_for_conversation(messages: list[JsonValue], trace_id: str, metadata: 
         if calls:
             for tc in calls:
                 name, args = _call_name_args(tc)
-                _emit(
-                    {"gen_ai.tool.name": name, "gen_ai.tool.call.arguments": args}, tool=False
-                )
+                _emit({"gen_ai.tool.name": name, "gen_ai.tool.call.arguments": args}, tool=False)
                 tcid = tc.get("id")
                 if isinstance(tcid, str) and tcid in results_by_id:
                     result = results_by_id[tcid]

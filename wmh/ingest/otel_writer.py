@@ -23,9 +23,9 @@ def _attr(key: str, value: str) -> JsonObject:
     return {"key": key, "value": {"stringValue": value}}
 
 
-def _action_attrs(step: Step, *, ordinal: int, task: str | None, metadata: JsonObject) -> list[
-    JsonValue
-]:
+def _action_attrs(
+    step: Step, *, ordinal: int, task: str | None, metadata: JsonObject
+) -> list[JsonValue]:
     attrs: list[JsonValue] = [_attr("gen_ai.operation.name", "chat")]
     action = step.action
     if action.kind == ActionKind.TOOL_CALL:
@@ -50,35 +50,39 @@ def trace_to_spans(trace: Trace) -> list[JsonObject]:
     task = trace.steps[0].task if trace.steps else None
     prefix = (trace.trace_id or "trace")[:12]
     for i, step in enumerate(trace.steps):
-        spans.append({
-            "traceId": trace.trace_id,
-            "spanId": f"{prefix}{i:06x}a",
-            "parentSpanId": "",
-            "name": "chat",
-            "startTimeUnixNano": i * 10,
-            "endTimeUnixNano": i * 10 + 1,
-            "status": {"code": "STATUS_CODE_OK"},
-            "attributes": _action_attrs(step, ordinal=i, task=task, metadata=trace.metadata),
-        })
+        spans.append(
+            {
+                "traceId": trace.trace_id,
+                "spanId": f"{prefix}{i:06x}a",
+                "parentSpanId": "",
+                "name": "chat",
+                "startTimeUnixNano": i * 10,
+                "endTimeUnixNano": i * 10 + 1,
+                "status": {"code": "STATUS_CODE_OK"},
+                "attributes": _action_attrs(step, ordinal=i, task=task, metadata=trace.metadata),
+            }
+        )
         # A final message turn (empty observation, message action) has nothing to pair; skip the
         # observation span so it round-trips as an unpaired action exactly as the normalizer emits.
         obs = step.observation
         if step.action.kind == ActionKind.MESSAGE and not obs.content and not obs.is_error:
             continue
-        spans.append({
-            "traceId": trace.trace_id,
-            "spanId": f"{prefix}{i:06x}b",
-            "parentSpanId": "",
-            "name": "execute_tool",
-            "startTimeUnixNano": i * 10 + 2,
-            "endTimeUnixNano": i * 10 + 3,
-            "status": {"code": "STATUS_CODE_ERROR" if obs.is_error else "STATUS_CODE_OK"},
-            "attributes": [
-                _attr("gen_ai.operation.name", "execute_tool"),
-                _attr("gen_ai.tool.name", step.action.name or "tool"),
-                _attr("gen_ai.tool.message", obs.content),
-            ],
-        })
+        spans.append(
+            {
+                "traceId": trace.trace_id,
+                "spanId": f"{prefix}{i:06x}b",
+                "parentSpanId": "",
+                "name": "execute_tool",
+                "startTimeUnixNano": i * 10 + 2,
+                "endTimeUnixNano": i * 10 + 3,
+                "status": {"code": "STATUS_CODE_ERROR" if obs.is_error else "STATUS_CODE_OK"},
+                "attributes": [
+                    _attr("gen_ai.operation.name", "execute_tool"),
+                    _attr("gen_ai.tool.name", step.action.name or "tool"),
+                    _attr("gen_ai.tool.message", obs.content),
+                ],
+            }
+        )
     return spans
 
 

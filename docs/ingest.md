@@ -1,0 +1,155 @@
+# Ingesting traces from anywhere
+
+The harness builds a world model from **recorded agent traces**. Ingestion is the front door: it
+turns traces from whatever you already have — an observability provider, an OTLP export, or a plain
+chat/tool-call log — into the normalized `wmh.core.types.Trace` shape, and writes them as OTel-GenAI
+span JSONL that `wmh build` and `wmh eval` consume directly.
+
+Everything plugs into **one interface** (`TraceAdapter`) and **one normalizer**
+(`wmh.ingest.normalize`), so adding a source is a thin adapter, never a rewrite.
+
+## Quickstart
+
+```bash
+wmh ingest list                                   # every registered source
+wmh ingest run --source <name> --file <export>  --out traces.otel.jsonl   # from a file export
+wmh ingest run --source <name> --pull --project <p> --out traces.otel.jsonl   # live pull (if supported)
+wmh build --file traces.otel.jsonl --name my-model                        # feed the pipeline
+```
+
+`--out` is plain OTel-GenAI span JSONL — the same format the bundled `examples/*.otel.jsonl` use —
+so ingestion output is interchangeable with any other corpus the harness reads.
+
+## Sources
+
+| `--source` | What it reads | File | Live pull |
+|---|---|---|---|
+| `otel-genai` | OTLP-JSON spans (OTel GenAI semconv) | ✅ | ✅ (generic OTLP query backend) |
+| `chat-json` | recorded OpenAI/LangChain-style chat + tool-call conversations | ✅ | — |
+| `phoenix` | Arize Phoenix / OpenInference spans | ✅ | provider-dependent |
+| `langfuse` | Langfuse trace + observation tree | ✅ | provider-dependent |
+| `langsmith` | LangSmith run tree | ✅ | provider-dependent |
+| `braintrust` | Braintrust span/log rows | ✅ | provider-dependent |
+
+Per-provider export instructions, payload shapes, and caveats:
+[Phoenix](./ingest.phoenix.md) · [Langfuse](./ingest.langfuse.md) ·
+[LangSmith](./ingest.langsmith.md) · [Braintrust](./ingest.braintrust.md). Runnable examples live in
+[`examples/ingest/`](../examples/ingest/).
+
+**File vs. pull.** Every adapter supports `--file` (an export you already have); `--pull` (live from
+the vendor API) is opt-in per adapter and errors with a clear "export to a file" message when a
+source hasn't implemented it. File ingestion needs **no** vendor SDK — the provider adapters parse
+the export as JSON. The optional `pip install 'world-model-harness[phoenix]'` (etc.) extras install a
+provider's own SDK only if you want to drive its export tooling yourself; nothing in `wmh` imports
+them.
+
+## The chat / tool-call converter (`chat-json`)
+
+If you don't use an observability vendor, the most universal trace is a list of chat messages with
+tool calls — the OpenAI Chat Completions shape (which LangChain, the Anthropic SDK, and most agent
+frameworks can emit). Drop it in a file and ingest it:
+
+```json
+{"messages": [
+  {"role": "user", "content": "what's the weather in Paris?"},
+  {"role": "assistant", "tool_calls": [{"id": "c1",
+     "function": {"name": "get_weather", "arguments": "{\"city\": \"Paris\"}"}}]},
+  {"role": "tool", "tool_call_id": "c1", "content": "18C and sunny"},
+  {"role": "assistant", "content": "It's 18C and sunny in Paris."}
+]}
+```
+
+```bash
+wmh ingest run --source chat-json --file conversation.json --out traces.otel.jsonl
+```
+
+Each assistant tool call becomes an Action paired with its `role:"tool"` result (the Observation);
+a trailing assistant message becomes a final message step. Accepts one conversation object, a JSON
+array of them, JSONL (one per line), or a bare message list. See `wmh/ingest/messages.py`.
+
+## The trace contract (what an adapter produces)
+
+A `Trace` is `{trace_id, steps, source, metadata}`. Each `Step` is one
+`(state_before, action) → observation`:
+
+- `action` — a tool call (`name` + `arguments`) or a free-text message.
+- `observation` — what the environment returned (`content`, `is_error`).
+- `state_before` — optional env-state snapshot (most provider traces leave it empty; open-loop
+  replay reconstructs state from action + history).
+- `task` — the originating instruction.
+
+`metadata` carries provenance and anything a source wants to thread through. Open-loop replay scores
+a predicted observation for `(state_before, action)` against the recorded one, so faithful `action`
+and `observation` are what matter most.
+
+## How the pieces fit
+
+```
+                                  ┌─ from_file(path)  ─┐
+  raw export / vendor API ──▶ adapter                  ├─▶ list[SpanRecord] ──▶ spans_to_traces ──▶ list[Trace]
+                                  └─ from_vendor(pull) ─┘        (wmh.ingest.normalize: the ONE normalizer)
+```
+
+- `wmh/ingest/adapter.py` — the `TraceAdapter` protocol + the registry (`register_adapter`,
+  `get_adapter`, `list_adapters`).
+- `wmh/ingest/base.py` — `BaseTraceAdapter`: file/JSONL loading + vendor plumbing, so a concrete
+  adapter only implements `spans_from_payload` (and optionally `_pull_payloads`).
+- `wmh/ingest/normalize.py` — the shared span→Trace core. Understands **both** the OTel GenAI
+  (`gen_ai.*`) and **OpenInference** (`openinference.span.kind`, `tool.name`, `input.value` /
+  `output.value`, `llm.*`) vocabularies, pairs each action span with its following tool span, and
+  honors optional `wmh.*` enrichments.
+- `wmh/ingest/otel_writer.py` — the inverse: `Trace` → OTel-GenAI span JSONL (what `wmh ingest`
+  writes; round-trips losslessly through `otel-genai`).
+
+## Add a new source in ~30 lines
+
+Most providers export spans that are already OTLP or OpenInference, so a new adapter is small:
+
+```python
+# wmh/ingest/myprovider.py
+from __future__ import annotations
+
+from wmh.ingest.adapter import register_adapter
+from wmh.ingest.base import BaseTraceAdapter
+from wmh.ingest.normalize import SpanRecord
+
+
+class MyProviderAdapter(BaseTraceAdapter):
+    name = "myprovider"
+
+    def spans_from_payload(self, payload):  # one decoded JSON payload -> SpanRecords
+        # If the export is OTLP/OpenInference JSON, the BaseTraceAdapter default already works —
+        # you don't even need this method. Override it only when the export is a custom shape:
+        spans: list[SpanRecord] = []
+        for row in payload.get("events", []):
+            spans.append(SpanRecord(
+                trace_id=row["trace"], span_id=row["id"], start_nano=row["ts"],
+                attributes={                      # emit in GenAI vocab; the normalizer pairs them
+                    "gen_ai.operation.name": "chat",
+                    "gen_ai.tool.name": row["tool"],
+                    "gen_ai.tool.call.arguments": row["args"],   # JSON string or object
+                },
+            ))
+            spans.append(SpanRecord(
+                trace_id=row["trace"], span_id=row["id"] + "-r", start_nano=row["ts"] + 1,
+                status_error=bool(row.get("error")),
+                attributes={"gen_ai.operation.name": "execute_tool",
+                            "gen_ai.tool.message": row["result"]},
+            ))
+        return spans
+
+
+register_adapter(MyProviderAdapter())
+```
+
+Then import it in `wmh/ingest/__init__.py` (for registration on package import), add an inline
+`myprovider_test.py` with a recorded fixture payload (no network), and you're discoverable via
+`wmh ingest list` / `--source myprovider`. To support `--pull`, implement `_pull_payloads(pull)`
+returning raw payloads from the vendor API (use `httpx`; lazy-import the vendor SDK only if needed).
+Mirror the four bundled provider adapters for reference.
+
+## Conventions
+
+Adapters live in `wmh/ingest/`, are typed (no `Any`/bare `dict`; use `wmh.core.types`
+`JsonValue`/`JsonObject`), and are tested inline with fixtures — never the network. Vendor SDKs are
+optional extras, imported lazily; file ingestion works with none installed.
