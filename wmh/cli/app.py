@@ -31,6 +31,8 @@ bench_app = typer.Typer(
     invoke_without_command=True,
 )
 app.add_typer(bench_app, name="bench")
+ingest_app = typer.Typer(help="Ingest traces from observability providers, files, or chats.")
+app.add_typer(ingest_app, name="ingest")
 _console = Console()
 _CHECK = "[green]✓[/green]"
 
@@ -754,6 +756,67 @@ def _load_model(name: str | None, root: str):  # noqa: ANN202 - (WorldModel, nam
     # writable-only build target and would point at a nonexistent `.wmh/` dir for bundled models.
     world_model, provider = load_world_model(store.resolve(resolved_name))
     return world_model, resolved_name, provider
+
+
+@ingest_app.command("list")
+def ingest_list() -> None:
+    """List every registered trace adapter (the sources `wmh ingest run --source` accepts)."""
+    from wmh.ingest import list_adapters
+
+    names = list_adapters()
+    _console.print("[bold]trace adapters[/bold] (use as --source):")
+    for name in names:
+        _console.print(f"  {name}")
+
+
+@ingest_app.command("run")
+def ingest_run(
+    source: str = typer.Option(..., "--source", help="Adapter name (see `wmh ingest list`)."),
+    file: str = typer.Option(None, "--file", help="Exported trace/conversation file to read."),
+    pull: bool = typer.Option(False, "--pull", help="Pull from the source's vendor API instead."),
+    out: str = typer.Option(..., "--out", help="Output OTel-JSONL path (consumed by build/eval)."),
+    api_key: str = typer.Option(None, "--api-key", help="Vendor API key (else its env var)."),
+    project: str = typer.Option(None, "--project", help="Vendor project/workspace to pull from."),
+    since: str = typer.Option(None, "--since", help="ISO-8601 lower bound on trace start (pull)."),
+    limit: int = typer.Option(None, "--limit", help="Max traces to pull."),
+) -> None:
+    """Normalize traces from any registered source into one OTel-JSONL file.
+
+    `--file` reads an export the source already produced; `--pull` fetches live from its vendor API
+    (not every adapter supports pull — it errors clearly if not). The output is the same OTel-GenAI
+    span JSONL `wmh build`/`wmh eval` consume, so ingestion is a thin front door to the pipeline.
+    """
+    from pathlib import Path
+
+    from wmh.ingest import VendorPull, get_adapter
+    from wmh.ingest.otel_writer import write_traces_jsonl
+
+    try:
+        adapter = get_adapter(source)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    if file is None and not pull:
+        raise typer.BadParameter("provide --file <export> or --pull")
+    if file is not None and pull:
+        raise typer.BadParameter("pass either --file or --pull, not both")
+
+    try:
+        if pull:
+            traces = adapter.from_vendor(
+                VendorPull(api_key=api_key, project=project, since=since, limit=limit)
+            )
+        else:
+            traces = adapter.from_file(file)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+
+    out_path = Path(out)
+    n_spans = write_traces_jsonl(traces, out_path)
+    n_steps = sum(len(t.steps) for t in traces)
+    _console.print(
+        f"{_CHECK} ingested [bold]{len(traces)}[/bold] traces, {n_steps} steps from "
+        f"[bold]{source}[/bold] -> {out_path} ({n_spans} spans)"
+    )
 
 
 if __name__ == "__main__":

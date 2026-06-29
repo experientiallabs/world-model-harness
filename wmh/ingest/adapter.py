@@ -46,5 +46,10 @@ def register_adapter(adapter: TraceAdapter) -> None:
 
 def get_adapter(name: str) -> TraceAdapter:
     if name not in _ADAPTERS:
-        raise ValueError(f"no trace adapter registered for {name!r}; have {list(_ADAPTERS)}")
+        raise ValueError(f"no trace adapter registered for {name!r}; have {list_adapters()}")
     return _ADAPTERS[name]
+
+
+def list_adapters() -> list[str]:
+    """Names of all registered trace adapters, sorted (what `wmh ingest list` shows)."""
+    return sorted(_ADAPTERS)
