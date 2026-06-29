@@ -23,9 +23,9 @@ the pieces fit (and where to plug in a new provider, adapter, or embedder).
 ```bash
 uv sync
 wmh providers verify                       # confirm Anthropic / Bedrock / Azure OpenAI / OpenAI creds
-wmh ingest run --source langfuse --file export.json --out traces.jsonl  # bring traces from anywhere
-wmh build                                  # guided creation wizard (prompts for name, traces, provider…)
-wmh build --name airline --file traces.jsonl   # …or fully scriptable with flags -> .wmh/models/airline/
+wmh build                                  # guided creation wizard (prompts for source, traces, provider…)
+wmh build --name airline --file traces.jsonl                  # …or scriptable: build from a file
+wmh build --name airline --source langfuse --pull --project p # …or straight from a trace provider
 wmh list                                   # show every built world model
 wmh eval traces.jsonl                      # score reconstruction fidelity (replay + LLM judge)
 wmh bench run tau-bench                     # score a prompt against a committed benchmark (mean ± std)
@@ -40,8 +40,9 @@ wmh play                                   # step into the environment yourself 
 `demo`) take `--name`; omit it and — if several models exist — you get an interactive **picker**.
 
 Already have traces in **Braintrust, Arize Phoenix, Langfuse, or LangSmith** — or just chat/tool-call
-logs? `wmh ingest` normalizes any of them into the harness's trace format via one pluggable
-interface. See [`docs/ingest.md`](./docs/ingest.md).
+logs? Pick the source right in `wmh build` (`--source <name>` with `--file` or `--pull`); it's
+normalized into the harness's trace format via one pluggable interface, no separate step. See
+[`docs/ingest.md`](./docs/ingest.md).
 
 World models are **named** and stored under `.wmh/models/<name>/`, so one project can hold several
 (e.g. `airline`, `retail`). Commands that read a model take `--name`; if only one is built, `--name`

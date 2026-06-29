@@ -31,8 +31,6 @@ bench_app = typer.Typer(
     invoke_without_command=True,
 )
 app.add_typer(bench_app, name="bench")
-ingest_app = typer.Typer(help="Ingest traces from observability providers, files, or chats.")
-app.add_typer(ingest_app, name="ingest")
 _console = Console()
 _CHECK = "[green]✓[/green]"
 
@@ -117,8 +115,19 @@ def providers_verify(
 @app.command("build")
 def build(
     name: str = typer.Option(None, "--name", help="Name for this world model."),
-    file: str = typer.Option(None, "--file", help="Path to exported traces (OTLP-JSON / JSONL)."),
-    vendor: str = typer.Option(None, "--vendor", help="Vendor name to pull traces via SDK."),
+    source: str = typer.Option(
+        "otel-genai",
+        "--source",
+        help="Trace source adapter: otel-genai | chat-json | braintrust | phoenix | langfuse | "
+        "langsmith.",
+    ),
+    file: str = typer.Option(None, "--file", help="Path to an exported trace/chat file to ingest."),
+    pull: bool = typer.Option(
+        False, "--pull", help="Pull traces live from the source's vendor API (instead of --file)."
+    ),
+    project: str = typer.Option(None, "--project", help="Vendor project/workspace to pull from."),
+    api_key: str = typer.Option(None, "--api-key", help="Vendor API key (else env var)."),
+    vendor: str = typer.Option(None, "--vendor", help="[deprecated] alias for --pull."),
     root: str = typer.Option(ARTIFACT_DIR, help="Project dir holding all world models."),
     provider: str = typer.Option("bedrock", "--provider", help="Provider that serves the model."),
     model: str = typer.Option("us.anthropic.claude-opus-4-8", help="Serve provider model id."),
@@ -138,13 +147,17 @@ def build(
         help="Guided creation wizard. Default: on at a TTY when inputs are missing.",
     ),
 ) -> None:
-    """Ingest traces (file upload or vendor SDK pull) and build a named world model.
+    """Ingest traces from a chosen source and build a named world model.
+
+    The trace source is selected here — `--source` picks the adapter (otel-genai, chat-json,
+    braintrust, phoenix, langfuse, langsmith) and the traces come from a `--file` export or a live
+    `--pull` from the vendor's API. There is no separate ingest step.
 
     Stores the artifact under `<root>/models/<name>/`: ingest -> normalize -> split(train/test) ->
     embed/index -> GEPA optimize -> write. Re-running with the same `--name` rebuilds it.
 
-    With no `--name`/`--file` on an interactive terminal, this launches a guided creation wizard;
-    pass `--no-interactive` (or any of those flags) to stay fully scriptable.
+    With no `--name`/source on an interactive terminal, this launches a guided creation wizard;
+    pass `--no-interactive` (or the inputs) to stay fully scriptable.
     """
     import uuid
 
@@ -156,15 +169,21 @@ def build(
     from wmh.retrieval import get_embedder
     from wmh.tracking import MeteredProvider, Phase, RunTracker, classify_build_call, save_run
 
-    # Decide whether to run the wizard: explicit flag wins; otherwise auto when at a TTY and the
-    # essential inputs (a name and a trace source) were not supplied.
-    needs_input = name is None or (file is None and vendor is None)
+    # `--vendor` is the deprecated alias for `--pull`.
+    pull = pull or vendor is not None
+    # Decide whether to run the wizard: explicit flag wins; otherwise auto at a TTY when no trace
+    # source (a file or a pull) was supplied.
+    has_source = file is not None or pull
+    needs_input = name is None or not has_source
     use_wizard = interactive if interactive is not None else (_console.is_terminal and needs_input)
 
     params = BuildParams(
         name=name or DEFAULT_MODEL_NAME,
+        source=source,
         file=file,
-        vendor=vendor,
+        pull=pull,
+        project=project,
+        api_key=api_key,
         provider=provider,
         model=model,
         region=region,
@@ -176,8 +195,20 @@ def build(
     )
     if use_wizard:
         params = run_build_wizard(_console, params)
-    elif name is None and file is None and vendor is None:
-        raise typer.BadParameter("provide --file (or --vendor), or run `wmh build` interactively")
+    elif name is None and not has_source:
+        raise typer.BadParameter("provide --file or --pull, or run `wmh build` interactively")
+
+    # Validate the chosen source resolves to a registered adapter before doing any work.
+    from wmh.ingest import get_adapter, list_adapters
+
+    try:
+        get_adapter(params.source)
+    except ValueError:
+        raise typer.BadParameter(
+            f"unknown --source {params.source!r}; choose one of: {', '.join(list_adapters())}"
+        ) from None
+    if params.file is None and not params.pull:
+        raise typer.BadParameter("provide --file <export> or --pull")
 
     validate_name(params.name)
     try:
@@ -213,6 +244,7 @@ def build(
         embed_dim=params.embed_dim,
         gepa_budget=params.gepa_budget,
         train_split=params.train_split,
+        trace_adapter=params.source,
     )
     # Fail fast: ping the serve provider (and the embed path, if provider-backed) before spending
     # any rollouts. A missing SDK or bad creds otherwise surfaces only deep inside GEPA, which
@@ -228,11 +260,14 @@ def build(
         tracker,
         classify=classify_build_call,
     )
+    vendor_pull = (
+        VendorPull(api_key=params.api_key, project=params.project) if params.pull else None
+    )
     with tracker.timed(), RichBuildReporter(_console, params.name) as reporter:
         run_build(
             config,
             file=params.file,
-            vendor=VendorPull() if params.vendor else None,
+            vendor=vendor_pull,
             root=model_dir,
             serve_provider=metered,
             embedder=get_embedder(config),
@@ -756,69 +791,6 @@ def _load_model(name: str | None, root: str):  # noqa: ANN202 - (WorldModel, nam
     # writable-only build target and would point at a nonexistent `.wmh/` dir for bundled models.
     world_model, provider = load_world_model(store.resolve(resolved_name))
     return world_model, resolved_name, provider
-
-
-@ingest_app.command("list")
-def ingest_list() -> None:
-    """List every registered trace adapter (the sources `wmh ingest run --source` accepts)."""
-    from wmh.ingest import list_adapters
-
-    names = list_adapters()
-    _console.print("[bold]trace adapters[/bold] (use as --source):")
-    for name in names:
-        _console.print(f"  {name}")
-
-
-@ingest_app.command("run")
-def ingest_run(
-    source: str = typer.Option(..., "--source", help="Adapter name (see `wmh ingest list`)."),
-    file: str = typer.Option(None, "--file", help="Exported trace/conversation file to read."),
-    pull: bool = typer.Option(False, "--pull", help="Pull from the source's vendor API instead."),
-    out: str = typer.Option(..., "--out", help="Output OTel-JSONL path (consumed by build/eval)."),
-    api_key: str = typer.Option(None, "--api-key", help="Vendor API key (else its env var)."),
-    project: str = typer.Option(None, "--project", help="Vendor project/workspace to pull from."),
-    since: str = typer.Option(None, "--since", help="ISO-8601 lower bound on trace start (pull)."),
-    limit: int = typer.Option(None, "--limit", help="Max traces to pull."),
-) -> None:
-    """Normalize traces from any registered source into one OTel-JSONL file.
-
-    `--file` reads an export the source already produced; `--pull` fetches live from its vendor API
-    (not every adapter supports pull — it errors clearly if not). The output is the same OTel-GenAI
-    span JSONL `wmh build`/`wmh eval` consume, so ingestion is a thin front door to the pipeline.
-    """
-    from pathlib import Path
-
-    from wmh.ingest import VendorPull, get_adapter
-    from wmh.ingest.otel_writer import write_traces_jsonl
-
-    try:
-        adapter = get_adapter(source)
-    except ValueError as exc:
-        raise typer.BadParameter(str(exc)) from exc
-    if file is None and not pull:
-        raise typer.BadParameter("provide --file <export> or --pull")
-    if file is not None and pull:
-        raise typer.BadParameter("pass either --file or --pull, not both")
-
-    try:
-        if pull:
-            traces = adapter.from_vendor(
-                VendorPull(api_key=api_key, project=project, since=since, limit=limit)
-            )
-        else:
-            traces = adapter.from_file(file)
-    except (ValueError, OSError) as exc:
-        # ValueError: adapter rejected the input / unsupported pull. OSError: missing/unreadable
-        # --file. Both surface as a clean usage error, not a traceback.
-        raise typer.BadParameter(str(exc)) from exc
-
-    out_path = Path(out)
-    n_spans = write_traces_jsonl(traces, out_path)
-    n_steps = sum(len(t.steps) for t in traces)
-    _console.print(
-        f"{_CHECK} ingested [bold]{len(traces)}[/bold] traces, {n_steps} steps from "
-        f"[bold]{source}[/bold] -> {out_path} ({n_spans} spans)"
-    )
 
 
 if __name__ == "__main__":

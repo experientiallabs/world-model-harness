@@ -7,8 +7,7 @@
 set -euo pipefail
 
 EXPORT="${1:-langsmith_export.json}"
-OUT="${2:-langsmith.otel.jsonl}"
-MODEL="${3:-langsmith-demo}"
+MODEL="${2:-langsmith-demo}"
 
 # 1) Export from LangSmith (pick one). The adapter accepts a single run, a JSON array of runs, a
 #    {"runs": [...]} wrapper, or JSONL (one run per line).
@@ -27,10 +26,7 @@ MODEL="${3:-langsmith-demo}"
 #      json.dump([r.dict() for r in runs], sys.stdout, default=str)
 #      PY
 
-# 2) Normalize LangSmith -> OTel-GenAI JSONL (the shape build/eval read).
-uv run wmh ingest run --source langsmith --file "$EXPORT" --out "$OUT"
+# 2) Build directly from the LangSmith export — `--source langsmith` ingests it as part of build.
+uv run wmh build --name "$MODEL" --source langsmith --file "$EXPORT" --no-interactive
 
-# 3) Build a named world model from the ingested traces.
-uv run wmh build --name "$MODEL" --file "$OUT" --no-interactive
-
-echo "Built world model '$MODEL' from $EXPORT (via $OUT)."
+echo "Built world model '$MODEL' from $EXPORT."

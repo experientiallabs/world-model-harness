@@ -185,9 +185,7 @@ def test_optimize_with_no_traces_returns_base_prompt() -> None:
 
 
 def _eval_batch(trace: Trace) -> list[_EvalStep]:
-    return [
-        _EvalStep(step=s, demos=[], history=trace.steps[:i]) for i, s in enumerate(trace.steps)
-    ]
+    return [_EvalStep(step=s, demos=[], history=trace.steps[:i]) for i, s in enumerate(trace.steps)]
 
 
 class _TempRecordingProvider(FakeProvider):

@@ -7,8 +7,7 @@
 set -euo pipefail
 
 EXPORT="${1:-langfuse_export.json}"
-OUT="${2:-langfuse.otel.jsonl}"
-MODEL="${3:-langfuse-demo}"
+MODEL="${2:-langfuse-demo}"
 
 # 1) Export from Langfuse (pick one). The adapter accepts a single trace object, a JSON array of
 #    traces, an API list page ({"data": [...]}), or JSONL (one trace per line).
@@ -23,10 +22,7 @@ MODEL="${3:-langfuse-demo}"
 #
 #    SDK (Python): langfuse.api.trace.get(trace_id).dict() -> dump to JSON.
 
-# 2) Normalize Langfuse -> OTel-GenAI JSONL (the shape build/eval read).
-uv run wmh ingest run --source langfuse --file "$EXPORT" --out "$OUT"
+# 2) Build directly from the Langfuse export — `--source langfuse` ingests it as part of build.
+uv run wmh build --name "$MODEL" --source langfuse --file "$EXPORT" --no-interactive
 
-# 3) Build a named world model from the ingested traces.
-uv run wmh build --name "$MODEL" --file "$OUT" --no-interactive
-
-echo "Built world model '$MODEL' from $EXPORT (via $OUT)."
+echo "Built world model '$MODEL' from $EXPORT."

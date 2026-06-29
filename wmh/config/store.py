@@ -63,6 +63,7 @@ def default_bundled_dir() -> Path:
         return Path(override)
     return Path(__file__).resolve().parent.parent.parent / BUNDLED_DIR_NAME
 
+
 # A safe, filesystem-friendly model name: no path separators, traversal, or leading dot.
 _NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
@@ -158,9 +159,7 @@ class WorldModelStore:
         """Names of every artifact (a dir containing config.toml) directly under `models_dir`."""
         if not models_dir.exists():
             return set()
-        return {
-            d.name for d in models_dir.iterdir() if d.is_dir() and (d / "config.toml").exists()
-        }
+        return {d.name for d in models_dir.iterdir() if d.is_dir() and (d / "config.toml").exists()}
 
     def list_names(self) -> list[str]:
         """Sorted names of every available model — writable + bundled, deduped by name."""

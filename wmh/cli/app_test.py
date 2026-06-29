@@ -129,19 +129,8 @@ def test_bench_subcommand_is_registered() -> None:
     assert "bench" in group_names
 
 
-def test_ingest_subcommand_is_registered() -> None:
-    group_names = {group.name for group in app.registered_groups}
-    assert "ingest" in group_names
-
-
-def test_ingest_list_shows_adapters() -> None:
-    result = runner.invoke(app, ["ingest", "list"])
-    assert result.exit_code == 0, result.output
-    assert "otel-genai" in result.output
-    assert "chat-json" in result.output
-
-
-def test_ingest_run_chat_json_to_otel_jsonl(tmp_path) -> None:  # noqa: ANN001 - pytest fixture
+def test_build_from_chat_json_source(patched_provider, tmp_path) -> None:  # noqa: ANN001 - fixture
+    """`wmh build --source chat-json --file ...` ingests a non-OTel source into a built model."""
     convo = {
         "messages": [
             {"role": "user", "content": "q"},
@@ -154,34 +143,59 @@ def test_ingest_run_chat_json_to_otel_jsonl(tmp_path) -> None:  # noqa: ANN001 -
     }
     src = tmp_path / "convo.json"
     src.write_text(json.dumps(convo), encoding="utf-8")
-    out = tmp_path / "out.otel.jsonl"
+    root = tmp_path / ".wmh"
 
-    result = runner.invoke(
-        app, ["ingest", "run", "--source", "chat-json", "--file", str(src), "--out", str(out)]
-    )
-    assert result.exit_code == 0, result.output
-    assert out.exists()
-
-    # The output reloads through the otel-genai adapter (ingestion is a front door to the pipeline).
-    from wmh.ingest.otel_genai import OtelGenAIAdapter
-
-    traces = OtelGenAIAdapter().from_file(str(out))
-    assert len(traces) == 1
-    assert traces[0].steps[0].action.name == "f"
-
-
-def test_ingest_run_unknown_source_is_clean_error(tmp_path) -> None:  # noqa: ANN001 - fixture
     result = runner.invoke(
         app,
-        ["ingest", "run", "--source", "nope", "--file", "x", "--out", str(tmp_path / "o.jsonl")],
+        [
+            "build",
+            "--name",
+            "from-chat",
+            "--source",
+            "chat-json",
+            "--file",
+            str(src),
+            "--root",
+            str(root),
+            "--provider",
+            "bedrock",
+            "--gepa-budget",
+            "4",
+            "--no-interactive",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    # The source is persisted on the built model's config.
+    import tomllib
+
+    cfg = tomllib.loads((root / "models" / "from-chat" / "config.toml").read_text())
+    assert cfg["trace_adapter"] == "chat-json"
+
+
+def test_build_unknown_source_is_clean_error(tmp_path) -> None:  # noqa: ANN001 - fixture
+    result = runner.invoke(
+        app,
+        [
+            "build",
+            "--name",
+            "x",
+            "--source",
+            "nope",
+            "--file",
+            "f.json",
+            "--root",
+            str(tmp_path / ".wmh"),
+            "--no-interactive",
+        ],
     )
     assert result.exit_code != 0
     assert "nope" in result.output
 
 
-def test_ingest_run_requires_file_or_pull(tmp_path) -> None:  # noqa: ANN001 - fixture
+def test_build_without_source_errors(tmp_path) -> None:  # noqa: ANN001 - fixture
+    # No --file / --pull and non-interactive: fail fast rather than hang or build nothing.
     result = runner.invoke(
-        app, ["ingest", "run", "--source", "chat-json", "--out", str(tmp_path / "o.jsonl")]
+        app, ["build", "--name", "x", "--root", str(tmp_path / ".wmh"), "--no-interactive"]
     )
     assert result.exit_code != 0
 
@@ -251,12 +265,13 @@ def test_play_loads_bundled_only_model(patched_provider, monkeypatch, tmp_path) 
 def test_build_interactive_wizard_creates_model(patched_provider, tmp_path) -> None:  # noqa: ANN001
     root = tmp_path / ".wmh"
     # --interactive forces the wizard even under CliRunner (non-TTY); feed each answer line in
-    # prompt order: name, file, provider (select), model (select), region (bedrock only), budget,
-    # embedder (select). The offline 'hashing' embedder skips the embed-model prompt; phi dim isn't
-    # prompted. Provider/model/embedder are picked by index against their option lists.
+    # prompt order: name, source (select), file, provider (select), model (select), region (bedrock
+    # only), budget, embedder (select). The offline 'hashing' embedder skips the embed-model prompt;
+    # phi dim isn't prompted. Selects are picked by index against their option lists.
     answers = "\n".join(
         [
             "wizard-built",
+            "1",  # source: otel-genai (a file source -> prompts for a path next)
             _traces_file(tmp_path),
             "1",  # provider: bedrock
             "1",  # model: us.anthropic.claude-opus-4-8

@@ -129,11 +129,12 @@ def test_play_repl_exits_cleanly_on_eof() -> None:
 
 def test_build_wizard_collects_all_inputs() -> None:
     console = Console(force_terminal=False, no_color=True, width=100)
-    # Prompts in order: name, file, provider (select), model (select), region (bedrock only),
-    # budget, embedder (select). No embed-model (hashing default) and no phi-dim prompt.
+    # Prompts in order: name, source (select), file, provider (select), model (select), region
+    # (bedrock only), budget, embedder (select). No embed-model (hashing), no phi-dim prompt.
     reader = _scripted_reader(
         [
             "tau2-airline",
+            "1",  # source: otel-genai (file source)
             "/tmp/traces.jsonl",
             "bedrock",
             "us.anthropic.claude-opus-4-8",
@@ -155,9 +156,9 @@ def test_build_wizard_collects_all_inputs() -> None:
 
 def test_build_wizard_select_by_number() -> None:
     console = Console(force_terminal=False, no_color=True, width=100)
-    # Provider/model/embedder are numbered pickers; choosing by index must work. Pick anthropic (2),
-    # its second model, no region prompt (not bedrock), budget 8, hashing embedder (1).
-    reader = _scripted_reader(["m", "/tmp/t.jsonl", "2", "2", "8", "1"])
+    # Provider/model/embedder are numbered pickers; choosing by index must work. Source otel-genai
+    # (1) -> file; pick anthropic (2), its second model, no region (not bedrock), budget 8, hashing.
+    reader = _scripted_reader(["m", "1", "/tmp/t.jsonl", "2", "2", "8", "1"])
     params = run_build_wizard(console, BuildParams(name="default"), reader=reader)
     assert params.provider == "anthropic"
     assert params.model == "claude-opus-4-7"  # second anthropic model
@@ -169,7 +170,7 @@ def test_build_wizard_collects_provider_embedder() -> None:
     console = Console(force_terminal=False, no_color=True, width=100)
     # A provider-backed embedder adds an embeddings-model picker; phi dim keeps its default.
     reader = _scripted_reader(
-        ["m", "/tmp/t.jsonl", "openai", "gpt-5.5", "8", "openai", "text-embedding-3-large"]
+        ["m", "1", "/tmp/t.jsonl", "openai", "gpt-5.5", "8", "openai", "text-embedding-3-large"]
     )
     params = run_build_wizard(console, BuildParams(name="default"), reader=reader)
     assert params.embed_provider == "openai"
@@ -195,7 +196,7 @@ def test_build_wizard_reprompts_on_blank_trace_source() -> None:
     # A blank traces path must re-ask, not crash. After a name, blank the file once, then give a
     # real path; remaining prompts (provider/model/region/budget/embedder) take defaults.
     console = Console(force_terminal=False, no_color=True, width=100)
-    reader = _scripted_reader(["mymodel", "", "/tmp/t.jsonl", "", "", "", "", ""])
+    reader = _scripted_reader(["mymodel", "1", "", "/tmp/t.jsonl", "", "", "", "", ""])
     params = run_build_wizard(console, BuildParams(name="default"), reader=reader)
     assert params.name == "mymodel"
     assert params.file == "/tmp/t.jsonl"
@@ -208,7 +209,9 @@ def test_build_wizard_reports_missing_credentials(monkeypatch) -> None:  # noqa:
         monkeypatch.delenv(var, raising=False)
     console = Console(force_terminal=False, no_color=True, width=100)
     with console.capture() as cap:
-        reader = _scripted_reader(["m", "/tmp/t.jsonl", "bedrock", "", "us-east-1", "8", "hashing"])
+        reader = _scripted_reader(
+            ["m", "1", "/tmp/t.jsonl", "bedrock", "", "us-east-1", "8", "hashing"]
+        )
         run_build_wizard(console, BuildParams(name="default"), reader=reader)
     out = cap.get()
     assert "make sure AWS_ACCESS_KEY_ID is set" in out

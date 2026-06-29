@@ -63,8 +63,7 @@ Accepted file shapes: a single span row, a JSON array of rows, an API page wrapp
 ## Run
 
 ```bash
-uv run wmh ingest run --source braintrust --file braintrust_export.json --out braintrust.otel.jsonl
-uv run wmh build --name braintrust-demo --file braintrust.otel.jsonl --no-interactive
+uv run wmh build --name braintrust-demo --source braintrust --file braintrust_export.json
 ```
 
 See `examples/ingest/braintrust_to_wmh.sh` for the end-to-end script.

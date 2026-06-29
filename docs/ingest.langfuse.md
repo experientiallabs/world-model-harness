@@ -58,8 +58,7 @@ Accepted file shapes: a single trace object, a JSON array of traces, an API list
 ## Run
 
 ```bash
-uv run wmh ingest run --source langfuse --file langfuse_export.json --out langfuse.otel.jsonl
-uv run wmh build --name langfuse-demo --file langfuse.otel.jsonl --no-interactive
+uv run wmh build --name langfuse-demo --source langfuse --file langfuse_export.json
 ```
 
 See `examples/ingest/langfuse_to_wmh.sh` for the end-to-end script.

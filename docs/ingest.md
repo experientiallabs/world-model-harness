@@ -1,9 +1,9 @@
 # Ingesting traces from anywhere
 
-The harness builds a world model from **recorded agent traces**. Ingestion is the front door: it
-turns traces from whatever you already have — an observability provider, an OTLP export, or a plain
-chat/tool-call log — into the normalized `wmh.core.types.Trace` shape, and writes them as OTel-GenAI
-span JSONL that `wmh build` and `wmh eval` consume directly.
+The harness builds a world model from **recorded agent traces**. Ingestion is part of `wmh build`,
+not a separate step: you pick a **source** and `build` turns traces from whatever you already have —
+an observability provider, an OTLP export, or a plain chat/tool-call log — into the normalized
+`wmh.core.types.Trace` shape and runs the pipeline.
 
 Everything plugs into **one interface** (`TraceAdapter`) and **one normalizer**
 (`wmh.ingest.normalize`), so adding a source is a thin adapter, never a rewrite.
@@ -11,14 +11,18 @@ Everything plugs into **one interface** (`TraceAdapter`) and **one normalizer**
 ## Quickstart
 
 ```bash
-wmh ingest list                                   # every registered source
-wmh ingest run --source <name> --file <export>  --out traces.otel.jsonl   # from a file export
-wmh ingest run --source <name> --pull --project <p> --out traces.otel.jsonl   # live pull (if supported)
-wmh build --file traces.otel.jsonl --name my-model                        # feed the pipeline
+wmh build --name m --source <name> --file <export>          # build from a file export
+wmh build --name m --source <name> --pull --project <p>     # build from a live vendor pull
+wmh build                                                   # or pick the source in the wizard
 ```
 
-`--out` is plain OTel-GenAI span JSONL — the same format the bundled `examples/*.otel.jsonl` use —
-so ingestion output is interchangeable with any other corpus the harness reads.
+`--source` is a registered adapter (`otel-genai`, `chat-json`, `braintrust`, `phoenix`, `langfuse`,
+`langsmith`); `--file` reads an export, `--pull` fetches live (with `--project`/`--api-key`) for
+sources that support it. On an interactive terminal, `wmh build` with no source launches a wizard
+that lists the sources and prompts for file-or-pull.
+
+Under the hood the chosen adapter normalizes to OTel-GenAI span JSONL — the same format the bundled
+`examples/*.otel.jsonl` use — so a source is interchangeable with any other corpus the harness reads.
 
 ## Sources
 
@@ -60,7 +64,7 @@ frameworks can emit). Drop it in a file and ingest it:
 ```
 
 ```bash
-wmh ingest run --source chat-json --file conversation.json --out traces.otel.jsonl
+wmh build --name my-model --source chat-json --file conversation.json
 ```
 
 Each assistant tool call becomes an Action paired with its `role:"tool"` result (the Observation);
@@ -98,8 +102,8 @@ and `observation` are what matter most.
   (`gen_ai.*`) and **OpenInference** (`openinference.span.kind`, `tool.name`, `input.value` /
   `output.value`, `llm.*`) vocabularies, pairs each action span with its following tool span, and
   honors optional `wmh.*` enrichments.
-- `wmh/ingest/otel_writer.py` — the inverse: `Trace` → OTel-GenAI span JSONL (what `wmh ingest`
-  writes; round-trips losslessly through `otel-genai`).
+- `wmh/ingest/otel_writer.py` — the inverse: `Trace` → OTel-GenAI span JSONL (used to persist a
+  corpus; round-trips losslessly through `otel-genai`).
 
 ## Add a new source in ~30 lines
 
@@ -143,10 +147,11 @@ register_adapter(MyProviderAdapter())
 ```
 
 Then import it in `wmh/ingest/__init__.py` (for registration on package import), add an inline
-`myprovider_test.py` with a recorded fixture payload (no network), and you're discoverable via
-`wmh ingest list` / `--source myprovider`. To support `--pull`, implement `_pull_payloads(pull)`
-returning raw payloads from the vendor API (use `httpx`; lazy-import the vendor SDK only if needed).
-Mirror the four bundled provider adapters for reference.
+`myprovider_test.py` with a recorded fixture payload (no network), and `wmh build --source myprovider`
+picks it up. To support `--pull`, implement `_pull_payloads(pull)` returning raw payloads from the
+vendor API (use `httpx`; lazy-import the vendor SDK only if needed). To surface it in the build
+wizard's source picker, add it to `_SOURCES` in `wmh/cli/ui.py`. Mirror the four bundled provider
+adapters for reference.
 
 ## Conventions
 

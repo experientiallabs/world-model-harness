@@ -68,8 +68,7 @@ JSONL (one run per line).
 ## Run
 
 ```bash
-uv run wmh ingest run --source langsmith --file langsmith_export.json --out langsmith.otel.jsonl
-uv run wmh build --name langsmith-demo --file langsmith.otel.jsonl --no-interactive
+uv run wmh build --name langsmith-demo --source langsmith --file langsmith_export.json
 ```
 
 See `examples/ingest/langsmith_to_wmh.sh` for the end-to-end script.

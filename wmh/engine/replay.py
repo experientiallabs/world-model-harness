@@ -126,7 +126,11 @@ def _score_step(
 ) -> StepResult:
     """Predict the observation for one step and score it against the recorded observation."""
     predicted = predict_observation(
-        provider, prompt, step.task, step.state_before, step.action,
+        provider,
+        prompt,
+        step.task,
+        step.state_before,
+        step.action,
         demos=demos.demos_for(trace_id, step),
         history=history,
     )

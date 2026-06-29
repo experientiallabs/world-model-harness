@@ -18,12 +18,9 @@ set -euo pipefail
 #    works: flat OpenInference span dicts (context.trace_id / start_time / attributes) OR an OTLP
 #    `resourceSpans` envelope.
 EXPORT="${1:-phoenix_export.json}"
+MODEL="${2:-phoenix-demo}"
 
-# 2) Normalize Phoenix spans -> OTel-JSONL (the shared span format build/eval read).
-uv run wmh ingest run \
-  --source phoenix \
-  --file "${EXPORT}" \
-  --out examples/phoenix-traces.otel.jsonl
+# 2) Build directly from the Phoenix export — `--source phoenix` ingests it as part of build.
+uv run wmh build --name "$MODEL" --source phoenix --file "${EXPORT}" --no-interactive
 
-# 3) Build a named world model from the normalized traces.
-uv run wmh build --file examples/phoenix-traces.otel.jsonl --name phoenix-demo
+echo "Built world model '$MODEL' from $EXPORT."

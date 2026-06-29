@@ -48,9 +48,7 @@ the Observation, mirroring an agent's `(action) -> observation` step.
 ## Run it
 
 ```bash
-uv run wmh ingest run --source phoenix --file phoenix_export.json \
-  --out examples/phoenix-traces.otel.jsonl
-uv run wmh build --file examples/phoenix-traces.otel.jsonl --name phoenix-demo
+uv run wmh build --name phoenix-demo --source phoenix --file phoenix_export.json
 ```
 
 See `examples/ingest/phoenix_to_wmh.sh` for a runnable script.
