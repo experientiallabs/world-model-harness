@@ -19,7 +19,7 @@ class FakeProvider:
         messages: list[Message],
         *,
         temperature: float = 0.7,
-        max_tokens: int = 2048,
+        max_tokens: int = 8192,
     ) -> Completion:
         if "grade a world model" in system:
             return Completion(text="judged", usage=TokenUsage(input_tokens=40, output_tokens=10))

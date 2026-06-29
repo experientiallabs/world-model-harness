@@ -30,7 +30,7 @@ from wmh.core.parsing import parse_observation
 from wmh.core.render import build_env_prompt, encode_state_action
 from wmh.core.types import Action, EnvState, JsonValue, Observation, Step, Trace
 from wmh.optimize.judge import Judge
-from wmh.providers.base import Message, Provider
+from wmh.providers.base import DEFAULT_MAX_TOKENS, Message, Provider
 from wmh.retrieval import Retriever
 from wmh.retrieval.leakfree import DemoRetriever
 
@@ -95,7 +95,7 @@ def predict_observation(
     """
     system, user = build_env_prompt(prompt, task, state, action, history=history, demos=demos)
     completion = provider.complete(
-        system, [Message(role="user", content=user)], temperature=0.0, max_tokens=1024
+        system, [Message(role="user", content=user)], temperature=0.0, max_tokens=DEFAULT_MAX_TOKENS
     )
     return parse_observation(completion.text)
 
@@ -243,7 +243,7 @@ def _reflection_lm(provider: Provider):  # noqa: ANN202 - returns gepa's Languag
             _REFLECTION_SYSTEM,
             [Message(role="user", content=text)],
             temperature=1.0,
-            max_tokens=2048,
+            max_tokens=DEFAULT_MAX_TOKENS,
         )
         return completion.text
 

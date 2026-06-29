@@ -34,7 +34,7 @@ class FakeProvider:
         messages: list[Message],
         *,
         temperature: float = 0.7,
-        max_tokens: int = 2048,
+        max_tokens: int = 8192,
     ) -> Completion:
         self.last_system = system
         self.last_user = messages[0].content
@@ -101,7 +101,7 @@ class _UsageProvider(FakeProvider):
         messages: list[Message],
         *,
         temperature: float = 0.7,
-        max_tokens: int = 2048,
+        max_tokens: int = 8192,
     ) -> Completion:
         from wmh.providers.base import TokenUsage
 
