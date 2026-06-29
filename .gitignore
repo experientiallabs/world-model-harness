@@ -21,3 +21,7 @@ benchmarks/*/results/
 DESIGN.md
 
 demos/
+
+# baseline-grid run scratch (not artifacts)
+.wmh-rebuild/
+logs/

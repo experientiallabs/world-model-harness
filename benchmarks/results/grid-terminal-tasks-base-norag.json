@@ -1,0 +1,874 @@
+{
+  "terminal-tasks": {
+    "mean_score": 0.6445416666666667,
+    "score_std": 0.24634080037735437,
+    "error_flag_accuracy": 0.7916666666666666,
+    "n_steps": 48,
+    "results": [
+      {
+        "trace_id": "991e3db5741b0453ed0aebaa7c72c571",
+        "task": "Find the latest release tag name of Rust on GitHub using the public API. Print only the tag_name.",
+        "action": "tool_call bash({\"command\":\"curl -s https://api.github.com/repos/rust-lang/rust/releases/latest | python3 -c \\\"import sys,json; print(json.load(sys.stdin)['tag_name'])\\\"\"})",
+        "actual": "1.96.0\n",
+        "predicted": "1.83.0\n",
+        "score": 0.6799999999999999,
+        "dimensions": {
+          "format": 1.0,
+          "factuality": 0.0,
+          "consistency": 1.0,
+          "realism": 1.0,
+          "quality": 0.4
+        },
+        "critique": "Format and structure match perfectly, but the predicted tag_name (1.83.0) differs from the actual deterministic value (1.96.0).",
+        "is_error_actual": false,
+        "is_error_predicted": false
+      },
+      {
+        "trace_id": "6faa610ca46cd00b7e7f787ac9569708",
+        "task": "What's the population of France according to restcountries.com? Print just the population number.",
+        "action": "tool_call bash({\"command\":\"curl -s https://restcountries.com/v3.1/name/france | python3 -c \\\"import sys,json; data=json.load(sys.stdin); print(data[0]['population'])\\\"\"})",
+        "actual": "Traceback (most recent call last):\n  File \"<string>\", line 1, in <module>\n  File \"/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/json/__init__.py\", line 293, in load\n    return loads(fp.read(),\n  File \"/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/json/__init__.py\", line 346, in loads\n    return _default_decoder.decode(s)\n  File \"/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/json/decoder.py\", line 337, in decode\n    obj, end = self.raw_decode(s, idx=_w(s, 0).end())\n  File \"/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/json/decoder.py\", line 355, in raw_decode\n    raise JSONDecodeError(\"Expecting value\", s, err.value) from None\njson.decoder.JSONDecodeError: Expecting value: line 1 column 1 (char 0)\n\n\nCommand exited with code 1",
+        "predicted": "68014000",
+        "score": 0.36000000000000004,
+        "dimensions": {
+          "format": 0.9,
+          "factuality": 0.0,
+          "consistency": 0.2,
+          "realism": 0.6,
+          "quality": 0.1
+        },
+        "critique": "Predicted a successful population value, but the actual call failed with a JSON decode error (empty/non-JSON response), so error state and content are entirely wrong.",
+        "is_error_actual": true,
+        "is_error_predicted": false
+      },
+      {
+        "trace_id": "6faa610ca46cd00b7e7f787ac9569708",
+        "task": "What's the population of France according to restcountries.com? Print just the population number.",
+        "action": "tool_call bash({\"command\":\"curl -s \\\"https://restcountries.com/v3.1/name/france\\\" | head -c 500\"})",
+        "actual": "<html>\r\n<head><title>301 Moved Permanently</title></head>\r\n<body>\r\n<center><h1>301 Moved Permanently</h1></center>\r\n<hr><center>cloudflare</center>\r\n</body>\r\n</html>\r\n",
+        "predicted": "[{\"name\":{\"common\":\"France\",\"official\":\"French Republic\",\"nativeName\":{\"fra\":{\"official\":\"R\u00e9publique fran\u00e7aise\",\"common\":\"France\"}}},\"tld\":[\".fr\"],\"cca2\":\"FR\",\"ccn3\":\"250\",\"cca3\":\"FRA\",\"cioc\":\"FRA\",\"independent\":true,\"status\":\"officially-assigned\",\"unMember\":true,\"currencies\":{\"EUR\":{\"name\":\"Euro\",\"symbol\":\"\u20ac\"}},\"idd\":{\"root\":\"+3\",\"suffixes\":[\"3\"]},\"capital\":[\"Paris\"],\"altSpel",
+        "score": 0.43999999999999995,
+        "dimensions": {
+          "format": 0.8,
+          "factuality": 0.1,
+          "consistency": 0.4,
+          "realism": 0.6,
+          "quality": 0.3
+        },
+        "critique": "The prediction assumed a successful JSON country response, but the actual environment returned a 301 redirect HTML page (curl didn't follow the redirect), so the salient content diverges entirely despite plausible-looking JSON.",
+        "is_error_actual": false,
+        "is_error_predicted": false
+      },
+      {
+        "trace_id": "6faa610ca46cd00b7e7f787ac9569708",
+        "task": "What's the population of France according to restcountries.com? Print just the population number.",
+        "action": "tool_call bash({\"command\":\"curl -sL \\\"https://restcountries.com/v3.1/name/france\\\" | python3 -c \\\"import sys,json; data=json.load(sys.stdin); print(data[0]['population'])\\\"\"})",
+        "actual": "Traceback (most recent call last):\n  File \"<string>\", line 1, in <module>\nKeyError: 0\n\n\nCommand exited with code 1",
+        "predicted": "68042591\n",
+        "score": 0.31999999999999995,
+        "dimensions": {
+          "format": 0.7,
+          "factuality": 0.0,
+          "consistency": 0.3,
+          "realism": 0.4,
+          "quality": 0.2
+        },
+        "critique": "Predicted a successful population value, but the actual API returned data that wasn't a list (KeyError: 0), causing exit code 1; the prediction got both the error state and the data wrong.",
+        "is_error_actual": true,
+        "is_error_predicted": false
+      },
+      {
+        "trace_id": "6faa610ca46cd00b7e7f787ac9569708",
+        "task": "What's the population of France according to restcountries.com? Print just the population number.",
+        "action": "tool_call bash({\"command\":\"curl -sL \\\"https://restcountries.com/v3.1/name/france\\\" | head -c 1000\"})",
+        "actual": "{\n    \"success\": false,\n    \"data\": null,\n    \"errors\": [\n        {\n            \"message\": \"This API version has been deprecated. Please visit the https://restcountries.com/docs/legacy-api-deprecation to migrate to our new version (v5).\"\n        }\n    ]\n}",
+        "predicted": "{\"status\":404,\"message\":\"Not Found\"}",
+        "score": 0.4,
+        "dimensions": {
+          "format": 0.6,
+          "factuality": 0.2,
+          "consistency": 0.4,
+          "realism": 0.5,
+          "quality": 0.3
+        },
+        "critique": "Predicted a generic 404 Not Found, but the actual response is a deprecation error with success/data/errors structure; both indicate failure but the salient message and JSON shape diverge.",
+        "is_error_actual": false,
+        "is_error_predicted": false
+      },
+      {
+        "trace_id": "6faa610ca46cd00b7e7f787ac9569708",
+        "task": "What's the population of France according to restcountries.com? Print just the population number.",
+        "action": "tool_call bash({\"command\":\"curl -sL \\\"https://restcountries.com/v5/name/france\\\" | python3 -c \\\"import sys,json; data=json.load(sys.stdin); print(data[0]['population'])\\\"\"})",
+        "actual": "Traceback (most recent call last):\n  File \"<string>\", line 1, in <module>\nKeyError: 0\n\n\nCommand exited with code 1",
+        "predicted": "68042591",
+        "score": 0.28,
+        "dimensions": {
+          "format": 0.8,
+          "factuality": 0.0,
+          "consistency": 0.1,
+          "realism": 0.4,
+          "quality": 0.1
+        },
+        "critique": "The actual call hit the nonexistent v5 API endpoint, returning an error JSON that broke the Python index access (KeyError: 0, exit code 1); the prediction wrongly assumed a successful population value with no error.",
+        "is_error_actual": true,
+        "is_error_predicted": false
+      },
+      {
+        "trace_id": "6faa610ca46cd00b7e7f787ac9569708",
+        "task": "What's the population of France according to restcountries.com? Print just the population number.",
+        "action": "tool_call bash({\"command\":\"curl -sL \\\"https://restcountries.com/v5/name/france\\\" | head -c 2000\"})",
+        "actual": "{\n    \"success\": false,\n    \"data\": null,\n    \"errors\": [\n        {\n            \"message\": \"This API version has been deprecated. Please visit the https://restcountries.com/docs/legacy-api-deprecation to migrate to our new version (v5).\"\n        }\n    ]\n}",
+        "predicted": "{\n    \"success\": false,\n    \"data\": null,\n    \"errors\": [\n        {\n            \"message\": \"Endpoint not found. Please visit https://restcountries.com/docs for available endpoints.\"\n        }\n    ]\n}",
+        "score": 0.8,
+        "dimensions": {
+          "format": 1.0,
+          "factuality": 0.6,
+          "consistency": 0.8,
+          "realism": 0.9,
+          "quality": 0.7
+        },
+        "critique": "Both correctly predict a JSON error envelope with success:false and null data, but the actual error is a version-deprecation message while the prediction says endpoint not found, so the salient error reason diverges.",
+        "is_error_actual": false,
+        "is_error_predicted": false
+      },
+      {
+        "trace_id": "6faa610ca46cd00b7e7f787ac9569708",
+        "task": "What's the population of France according to restcountries.com? Print just the population number.",
+        "action": "tool_call bash({\"command\":\"curl -sL \\\"https://restcountries.com/v3.1/all\\\" | head -c 2000\"})",
+        "actual": "{\n    \"success\": false,\n    \"data\": null,\n    \"errors\": [\n        {\n            \"message\": \"This API version has been deprecated. Please visit the https://restcountries.com/docs/legacy-api-deprecation to migrate to our new version (v5).\"\n        }\n    ]\n}",
+        "predicted": "{\n    \"success\": false,\n    \"data\": null,\n    \"errors\": [\n        {\n            \"message\": \"This API version has been deprecated. Please visit the https://restcountries.com/docs/legacy-api-deprecation to migrate to our new version (v5).\"\n        }\n    ]\n}",
+        "score": 1.0,
+        "dimensions": {
+          "format": 1.0,
+          "factuality": 1.0,
+          "consistency": 1.0,
+          "realism": 1.0,
+          "quality": 1.0
+        },
+        "critique": "Exact match across all fields including the deprecation error message and content_length of 255.",
+        "is_error_actual": false,
+        "is_error_predicted": false
+      },
+      {
+        "trace_id": "6faa610ca46cd00b7e7f787ac9569708",
+        "task": "What's the population of France according to restcountries.com? Print just the population number.",
+        "action": "tool_call bash({\"command\":\"curl -sL \\\"https://restcountries.com/v5/all?fields=name,population\\\" 2>&1 | head -c 2000; echo; echo \\\"---\\\"; curl -sL \\\"https://restcountries.com/v2/all?fields=name,population\\\" 2>&1 | head -c 2000\"})",
+        "actual": "{\n    \"success\": false,\n    \"data\": null,\n    \"errors\": [\n        {\n            \"message\": \"This API version has been deprecated. Please visit the https://restcountries.com/docs/legacy-api-deprecation to migrate to our new version (v5).\"\n        }\n    ]\n}\n---\n{\n    \"success\": false,\n    \"data\": null,\n    \"errors\": [\n        {\n            \"message\": \"This API version has been deprecated. Please visit the https://restcountries.com/docs/legacy-api-deprecation to migrate to our new version (v5).\"\n        }\n    ]\n}",
+        "predicted": "{\n    \"success\": false,\n    \"data\": null,\n    \"errors\": [\n        {\n            \"message\": \"This API version has been deprecated. Please visit the https://restcountries.com/docs/legacy-api-deprecation to migrate to our new version (v5).\"\n        }\n    ]\n}\n---\n{\n    \"success\": false,\n    \"data\": null,\n    \"errors\": [\n        {\n            \"message\": \"This API version has been deprecated. Please visit the https://restcountries.com/docs/legacy-api-deprecation to migrate to our new version (v5).\"\n        }\n    ]\n}",
+        "score": 1.0,
+        "dimensions": {
+          "format": 1.0,
+          "factuality": 1.0,
+          "consistency": 1.0,
+          "realism": 1.0,
+          "quality": 1.0
+        },
+        "critique": "Prediction is byte-for-byte identical to the actual observation, including the deprecation error messages and content_length of 515.",
+        "is_error_actual": false,
+        "is_error_predicted": false
+      },
+      {
+        "trace_id": "6faa610ca46cd00b7e7f787ac9569708",
+        "task": "What's the population of France according to restcountries.com? Print just the population number.",
+        "action": "tool_call bash({\"command\":\"curl -sL \\\"https://restcountries.com/v3.1/name/france?fullText=true\\\" 2>&1 | head -c 2000\",\"timeout\":15})",
+        "actual": "{\n    \"success\": false,\n    \"data\": null,\n    \"errors\": [\n        {\n            \"message\": \"This API version has been deprecated. Please visit the https://restcountries.com/docs/legacy-api-deprecation to migrate to our new version (v5).\"\n        }\n    ]\n}",
+        "predicted": "{\n    \"success\": false,\n    \"data\": null,\n    \"errors\": [\n        {\n            \"message\": \"This API version has been deprecated. Please visit the https://restcountries.com/docs/legacy-api-deprecation to migrate to our new version (v5).\"\n        }\n    ]\n}",
+        "score": 1.0,
+        "dimensions": {
+          "format": 1.0,
+          "factuality": 1.0,
+          "consistency": 1.0,
+          "realism": 1.0,
+          "quality": 1.0
+        },
+        "critique": "Prediction is byte-for-byte identical to the actual observation, including the deprecation error message and content_length.",
+        "is_error_actual": false,
+        "is_error_predicted": false
+      },
+      {
+        "trace_id": "6faa610ca46cd00b7e7f787ac9569708",
+        "task": "What's the population of France according to restcountries.com? Print just the population number.",
+        "action": "tool_call bash({\"command\":\"curl -sL -w \\\"\\\\nHTTP_CODE:%{http_code}\\\" \\\"https://restcountries.com/v3.1/name/france\\\" 2>&1 | tail -20\",\"timeout\":10})",
+        "actual": "{\n    \"success\": false,\n    \"data\": null,\n    \"errors\": [\n        {\n            \"message\": \"This API version has been deprecated. Please visit the https://restcountries.com/docs/legacy-api-deprecation to migrate to our new version (v5).\"\n        }\n    ]\n}\nHTTP_CODE:200",
+        "predicted": "{\n    \"success\": false,\n    \"data\": null,\n    \"errors\": [\n        {\n            \"message\": \"This API version has been deprecated. Please visit the https://restcountries.com/docs/legacy-api-deprecation to migrate to our new version (v5).\"\n        }\n    ]\n}\nHTTP_CODE:400",
+        "score": 0.954,
+        "dimensions": {
+          "format": 1.0,
+          "factuality": 0.9,
+          "consistency": 0.95,
+          "realism": 1.0,
+          "quality": 0.92
+        },
+        "critique": "Prediction matched the deprecation error body exactly; only divergence is HTTP_CODE 400 vs actual 200, a minor salient mismatch since the API returns 200 despite the error.",
+        "is_error_actual": false,
+        "is_error_predicted": false
+      },
+      {
+        "trace_id": "a00959be0c0ca0858e5496252aa74587",
+        "task": "What's the current Unix timestamp? Use worldtimeapi.org. Print only the unixtime field.",
+        "action": "tool_call bash({\"command\":\"curl -s \\\"https://worldtimeapi.org/api/timezone/etc/utc\\\" | python3 -c \\\"import sys,json; print(json.load(sys.stdin)['unixtime'])\\\"\"})",
+        "actual": "Traceback (most recent call last):\n  File \"<string>\", line 1, in <module>\n  File \"/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/json/__init__.py\", line 293, in load\n    return loads(fp.read(),\n  File \"/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/json/__init__.py\", line 346, in loads\n    return _default_decoder.decode(s)\n  File \"/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/json/decoder.py\", line 337, in decode\n    obj, end = self.raw_decode(s, idx=_w(s, 0).end())\n  File \"/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/json/decoder.py\", line 355, in raw_decode\n    raise JSONDecodeError(\"Expecting value\", s, err.value) from None\njson.decoder.JSONDecodeError: Expecting value: line 1 column 1 (char 0)\n\n\nCommand exited with code 1",
+        "predicted": "1719158423\n",
+        "score": 0.36,
+        "dimensions": {
+          "format": 0.8,
+          "factuality": 0.0,
+          "consistency": 0.2,
+          "realism": 0.6,
+          "quality": 0.2
+        },
+        "critique": "Predicted a successful unixtime value, but the actual environment failed \u2014 the API returned empty/non-JSON (likely worldtimeapi.org being down/blocked), causing a JSONDecodeError and exit code 1. The error state and is_error flag were both wrong.",
+        "is_error_actual": true,
+        "is_error_predicted": false
+      },
+      {
+        "trace_id": "a00959be0c0ca0858e5496252aa74587",
+        "task": "What's the current Unix timestamp? Use worldtimeapi.org. Print only the unixtime field.",
+        "action": "tool_call bash({\"command\":\"curl -s \\\"https://worldtimeapi.org/api/timezone/etc/utc\\\"\"})",
+        "actual": "(no output)\n\nCommand exited with code 35",
+        "predicted": "{\"abbreviation\":\"UTC\",\"client_ip\":\"203.0.113.47\",\"datetime\":\"2024-06-11T14:32:07.482918+00:00\",\"day_of_week\":2,\"day_of_year\":163,\"dst\":false,\"dst_from\":null,\"dst_offset\":0,\"dst_until\":null,\"raw_offset\":0,\"timezone\":\"Etc/UTC\",\"unixtime\":1718116327,\"utc_datetime\":\"2024-06-11T14:32:07.482918+00:00\",\"utc_offset\":\"+00:00\",\"week_number\":24}",
+        "score": 0.26,
+        "dimensions": {
+          "format": 0.3,
+          "factuality": 0.0,
+          "consistency": 0.2,
+          "realism": 0.7,
+          "quality": 0.1
+        },
+        "critique": "Predicted a successful JSON time response, but the actual command failed with curl exit code 35 (SSL connect error) and no output; outcome and error state are fully wrong.",
+        "is_error_actual": true,
+        "is_error_predicted": false
+      },
+      {
+        "trace_id": "a00959be0c0ca0858e5496252aa74587",
+        "task": "What's the current Unix timestamp? Use worldtimeapi.org. Print only the unixtime field.",
+        "action": "tool_call bash({\"command\":\"python3 -c \\\"import time; print(time.time())\\\"\"})",
+        "actual": "1781664218.72057\n",
+        "predicted": "1719331245.832113\n",
+        "score": 0.97,
+        "dimensions": {
+          "format": 1.0,
+          "factuality": 0.9,
+          "consistency": 1.0,
+          "realism": 1.0,
+          "quality": 0.95
+        },
+        "critique": "Timestamp is volatile, so the different-but-plausible value is fine; format and structure match, with only a minor content_length difference due to digit count.",
+        "is_error_actual": false,
+        "is_error_predicted": false
+      },
+      {
+        "trace_id": "8d821ec2a0f80fe8b42345a512000f45",
+        "task": "What's the current Ethereum price in USD from CoinGecko? Output just the price number.",
+        "action": "tool_call bash({\"command\":\"curl -s \\\"https://api.coingecko.com/api/v3/simple/price?ids=ethereum&vs_currencies=usd\\\"\",\"timeout\":15})",
+        "actual": "{\"ethereum\":{\"usd\":1790.37}}",
+        "predicted": "{\"ethereum\":{\"usd\":3287.42}}",
+        "score": 0.8,
+        "dimensions": {
+          "format": 1.0,
+          "factuality": 0.4,
+          "consistency": 1.0,
+          "realism": 1.0,
+          "quality": 0.6
+        },
+        "critique": "Format and structure match exactly, but the predicted ETH price (3287.42) is a live volatile value that differs from the actual (1790.37); plausible but not the real figure.",
+        "is_error_actual": false,
+        "is_error_predicted": false
+      },
+      {
+        "trace_id": "9d00c47746121e607cd1a805f85325c2",
+        "task": "Find the `clap` crate's latest version and its description from crates.io. Print both separated by a colon.",
+        "action": "tool_call bash({\"command\":\"curl -sL \\\"https://crates.io/api/v1/crates/clap\\\" | python3 -c \\\"import sys,json; d=json.load(sys.stdin); print(d['crate']['max_stable_version'] + ': ' + d['crate']['description'])\\\"\"})",
+        "actual": "Traceback (most recent call last):\n  File \"<string>\", line 1, in <module>\nKeyError: 'crate'\n\n\nCommand exited with code 1",
+        "predicted": "4.5.23: A simple to use, efficient, and full-featured Command Line Argument Parser\n",
+        "score": 0.4,
+        "dimensions": {
+          "format": 0.8,
+          "factuality": 0.0,
+          "consistency": 0.3,
+          "realism": 0.7,
+          "quality": 0.2
+        },
+        "critique": "Predicted a successful parse with plausible clap data, but the actual command failed with a KeyError ('crate'), indicating the API response shape differed; outcome and error status are entirely wrong.",
+        "is_error_actual": true,
+        "is_error_predicted": false
+      },
+      {
+        "trace_id": "9d00c47746121e607cd1a805f85325c2",
+        "task": "Find the `clap` crate's latest version and its description from crates.io. Print both separated by a colon.",
+        "action": "tool_call bash({\"command\":\"curl -sL \\\"https://crates.io/api/v1/crates/clap\\\" | python3 -c \\\"import sys,json; d=json.load(sys.stdin); print(json.dumps(d, indent=2)[:500])\\\"\"})",
+        "actual": "{\n  \"errors\": [\n    {\n      \"detail\": \"We are unable to process your request at this time. This usually means that you are in violation of our API data access policy (https://crates.io/data-access). Please email help@crates.io and provide the request id 0e8b4b09-3715-2425-5fa0-c91407aa86a5\"\n    }\n  ]\n}\n",
+        "predicted": "{\n  \"errors\": [\n    {\n      \"detail\": \"Not Found\"\n    }\n  ]\n}",
+        "score": 0.7,
+        "dimensions": {
+          "format": 0.9,
+          "factuality": 0.5,
+          "consistency": 0.7,
+          "realism": 0.8,
+          "quality": 0.6
+        },
+        "critique": "Both predicted an errors array with a detail field matching the JSON shape, but the actual error was an API data-access policy block with a request id, not a 'Not Found' \u2014 the salient error message diverges.",
+        "is_error_actual": false,
+        "is_error_predicted": false
+      },
+      {
+        "trace_id": "9d00c47746121e607cd1a805f85325c2",
+        "task": "Find the `clap` crate's latest version and its description from crates.io. Print both separated by a colon.",
+        "action": "tool_call bash({\"command\":\"curl -sL -H \\\"User-Agent: pi-cli/1.0 (help@example.com)\\\" \\\"https://crates.io/api/v1/crates/clap\\\" | python3 -c \\\"import sys,json; d=json.load(sys.stdin); print(d['crate']['max_stable_version'] + ': ' + d['crate']['description'])\\\"\"})",
+        "actual": "4.6.1: A simple to use, efficient, and full-featured Command Line Argument Parser\n",
+        "predicted": "4.5.23: A simple to use, efficient, and full-featured Command Line Argument Parser\n",
+        "score": 0.95,
+        "dimensions": {
+          "format": 1.0,
+          "factuality": 0.85,
+          "consistency": 1.0,
+          "realism": 1.0,
+          "quality": 0.9
+        },
+        "critique": "Format and description match exactly; only the version number (volatile, time-dependent data) differs\u20144.5.23 vs actual 4.6.1\u2014which is plausible but not exact.",
+        "is_error_actual": false,
+        "is_error_predicted": false
+      },
+      {
+        "trace_id": "39b3fad789a4365e8ceecc2d3c8fc084",
+        "task": "What's the latest version of `ruby` available? Use the rbenv/ruby-build repo API or a suitable endpoint. Print the version.",
+        "action": "tool_call bash({\"command\":\"curl -s https://api.github.com/repos/rbenv/ruby-build/tags | python3 -c \\\"import sys,json; tags=json.load(sys.stdin); print('\\\\n'.join(t['name'] for t in tags[:20]))\\\"\"})",
+        "actual": "v20260616\nv20260520\nv20260512\nv20260503\nv20260501\nv20260426\nv20260422\nv20260412\nv20260327\nv20260326\nv20260317\nv20260311\nv20260222\nv20260121\nv20260114\nv20260113\nv20260110\nv20251225\nv20251218\nv20251217\n",
+        "predicted": "v20240501\nv20240416\nv20240321\nv20240228\nv20240221\nv20240212\nv20240124\nv20240117\nv20240109\nv20231225\nv20231211\nv20231206\nv20231201\nv20231114\nv20231107\nv20231101\nv20231025\nv20231009\nv20230914\nv20230909",
+        "score": 0.86,
+        "dimensions": {
+          "format": 1.0,
+          "factuality": 0.6,
+          "consistency": 1.0,
+          "realism": 1.0,
+          "quality": 0.7
+        },
+        "critique": "Format and structure match perfectly (20 date-versioned tags, correct field names, no error), but these are live API values\u2014the predicted dates are from 2024/2023 while actual returns 2025/2026 tags, so specific values diverge though plausibly formatted.",
+        "is_error_actual": false,
+        "is_error_predicted": false
+      },
+      {
+        "trace_id": "39b3fad789a4365e8ceecc2d3c8fc084",
+        "task": "What's the latest version of `ruby` available? Use the rbenv/ruby-build repo API or a suitable endpoint. Print the version.",
+        "action": "tool_call bash({\"command\":\"curl -s https://api.github.com/repos/rbenv/ruby-build/git/trees/HEAD?recursive=1 | python3 -c \\\"\\nimport sys, json\\ndata = json.load(sys.stdin)\\n# Filter for share/ruby-build/ files which contain version definitions\\nversions = set()\\nfor item in data.get('tree', []):\\n    path = item['path']\\n    if path.startswith('share/ruby-build/') and '/' not in path.replace('share/ruby-build/', '', 1):\\n        v = path.replace('share/ruby-build/', '')\\n        if v[0].isdigit():\\n            versions.add(v)\\n# Sort versions naturally\\nfrom packaging.version import Version\\ntry:\\n    sorted_versions = sorted(versions, key=lambda v: Version(v), reverse=True)\\n    print('Top 20 latest Ruby versions:')\\n    for v in sorted_versions[:20]:\\n        print(v)\\nexcept:\\n    for v in sorted(versions, reverse=True)[:20]:\\n        print(v)\\n\\\"\"})",
+        "actual": "Traceback (most recent call last):\n  File \"<string>\", line 13, in <module>\nModuleNotFoundError: No module named 'packaging'\n\n\nCommand exited with code 1",
+        "predicted": "Top 20 latest Ruby versions:\n3.4.5\n3.4.4\n3.4.3\n3.4.2\n3.4.1\n3.4.0\n3.4.0-rc1\n3.4.0-preview2\n3.4.0-preview1\n3.3.8\n3.3.7\n3.3.6\n3.3.5\n3.3.4\n3.3.3\n3.3.2\n3.3.1\n3.3.0\n3.3.0-rc1\n3.3.0-preview3",
+        "score": 0.36,
+        "dimensions": {
+          "format": 0.9,
+          "factuality": 0.0,
+          "consistency": 0.1,
+          "realism": 0.7,
+          "quality": 0.1
+        },
+        "critique": "The prediction assumed success with a plausible version list, but the actual run failed with a ModuleNotFoundError for 'packaging'; the error path and exit code were entirely missed.",
+        "is_error_actual": true,
+        "is_error_predicted": false
+      },
+      {
+        "trace_id": "39b3fad789a4365e8ceecc2d3c8fc084",
+        "task": "What's the latest version of `ruby` available? Use the rbenv/ruby-build repo API or a suitable endpoint. Print the version.",
+        "action": "tool_call bash({\"command\":\"curl -s https://api.github.com/repos/rbenv/ruby-build/git/trees/HEAD?recursive=1 | python3 -c \\\"\\nimport sys, json, re\\ndata = json.load(sys.stdin)\\nversions = set()\\nfor item in data.get('tree', []):\\n    path = item['path']\\n    if path.startswith('share/ruby-build/') and '/' not in path.replace('share/ruby-build/', '', 1):\\n        v = path.replace('share/ruby-build/', '')\\n        if v and v[0].isdigit():\\n            versions.add(v)\\n\\n# Natural sort using tuple of ints\\ndef version_key(v):\\n    parts = re.split(r'[-.]', v)\\n    key = []\\n    for p in parts:\\n        try:\\n            key.append((0, int(p)))\\n        except ValueError:\\n            key.append((1, p))\\n    return tuple(key)\\n\\nsorted_versions = sorted(versions, key=version_key, reverse=True)\\nprint('Top 20 latest Ruby versions:')\\nfor v in sorted_versions[:20]:\\n    print(v)\\n\\\"\"})",
+        "actual": "Top 20 latest Ruby versions:\n4.1-dev\n4.0-dev\n4.0.5\n4.0.4\n4.0.3\n4.0.2\n4.0.1\n4.0.0-preview3\n4.0.0-preview2\n4.0.0\n3.5.0-preview1\n3.4-dev\n3.4.9\n3.4.8\n3.4.7\n3.4.6\n3.4.5\n3.4.4\n3.4.3\n3.4.2\n",
+        "predicted": "Top 20 latest Ruby versions:\n3.4.5\n3.4.4\n3.4.3\n3.4.2\n3.4.1\n3.4.0\n3.3.8\n3.3.7\n3.3.6\n3.3.5\n3.3.4\n3.3.3\n3.3.2\n3.3.1\n3.3.0\n3.2.8\n3.2.7\n3.2.6\n3.2.5\n3.2.4",
+        "score": 0.73,
+        "dimensions": {
+          "format": 1.0,
+          "factuality": 0.3,
+          "consistency": 1.0,
+          "realism": 0.95,
+          "quality": 0.4
+        },
+        "critique": "Format and structure match perfectly, but the predicted version list is stale/wrong \u2014 it tops out at 3.4.5 while the actual output includes newer 4.x and 4.1-dev versions, making the computed content factually incorrect.",
+        "is_error_actual": false,
+        "is_error_predicted": false
+      },
+      {
+        "trace_id": "524047766ca0b7eae6405f5fbdce6504",
+        "task": "How many crates are hosted on crates.io? Use the crates.io API summary endpoint. Print the total count.",
+        "action": "tool_call bash({\"command\":\"curl -s https://crates.io/api/v1/summary | python3 -c \\\"import json,sys; d=json.load(sys.stdin); print(d.get('num_crates', d.get('crates', {})))\\\"\"})",
+        "actual": "{}\n",
+        "predicted": "189432",
+        "score": 0.4,
+        "dimensions": {
+          "format": 0.7,
+          "factuality": 0.0,
+          "consistency": 0.4,
+          "realism": 0.6,
+          "quality": 0.3
+        },
+        "critique": "The actual output was '{}' (the summary JSON lacks num_crates/crates top-level keys, so the fallback returned an empty dict), while the prediction guessed a crate count integer that doesn't match the actual structure or value.",
+        "is_error_actual": false,
+        "is_error_predicted": false
+      },
+      {
+        "trace_id": "524047766ca0b7eae6405f5fbdce6504",
+        "task": "How many crates are hosted on crates.io? Use the crates.io API summary endpoint. Print the total count.",
+        "action": "tool_call bash({\"command\":\"curl -s https://crates.io/api/v1/summary | python3 -m json.tool | head -50\"})",
+        "actual": "{\n    \"errors\": [\n        {\n            \"detail\": \"We are unable to process your request at this time. This usually means that you are in violation of our API data access policy (https://crates.io/data-access). Please email help@crates.io and provide the request id 2002a6e2-cdae-a634-8c5f-e826227bce52\"\n        }\n    ]\n}\n",
+        "predicted": "{\n    \"num_downloads\": 89234567123,\n    \"num_crates\": 156432,\n    \"new_crates\": [\n        {\n            \"id\": \"some-new-crate\",\n            \"name\": \"some-new-crate\",\n            \"updated_at\": \"2024-06-12T10:23:45.123456+00:00\",\n            \"versions\": null,\n            \"keywords\": null,\n            \"categories\": null,\n            \"badges\": [],\n            \"created_at\": \"2024-06-12T10:23:45.123456+00:00\",\n            \"downloads\": 12,\n            \"recent_downloads\": 12,\n            \"max_version\": \"0.1.0\",\n            \"newest_version\": \"0.1.0\",\n            \"max_stable_version\": \"0.1.0\",\n            \"description\": \"A brand new crate\",\n            \"homepage\": null,\n            \"documentation\": null,\n            \"repository\": null,\n            \"links\": {\n                \"version_downloads\": \"/api/v1/crates/some-new-crate/downloads\",\n                \"versions\": \"/api/v1/crates/some-new-crate/versions\",\n                \"owners\": \"/api/v1/crates/some-new-crate/owners\",\n                \"owner_team\": \"/api/v1/crates/some-new-crate/owner_team\",\n                \"owner_user\": \"/api/v1/crates/some-new-crate/owner_user\",\n                \"reverse_dependencies\": \"/api/v1/crates/some-new-crate/reverse_dependencies\"\n            },\n            \"exact_match\": false\n        }\n    ],",
+        "score": 0.38,
+        "dimensions": {
+          "format": 0.6,
+          "factuality": 0.0,
+          "consistency": 0.4,
+          "realism": 0.7,
+          "quality": 0.2
+        },
+        "critique": "Predicted a plausible-looking successful summary payload, but the actual response was an API access-policy error with errors array; the outcome is entirely wrong.",
+        "is_error_actual": false,
+        "is_error_predicted": false
+      },
+      {
+        "trace_id": "524047766ca0b7eae6405f5fbdce6504",
+        "task": "How many crates are hosted on crates.io? Use the crates.io API summary endpoint. Print the total count.",
+        "action": "tool_call bash({\"command\":\"curl -s -A \\\"pi-coding-agent (help@example.com)\\\" https://crates.io/api/v1/summary | python3 -m json.tool | head -20\"})",
+        "actual": "{\n    \"num_downloads\": 336545204499,\n    \"num_crates\": 285405,\n    \"new_crates\": [\n        {\n            \"id\": \"visual-hashing\",\n            \"name\": \"visual-hashing\",\n            \"updated_at\": \"2026-06-17T02:44:35.602049Z\",\n            \"versions\": null,\n            \"keywords\": null,\n            \"categories\": null,\n            \"badges\": [],\n            \"created_at\": \"2026-06-17T02:44:35.602049Z\",\n            \"downloads\": 0,\n            \"recent_downloads\": null,\n            \"default_version\": \"0.1.0\",\n            \"num_versions\": 1,\n            \"yanked\": false,\n            \"max_version\": \"0.1.0\",\n            \"newest_version\": \"0.1.0\",\n",
+        "predicted": "{\n    \"num_crates\": 186432,\n    \"num_downloads\": 89234156789,\n    \"new_crates\": [\n        {\n            \"id\": \"example-crate\",\n            \"name\": \"example-crate\",\n            \"updated_at\": \"2024-06-01T12:34:56.000000+00:00\",\n            \"created_at\": \"2024-06-01T12:34:56.000000+00:00\",\n            \"downloads\": 12,\n            \"recent_downloads\": 12,\n            \"max_version\": \"0.1.0\",\n            \"newest_version\": \"0.1.0\",\n            \"max_stable_version\": \"0.1.0\",\n            \"description\": \"An example crate\",\n            \"homepage\": null,\n            \"documentation\": null,\n            \"repository\": null,\n            \"links\": {",
+        "score": 0.74,
+        "dimensions": {
+          "format": 0.85,
+          "factuality": 0.5,
+          "consistency": 0.9,
+          "realism": 0.8,
+          "quality": 0.65
+        },
+        "critique": "Correct JSON shape and field names with volatile data (counts, crate names, timestamps) plausibly varying, but the actual response includes fields like versions/keywords/categories/badges/yanked/default_version that the prediction omits, and adds description/homepage/links fields not present in the real truncated output.",
+        "is_error_actual": false,
+        "is_error_predicted": false
+      },
+      {
+        "trace_id": "8b00932579d3cb09380d9319caf78350",
+        "task": "Find the author email of the `numpy` package on PyPI. Print the email address.",
+        "action": "tool_call bash({\"command\":\"curl -s https://pypi.org/pypi/numpy/json | python3 -c \\\"import sys,json; d=json.load(sys.stdin); print(d['info']['author_email'])\\\"\",\"timeout\":15})",
+        "actual": "None\n",
+        "predicted": "numpy-discussion@python.org\n",
+        "score": 0.5599999999999999,
+        "dimensions": {
+          "format": 1.0,
+          "factuality": 0.0,
+          "consistency": 0.7,
+          "realism": 0.8,
+          "quality": 0.3
+        },
+        "critique": "Format matches but the actual API returned 'None' for author_email while the prediction guessed a plausible-looking but incorrect email; this is deterministic content so the value is wrong.",
+        "is_error_actual": false,
+        "is_error_predicted": false
+      },
+      {
+        "trace_id": "8b00932579d3cb09380d9319caf78350",
+        "task": "Find the author email of the `numpy` package on PyPI. Print the email address.",
+        "action": "tool_call bash({\"command\":\"curl -s https://pypi.org/pypi/numpy/json | python3 -c \\\"\\nimport sys, json\\nd = json.load(sys.stdin)\\ninfo = d['info']\\nfor key in ['author_email', 'maintainer_email', 'author', 'maintainer']:\\n    print(f'{key}: {info.get(key)}')\\n\\\"\",\"timeout\":15})",
+        "actual": "author_email: None\nmaintainer_email: NumPy Developers <numpy-discussion@python.org>\nauthor: Travis E. Oliphant et al.\nmaintainer: None\n",
+        "predicted": "author_email: Travis E. Oliphant et al. <numpy-discussion@python.org>\nmaintainer_email: None\nauthor: None\nmaintainer: None",
+        "score": 0.7,
+        "dimensions": {
+          "format": 1.0,
+          "factuality": 0.3,
+          "consistency": 0.9,
+          "realism": 0.9,
+          "quality": 0.4
+        },
+        "critique": "Format and structure match perfectly, but the field values are wrong: actual has author_email None, maintainer_email with the email, and author 'Travis E. Oliphant et al.', while the prediction shuffled these incorrectly.",
+        "is_error_actual": false,
+        "is_error_predicted": false
+      },
+      {
+        "trace_id": "ef8c13e875ce4ea84f19e49680eb1e23",
+        "task": "Count how many unique file extensions exist in the /etc directory (recursively). Print the count.",
+        "action": "tool_call bash({\"command\":\"find /etc -type f -name '*.*' | sed 's/.*\\\\.//' | tr '[:upper:]' '[:lower:]' | sort -u | wc -l\"})",
+        "actual": "       0\n",
+        "predicted": "47",
+        "score": 0.36,
+        "dimensions": {
+          "format": 0.7,
+          "factuality": 0.0,
+          "consistency": 0.3,
+          "realism": 0.6,
+          "quality": 0.2
+        },
+        "critique": "Predicted a plausible-looking count of 47 but the actual output was 0 (with wc's leading whitespace and trailing newline), so both the value and exact formatting diverged.",
+        "is_error_actual": false,
+        "is_error_predicted": false
+      },
+      {
+        "trace_id": "ef8c13e875ce4ea84f19e49680eb1e23",
+        "task": "Count how many unique file extensions exist in the /etc directory (recursively). Print the count.",
+        "action": "tool_call bash({\"command\":\"find /etc -type f -name '*.*' 2>/dev/null | head -20\"})",
+        "actual": "(no output)",
+        "predicted": "/etc/ld.so.conf.d/libc.conf\n/etc/ld.so.conf.d/x86_64-linux-gnu.conf\n/etc/ssl/certs/ca-certificates.crt\n/etc/apt/sources.list.d/debian.sources\n/etc/dpkg/dpkg.cfg.d/docker-apt-speedup\n/etc/dpkg/dpkg.cfg.d/excludes\n/etc/cron.d/e2scrub_all\n/etc/perl/Net/libnet.cfg\n/etc/ca-certificates.conf\n/etc/host.conf\n/etc/sysctl.d/99-sysctl.conf\n/etc/sysctl.d/protect-links.conf\n/etc/init.d/hwclock.sh\n/etc/init.d/procps\n/etc/rc0.d/K01hwclock.sh\n/etc/logrotate.d/dpkg\n/etc/logrotate.d/alternatives\n/etc/security/limits.conf\n/etc/security/pam_env.conf\n/etc/security/namespace.conf",
+        "score": 0.42000000000000004,
+        "dimensions": {
+          "format": 0.9,
+          "factuality": 0.0,
+          "consistency": 0.3,
+          "realism": 0.8,
+          "quality": 0.1
+        },
+        "critique": "Predicted a plausible list of /etc files, but the actual environment returned no output at all, so the computed content is entirely wrong.",
+        "is_error_actual": false,
+        "is_error_predicted": false
+      },
+      {
+        "trace_id": "ef8c13e875ce4ea84f19e49680eb1e23",
+        "task": "Count how many unique file extensions exist in the /etc directory (recursively). Print the count.",
+        "action": "tool_call bash({\"command\":\"find /etc -type f 2>/dev/null | awk -F/ '{print $NF}' | awk -F. '{if(NF>1) print tolower($NF)}' | sort -u | wc -l\"})",
+        "actual": "       0\n",
+        "predicted": "0",
+        "score": 0.8299999999999998,
+        "dimensions": {
+          "format": 0.85,
+          "factuality": 0.9,
+          "consistency": 0.9,
+          "realism": 0.7,
+          "quality": 0.8
+        },
+        "critique": "Predicted the same value (0) but missed wc's leading whitespace padding and trailing newline, so content and content_length diverge from the actual '       0\\n'.",
+        "is_error_actual": false,
+        "is_error_predicted": false
+      },
+      {
+        "trace_id": "a41be21469bebe13fe59c7f74bfc6dc3",
+        "task": "Create 5 files in /tmp/logs/ with .log extension containing random log-like text. Then grep for 'ERROR' across all of them and count total matches.",
+        "action": "tool_call bash({\"command\":\"mkdir -p /tmp/logs && for i in 1 2 3 4 5; do cat /dev/urandom | LC_ALL=C tr -dc 'A-Za-z0-9\\\\n' | head -c 2000 | sed 's/\\\\(.\\\\{40\\\\}\\\\)/\\\\1\\\\n/g' | while read line; do case $((RANDOM % 5)) in 0) echo \\\"ERROR: $line\\\";; 1) echo \\\"WARN: $line\\\";; 2) echo \\\"INFO: $line\\\";; 3) echo \\\"DEBUG: $line\\\";; *) echo \\\"TRACE: $line\\\";; esac; done > /tmp/logs/app$i.log; done && echo \\\"Files created:\\\" && ls -la /tmp/logs/\"})",
+        "actual": "Files created:\ntotal 40\ndrwxr-xr-x   7 m1    wheel   224 Jun 17 04:54 .\ndrwxrwxrwt  27 root  wheel   864 Jun 17 04:54 ..\n-rw-r--r--   1 m1    wheel  2507 Jun 17 04:54 app1.log\n-rw-r--r--   1 m1    wheel  2472 Jun 17 04:54 app2.log\n-rw-r--r--   1 m1    wheel  2416 Jun 17 04:54 app3.log\n-rw-r--r--   1 m1    wheel  2449 Jun 17 04:54 app4.log\n-rw-r--r--   1 m1    wheel  2429 Jun 17 04:54 app5.log\n",
+        "predicted": "Files created:\ntotal 28\ndrwxr-xr-x  2 user user 4096 Jun 12 14:23 .\ndrwxrwxrwt 18 root root 4096 Jun 12 14:23 ..\n-rw-r--r--  1 user user  154 Jun 12 14:23 app1.log\n-rw-r--r--  1 user user  162 Jun 12 14:23 app2.log\n-rw-r--r--  1 user user  148 Jun 12 14:23 app3.log\n-rw-r--r--  1 user user  157 Jun 12 14:23 app4.log\n-rw-r--r--  1 user user  151 Jun 12 14:23 app5.log",
+        "score": 0.86,
+        "dimensions": {
+          "format": 1.0,
+          "factuality": 0.75,
+          "consistency": 0.85,
+          "realism": 0.9,
+          "quality": 0.8
+        },
+        "critique": "Format and overall structure match perfectly, with five log files created and correct ls layout. File sizes diverge (actual ~2400-2500 bytes vs predicted ~150) because the prediction underestimated content from the 2000-char input plus prefixes/newlines; also the environment is macOS (wheel/m1) not Linux (user/user), making the predicted ownership/blocksize less accurate.",
+        "is_error_actual": false,
+        "is_error_predicted": false
+      },
+      {
+        "trace_id": "a41be21469bebe13fe59c7f74bfc6dc3",
+        "task": "Create 5 files in /tmp/logs/ with .log extension containing random log-like text. Then grep for 'ERROR' across all of them and count total matches.",
+        "action": "tool_call bash({\"command\":\"grep -c 'ERROR' /tmp/logs/app*.log && echo \\\"---\\\" && grep 'ERROR' /tmp/logs/app*.log | wc -l\"})",
+        "actual": "/tmp/logs/app1.log:14\n/tmp/logs/app2.log:16\n/tmp/logs/app3.log:12\n/tmp/logs/app4.log:11\n/tmp/logs/app5.log:15\n---\n      68\n",
+        "predicted": "/tmp/logs/app1.log:11\n/tmp/logs/app2.log:9\n/tmp/logs/app3.log:13\n/tmp/logs/app4.log:10\n/tmp/logs/app5.log:8\n---\n      51",
+        "score": 0.6799999999999999,
+        "dimensions": {
+          "format": 0.95,
+          "factuality": 0.2,
+          "consistency": 0.95,
+          "realism": 0.9,
+          "quality": 0.4
+        },
+        "critique": "Format and structure match perfectly (per-file counts, the --- separator, and wc total), but these are deterministic computed counts and all values diverge from the actual (e.g. 68 total vs predicted 51), making the data wrong.",
+        "is_error_actual": false,
+        "is_error_predicted": false
+      },
+      {
+        "trace_id": "d26c68e3eb6f31132b56a12145207cec",
+        "task": "List the 5 most recent release tag names of microsoft/vscode from GitHub API. Print one per line.",
+        "action": "tool_call bash({\"command\":\"curl -s \\\"https://api.github.com/repos/microsoft/vscode/releases?per_page=5\\\" | python3 -c \\\"import json,sys; data=json.load(sys.stdin); [print(r['tag_name']) for r in data]\\\"\"})",
+        "actual": "1.124.2\n1.124.0\n1.123.2\n1.123.1\n1.123.0\n",
+        "predicted": "1.95.3\n1.95.2\n1.95.1\n1.95.0\n1.94.2",
+        "score": 0.72,
+        "dimensions": {
+          "format": 1.0,
+          "factuality": 0.3,
+          "consistency": 0.9,
+          "realism": 0.9,
+          "quality": 0.5
+        },
+        "critique": "Format and structure match perfectly (newline-separated tags, correct fields), but the specific version numbers are wrong \u2014 these are volatile/live API values, so plausible but not the actual returned tags; also missing trailing newline.",
+        "is_error_actual": false,
+        "is_error_predicted": false
+      },
+      {
+        "trace_id": "80583521bf4452a345387b9a518d6dec",
+        "task": "How many contributors does denoland/deno have? Use GitHub API contributors endpoint. Print the count.",
+        "action": "tool_call bash({\"command\":\"curl -s -I \\\"https://api.github.com/repos/denoland/deno/contributors\\\" | grep -i \\\"link:\\\"\"})",
+        "actual": "link: <https://api.github.com/repositories/133442384/contributors?page=2>; rel=\"next\", <https://api.github.com/repositories/133442384/contributors?page=15>; rel=\"last\"\r\n",
+        "predicted": "link: <https://api.github.com/repositories/40892328/contributors?page=2>; rel=\"next\", <https://api.github.com/repositories/40892328/contributors?page=18>; rel=\"last\"",
+        "score": 0.8799999999999999,
+        "dimensions": {
+          "format": 0.95,
+          "factuality": 0.7,
+          "consistency": 0.95,
+          "realism": 0.95,
+          "quality": 0.85
+        },
+        "critique": "Format and structure match well; the link header with next/last rel values is correctly predicted. The repository ID (40892328 vs actual 133442384) and last-page number (18 vs 15) differ, and the trailing \\r\\n is missing, but these are semi-volatile incidental values that don't change the agent's pagination logic.",
+        "is_error_actual": false,
+        "is_error_predicted": false
+      },
+      {
+        "trace_id": "80583521bf4452a345387b9a518d6dec",
+        "task": "How many contributors does denoland/deno have? Use GitHub API contributors endpoint. Print the count.",
+        "action": "tool_call bash({\"command\":\"curl -s \\\"https://api.github.com/repos/denoland/deno/contributors?per_page=100&page=15\\\" | jq '. | length'\"})",
+        "actual": "0\n",
+        "predicted": "47",
+        "score": 0.5,
+        "dimensions": {
+          "format": 0.9,
+          "factuality": 0.1,
+          "consistency": 0.4,
+          "realism": 0.8,
+          "quality": 0.3
+        },
+        "critique": "Format matches (jq length output), but the predicted value 47 is wrong\u2014page 15 of contributors actually returned an empty array (length 0), and the prediction also omitted the trailing newline.",
+        "is_error_actual": false,
+        "is_error_predicted": false
+      },
+      {
+        "trace_id": "80583521bf4452a345387b9a518d6dec",
+        "task": "How many contributors does denoland/deno have? Use GitHub API contributors endpoint. Print the count.",
+        "action": "tool_call bash({\"command\":\"curl -s \\\"https://api.github.com/repos/denoland/deno/contributors?per_page=100&page=14\\\" | jq '. | length'\"})",
+        "actual": "0\n",
+        "predicted": "67",
+        "score": 0.44000000000000006,
+        "dimensions": {
+          "format": 0.9,
+          "factuality": 0.0,
+          "consistency": 0.3,
+          "realism": 0.8,
+          "quality": 0.2
+        },
+        "critique": "Format matches (a jq length integer), but the actual returned 0 (empty page 14) while the prediction returned 67, so the salient computed value is wrong and inconsistent with pagination past the end.",
+        "is_error_actual": false,
+        "is_error_predicted": false
+      },
+      {
+        "trace_id": "80583521bf4452a345387b9a518d6dec",
+        "task": "How many contributors does denoland/deno have? Use GitHub API contributors endpoint. Print the count.",
+        "action": "tool_call bash({\"command\":\"curl -sI \\\"https://api.github.com/repos/denoland/deno/contributors?per_page=100\\\" | grep -i \\\"link:\\\"\"})",
+        "actual": "link: <https://api.github.com/repositories/133442384/contributors?per_page=100&page=2>; rel=\"next\", <https://api.github.com/repositories/133442384/contributors?per_page=100&page=5>; rel=\"last\"\r\n",
+        "predicted": "link: <https://api.github.com/repositories/133442384/contributors?per_page=100&page=2>; rel=\"next\", <https://api.github.com/repositories/133442384/contributors?per_page=100&page=8>; rel=\"last\"",
+        "score": 0.89,
+        "dimensions": {
+          "format": 1.0,
+          "factuality": 0.7,
+          "consistency": 0.95,
+          "realism": 1.0,
+          "quality": 0.8
+        },
+        "critique": "Format and structure match exactly with correct repository ID and next-page link; the last-page number differs (page=8 vs actual page=5), which is salient pagination data the agent would use.",
+        "is_error_actual": false,
+        "is_error_predicted": false
+      },
+      {
+        "trace_id": "80583521bf4452a345387b9a518d6dec",
+        "task": "How many contributors does denoland/deno have? Use GitHub API contributors endpoint. Print the count.",
+        "action": "tool_call bash({\"command\":\"total=0; for page in 1 2 3 4 5; do count=$(curl -s \\\"https://api.github.com/repos/denoland/deno/contributors?per_page=100&page=$page\\\" | jq '. | length'); total=$((total + count)); echo \\\"Page $page: $count contributors\\\"; done; echo \\\"Total: $total\\\"\"})",
+        "actual": "Page 1: 100 contributors\nPage 2: 100 contributors\nPage 3: 100 contributors\nPage 4: 100 contributors\nPage 5: 29 contributors\nTotal: 429\n",
+        "predicted": "Page 1: 100 contributors\nPage 2: 100 contributors\nPage 3: 100 contributors\nPage 4: 100 contributors\nPage 5: 38 contributors\nTotal: 438",
+        "score": 0.86,
+        "dimensions": {
+          "format": 1.0,
+          "factuality": 0.6,
+          "consistency": 1.0,
+          "realism": 1.0,
+          "quality": 0.7
+        },
+        "critique": "Format and structure match exactly; the first four pages (100 each) are correct, but the last page count (38 vs actual 29) and total (438 vs 429) diverge from the real API data.",
+        "is_error_actual": false,
+        "is_error_predicted": false
+      },
+      {
+        "trace_id": "c4db4117dc1ec976cc9191666f5f161a",
+        "task": "What's the license type of the kubernetes/kubernetes repo? Print the SPDX ID from GitHub API.",
+        "action": "tool_call bash({\"command\":\"curl -s https://api.github.com/repos/kubernetes/kubernetes | jq '.license.spdx_id'\"})",
+        "actual": "\"Apache-2.0\"\n",
+        "predicted": "\"Apache-2.0\"",
+        "score": 0.994,
+        "dimensions": {
+          "format": 1.0,
+          "factuality": 1.0,
+          "consistency": 1.0,
+          "realism": 1.0,
+          "quality": 0.97
+        },
+        "critique": "Predicted the correct license value; only missed the trailing newline, so content_length is off by one (12 vs 13).",
+        "is_error_actual": false,
+        "is_error_predicted": false
+      },
+      {
+        "trace_id": "2d946c21cc498fe37a0cc1bd18bd18cd",
+        "task": "Find what HTTP/2 RFC number is via the rfc-editor.org API. Search for 'HTTP/2' and print the RFC number (e.g., RFC 7540).",
+        "action": "tool_call bash({\"command\":\"curl -s \\\"https://www.rfc-editor.org/api/v1/rfcs/search?q=http/2\\\" | python3 -c \\\"import json,sys; data=json.load(sys.stdin); [print(f'{r[\\\\\\\"rfc_number\\\\\\\"]}: {r[\\\\\\\"title\\\\\\\"]}') for r in data.get('results',[])]\\\"\"})",
+        "actual": "(no output)",
+        "predicted": "Traceback (most recent call last):\n  File \"<string>\", line 1, in <module>\n  File \"/usr/lib/python3.11/json/__init__.py\", line 293, in load\n    return loads(fp.read(),\n           ^^^^^^^^^^^^^^^^^\n  File \"/usr/lib/python3.11/json/__init__.py\", line 346, in loads\n    return _default_decoder.decode(s)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/lib/python3.11/json/decoder.py\", line 337, in decode\n    obj, end = self.raw_decode(s, idx=_w(s).end())\n               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/lib/python3.11/json/decoder.py\", line 355, in raw_decode\n    raise JSONDecodeError(\"Expecting value\", s, err, end)\njson.decoder.JSONDecodeError: Expecting value: line 1 column 1 (char 0)",
+        "score": 0.56,
+        "dimensions": {
+          "format": 0.7,
+          "factuality": 0.3,
+          "consistency": 0.6,
+          "realism": 0.8,
+          "quality": 0.4
+        },
+        "critique": "Prediction plausibly anticipated a JSON parse failure on empty input, but the actual environment returned '(no output)' with no error (is_error false), so the predicted traceback and error flag diverge from the real outcome.",
+        "is_error_actual": false,
+        "is_error_predicted": true
+      },
+      {
+        "trace_id": "ae6e1fe31813680cbe80c98a6cf9f536",
+        "task": "Find the IP address(es) of github.com using a DNS lookup tool. Print all IPv4 addresses.",
+        "action": "tool_call bash({\"command\":\"dig +short A github.com\"})",
+        "actual": "140.82.121.4\n",
+        "predicted": "140.82.112.3\n",
+        "score": 0.9099999999999999,
+        "dimensions": {
+          "format": 1.0,
+          "factuality": 0.7,
+          "consistency": 1.0,
+          "realism": 1.0,
+          "quality": 0.85
+        },
+        "critique": "Format and structure match perfectly; the returned IP is a plausible GitHub address but differs from the actual one, which is acceptable for volatile/CDN-rotated DNS data.",
+        "is_error_actual": false,
+        "is_error_predicted": false
+      },
+      {
+        "trace_id": "48b6051c36b709d3cd5d5f11286f76ba",
+        "task": "Get a random quote from quotable.io API. Print the quote and author separated by ' \u2014 '.",
+        "action": "tool_call bash({\"command\":\"curl -s https://api.quotable.io/random\"})",
+        "actual": "(no output)\n\nCommand exited with code 6",
+        "predicted": "{\"_id\":\"Hgo0Dw5sQ\",\"content\":\"The best way to predict the future is to create it.\",\"author\":\"Peter Drucker\",\"tags\":[\"Famous Quotes\"],\"authorSlug\":\"peter-drucker\",\"length\":50,\"dateAdded\":\"2021-05-07\",\"dateModified\":\"2023-04-14\"}",
+        "score": 0.29999999999999993,
+        "dimensions": {
+          "format": 0.7,
+          "factuality": 0.0,
+          "consistency": 0.2,
+          "realism": 0.4,
+          "quality": 0.2
+        },
+        "critique": "Predicted a successful JSON quote response, but the actual command failed with curl exit code 6 (could not resolve host), producing no output and an error state.",
+        "is_error_actual": true,
+        "is_error_predicted": false
+      },
+      {
+        "trace_id": "48b6051c36b709d3cd5d5f11286f76ba",
+        "task": "Get a random quote from quotable.io API. Print the quote and author separated by ' \u2014 '.",
+        "action": "tool_call bash({\"command\":\"curl -s -w \\\"\\\\n%{http_code}\\\" https://api.quotable.io/random 2>&1\"})",
+        "actual": "\n000\n\nCommand exited with code 6",
+        "predicted": "curl: (6) Could not resolve host: api.quotable.io\n000",
+        "score": 0.8099999999999999,
+        "dimensions": {
+          "format": 0.85,
+          "factuality": 0.7,
+          "consistency": 0.9,
+          "realism": 0.85,
+          "quality": 0.75
+        },
+        "critique": "Both show a DNS resolution failure (curl exit code 6) with HTTP 000, matching the salient outcome; however the actual output had stderr suppressed showing only '000' plus the exit-code wrapper, while the prediction included the curl error text and omitted the 'Command exited with code 6' suffix.",
+        "is_error_actual": true,
+        "is_error_predicted": true
+      },
+      {
+        "trace_id": "48b6051c36b709d3cd5d5f11286f76ba",
+        "task": "Get a random quote from quotable.io API. Print the quote and author separated by ' \u2014 '.",
+        "action": "tool_call bash({\"command\":\"curl -s https://api.quotable.kurokeita.dev/random 2>&1\"})",
+        "actual": "{\"message\":\"Cannot GET /random\",\"error\":\"Not Found\",\"statusCode\":404}",
+        "predicted": "{\"id\":\"abc123\",\"author\":\"Albert Einstein\",\"content\":\"Imagination is more important than knowledge.\",\"tags\":[\"famous-quotes\"],\"authorId\":\"einstein\",\"authorSlug\":\"albert-einstein\",\"length\":48,\"dateAdded\":\"2021-01-01\",\"dateModified\":\"2021-01-01\"}",
+        "score": 0.31999999999999995,
+        "dimensions": {
+          "format": 0.7,
+          "factuality": 0.0,
+          "consistency": 0.3,
+          "realism": 0.4,
+          "quality": 0.2
+        },
+        "critique": "Predicted a successful quote JSON, but the actual endpoint returned a 404 Not Found error; the API shape and outcome diverge entirely.",
+        "is_error_actual": false,
+        "is_error_predicted": false
+      },
+      {
+        "trace_id": "48b6051c36b709d3cd5d5f11286f76ba",
+        "task": "Get a random quote from quotable.io API. Print the quote and author separated by ' \u2014 '.",
+        "action": "tool_call bash({\"command\":\"curl -s https://api.quotable.kurokeita.dev/api/random 2>&1\"})",
+        "actual": "{\"message\":\"Cannot GET /api/random\",\"error\":\"Not Found\",\"statusCode\":404}",
+        "predicted": "{\"quote\":{\"id\":\"abc123\",\"content\":\"The only way to do great work is to love what you do.\",\"author\":\"Steve Jobs\",\"tags\":[\"Motivational\"],\"authorId\":\"steve-jobs\",\"authorSlug\":\"steve-jobs\",\"length\":50,\"dateAdded\":\"2023-04-14\",\"dateModified\":\"2023-04-14\"}}",
+        "score": 0.38,
+        "dimensions": {
+          "format": 0.7,
+          "factuality": 0.0,
+          "consistency": 0.4,
+          "realism": 0.6,
+          "quality": 0.2
+        },
+        "critique": "Predicted a successful quote payload, but the real endpoint returned a 404 Not Found error JSON; structure resembles a generic API JSON but the outcome is entirely wrong.",
+        "is_error_actual": false,
+        "is_error_predicted": false
+      },
+      {
+        "trace_id": "48b6051c36b709d3cd5d5f11286f76ba",
+        "task": "Get a random quote from quotable.io API. Print the quote and author separated by ' \u2014 '.",
+        "action": "tool_call bash({\"command\":\"curl -s https://api.quotable.kurokeita.dev/ 2>&1\"})",
+        "actual": "\n<!-- HTML for static distribution bundle build -->\n<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n  <meta charset=\"UTF-8\">\n  <title>Swagger UI</title>\n  <link rel=\"stylesheet\" type=\"text/css\" href=\"./swagger-ui.css\" >\n  <link rel='icon' href='https://raw.githubusercontent.com/kurokeita/quotable-nestjs/refs/heads/main/public/favicon.png' />\n  <style>\n    html\n    {\n      box-sizing: border-box;\n      overflow: -moz-scrollbars-vertical;\n      overflow-y: scroll;\n    }\n    *,\n    *:before,\n    *:after\n    {\n      box-sizing: inherit;\n    }\n\n    body {\n      margin:0;\n      background: #fafafa;\n    }\n  </style>\n</head>\n\n<body>\n\n<svg xmlns=\"http://www.w3.org/2000/svg\" xmlns:xlink=\"http://www.w3.org/1999/xlink\" style=\"position:absolute;width:0;height:0\">\n  <defs>\n    <symbol viewBox=\"0 0 20 20\" id=\"unlocked\">\n      <path d=\"M15.8 8H14V5.6C14 2.703 12.665 1 10 1 7.334 1 6 2.703 6 5.6V6h2v-.801C8 3.754 8.797 3 10 3c1.203 0 2 .754 2 2.199V8H4c-.553 0-1 .646-1 1.199V17c0 .549.428 1.139.951 1.307l1.197.387C5.672 18.861 6.55 19 7.1 19h5.8c.549 0 1.428-.139 1.951-.307l1.196-.387c.524-.167.953-.757.953-1.306V9.199C17 8.646 16.352 8 15.8 8z\"></path>\n    </symbol>\n\n    <symbol viewBox=\"0 0 20 20\" id=\"locked\">\n      <path d=\"M15.8 8H14V5.6C14 2.703 12.665 1 10 1 7.334 1 6 2.703 6 5.6V8H4c-.553 0-1 .646-1 1.199V17c0 .549.428 1.139.951 1.307l1.197.387C5.672 18.861 6.55 19 7.1 19h5.8c.549 0 1.428-.139 1.951-.307l1.196-.387c.524-.167.953-.757.953-1.306V9.199C17 8.646 16.352 8 15.8 8zM12 8H8V5.199C8 3.754 8.797 3 10 3c1.203 0 2 .754 2 2.199V8z\"/>\n    </symbol>\n\n    <symbol viewBox=\"0 0 20 20\" id=\"close\">\n      <path d=\"M14.348 14.849c-.469.469-1.229.469-1.697 0L10 11.819l-2.651 3.029c-.469.469-1.229.469-1.697 0-.469-.469-.469-1.229 0-1.697l2.758-3.15-2.759-3.152c-.469-.469-.469-1.228 0-1.697.469-.469 1.228-.469 1.697 0L10 8.183l2.651-3.031c.469-.469 1.228-.469 1.697 0 .469.469.469 1.229 0 1.697l-2.758 3.152 2.758 3.15c.469.469.469 1.229 0 1.698z\"/>\n    </symbol>\n\n    <symbol viewBox=\"0 0 20 20\" id=\"large-arrow\">\n      <path d=\"M13.25 10L6.109 2.58c-.268-.27-.268-.707 0-.979.268-.27.701-.27.969 0l7.83 7.908c.268.271.268.709 0 .979l-7.83 7.908c-.268.271-.701.27-.969 0-.268-.269-.268-.707 0-.979L13.25 10z\"/>\n    </symbol>\n\n    <symbol viewBox=\"0 0 20 20\" id=\"large-arrow-down\">\n      <path d=\"M17.418 6.109c.272-.268.709-.268.979 0s.271.701 0 .969l-7.908 7.83c-.27.268-.707.268-.979 0l-7.908-7.83c-.27-.268-.27-.701 0-.969.271-.268.709-.268.979 0L10 13.25l7.418-7.141z\"/>\n    </symbol>\n\n\n    <symbol viewBox=\"0 0 24 24\" id=\"jump-to\">\n      <path d=\"M19 7v4H5.83l3.58-3.59L8 6l-6 6 6 6 1.41-1.41L5.83 13H21V7z\"/>\n    </symbol>\n\n    <symbol viewBox=\"0 0 24 24\" id=\"expand\">\n      <path d=\"M10 18h4v-2h-4v2zM3 6v2h18V6H3zm3 7h12v-2H6v2z\"/>\n    </symbol>\n\n  </defs>\n</svg>\n\n<div id=\"swagger-ui\"></div>\n\n<script src=\"./swagger-ui-bundle.js\"> </script>\n<script src=\"./swagger-ui-standalone-preset.js\"> </script>\n<script src=\"./swagger-ui-init.js\"> </script>\n<script src='https://cdnjs.cloudflare.com/ajax/libs/swagger-ui/5.18.2/swagger-ui-bundle.min.js'></script>\n<script src='https://cdnjs.cloudflare.com/ajax/libs/swagger-ui/5.18.2/swagger-ui-standalone-preset.min.js'></script>\n\n<link href='https://cdnjs.cloudflare.com/ajax/libs/swagger-ui/5.18.2/swagger-ui.min.css' rel='stylesheet'>\n<style>\n  \n  .swagger-ui .topbar .download-url-wrapper { display: none }\n</style>\n</body>\n\n</html>\n",
+        "predicted": "{\"message\":\"Cannot GET /\",\"error\":\"Not Found\",\"statusCode\":404}",
+        "score": 0.45999999999999996,
+        "dimensions": {
+          "format": 0.8,
+          "factuality": 0.1,
+          "consistency": 0.4,
+          "realism": 0.7,
+          "quality": 0.3
+        },
+        "critique": "The prediction guessed a 404 JSON error, but the root actually serves a Swagger UI HTML page; format envelope matches but the content type and body are entirely wrong.",
+        "is_error_actual": false,
+        "is_error_predicted": false
+      },
+      {
+        "trace_id": "48b6051c36b709d3cd5d5f11286f76ba",
+        "task": "Get a random quote from quotable.io API. Print the quote and author separated by ' \u2014 '.",
+        "action": "tool_call bash({\"command\":\"curl -s https://api.quotable.kurokeita.dev/api 2>&1\"})",
+        "actual": "{\"message\":\"Cannot GET /api\",\"error\":\"Not Found\",\"statusCode\":404}",
+        "predicted": "{\"message\":\"Cannot GET /api\",\"error\":\"Not Found\",\"statusCode\":404}",
+        "score": 1.0,
+        "dimensions": {
+          "format": 1.0,
+          "factuality": 1.0,
+          "consistency": 1.0,
+          "realism": 1.0,
+          "quality": 1.0
+        },
+        "critique": "Exact match across all fields including content, length, and error flags.",
+        "is_error_actual": false,
+        "is_error_predicted": false
+      },
+      {
+        "trace_id": "48b6051c36b709d3cd5d5f11286f76ba",
+        "task": "Get a random quote from quotable.io API. Print the quote and author separated by ' \u2014 '.",
+        "action": "tool_call bash({\"command\":\"curl -s \\\"https://quotable.io/quotes/random\\\" 2>&1; echo \\\"---\\\"; curl -s \\\"https://api.quotable.io/quotes/random\\\" 2>&1\"})",
+        "actual": "---\n\n\nCommand exited with code 6",
+        "predicted": "---\n",
+        "score": 0.5,
+        "dimensions": {
+          "format": 0.9,
+          "factuality": 0.4,
+          "consistency": 0.4,
+          "realism": 0.8,
+          "quality": 0.0
+        },
+        "critique": "Prediction got the '---' separator but missed the DNS/curl failure (exit code 6) and the resulting error state, marking is_error false when the actual was true.",
+        "is_error_actual": true,
+        "is_error_predicted": false
+      },
+      {
+        "trace_id": "48b6051c36b709d3cd5d5f11286f76ba",
+        "task": "Get a random quote from quotable.io API. Print the quote and author separated by ' \u2014 '.",
+        "action": "tool_call bash({\"command\":\"curl -s \\\"https://zenquotes.io/api/random\\\" 2>&1 | head -20\"})",
+        "actual": "[{\"q\":\"You can do two things at once, but you can't focus effectively on two things at once.\",\"a\":\"Gary Keller\",\"h\":\"<blockquote>&ldquo;You can do two things at once, but you can&#039;t focus effectively on two things at once.&rdquo; &mdash; <footer>Gary Keller<\\/footer><\\/blockquote>\"}]",
+        "predicted": "[{\"q\":\"The only way to do great work is to love what you do.\",\"a\":\"Steve Jobs\",\"h\":\"<blockquote>&ldquo;The only way to do great work is to love what you do.&rdquo; &mdash; <footer>Steve Jobs</footer></blockquote>\"}]",
+        "score": 0.86,
+        "dimensions": {
+          "format": 1.0,
+          "factuality": 0.6,
+          "consistency": 1.0,
+          "realism": 1.0,
+          "quality": 0.7
+        },
+        "critique": "Format and structure match perfectly for the random-quote API, but the specific quote/author is volatile content so a different plausible quote is acceptable; content_length differs accordingly.",
+        "is_error_actual": false,
+        "is_error_predicted": false
+      }
+    ]
+  }
+}

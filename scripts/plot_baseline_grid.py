@@ -1,15 +1,23 @@
 #!/usr/bin/env python
-"""Plot the 2x2 baseline grid: {base, GEPA} x {no-RAG, RAG} reconstruction fidelity.
+"""Plot the baseline grid: 5 baselines x 3 corpora open-loop reconstruction fidelity.
 
-Reads the four `wmh eval` reports produced by the grid run (each a JSON map of
-`{file_key: ReplayReport}`), recomputes the step-weighted overall fidelity per cell exactly the way
-`EvalReport` does, and writes a seaborn grouped bar plot plus a markdown results table.
+The five baselines (the bars):
+  1. Opus 4.8, base prompt           (no RAG)
+  2. Opus 4.8, base prompt + RAG
+  3. Opus 4.8, GEPA prompt           (no RAG)
+  4. Opus 4.8, GEPA prompt + RAG
+  5. Qwen-AgentWorld-35B + RAG        (trained world model, Opus judge)
+
+across three corpora (the x-axis groups): tau2-bench, terminal-tasks, swe-bench.
+
+Reads the `wmh eval --out` reports under a results dir, named `grid-<corpus>-<baseline>.json`
+(e.g. `grid-tau2-bench-gepa-rag.json`, `grid-swe-bench-agentworld-rag.json`), each a JSON map of
+`{file_key: ReplayReport}`. Recomputes the step-weighted overall fidelity per cell exactly the way
+`EvalReport` does, then writes a seaborn grouped bar plot plus a markdown results table. Cells whose
+report is missing are skipped (so the plot can be regenerated as runs land).
 
     uv run --extra viz python scripts/plot_baseline_grid.py \
-        --base-norag   benchmarks/results/grid-base-norag.json \
-        --base-rag     benchmarks/results/grid-base-rag.json \
-        --gepa-norag   benchmarks/results/grid-gepa-norag.json \
-        --gepa-rag     benchmarks/results/grid-gepa-rag.json \
+        --results-dir benchmarks/results \
         --out docs/img/baseline_grid.png --table-out docs/baseline_grid_table.md
 
 The error bar on each cell is the per-step std pooled across files (spread of fidelity across the
@@ -24,63 +32,87 @@ from dataclasses import dataclass
 from math import sqrt
 from pathlib import Path
 
-# A grid cell: which prompt, whether retrieval was on, and where its report lives.
-PROMPT_BASE = "Base"
-PROMPT_GEPA = "GEPA-optimized"
-RAG_ON = "with RAG"
-RAG_OFF = "no RAG"
+# Corpora (x-axis groups), in display order.
+CORPORA = ["tau2-bench", "terminal-tasks", "swe-bench"]
+
+# The five baselines: (file suffix, display label). Order = legend/bar order.
+BASELINES = [
+    ("base-norag", "Opus: base"),
+    ("base-rag", "Opus: base + RAG"),
+    ("gepa-norag", "Opus: GEPA"),
+    ("gepa-rag", "Opus: GEPA + RAG"),
+    ("agentworld-rag", "AgentWorld + RAG"),
+]
 
 
 @dataclass(frozen=True)
 class Cell:
-    prompt: str
-    rag: str
+    corpus: str
+    baseline: str  # display label
     fidelity: float  # step-weighted mean across files
     std: float  # per-step std pooled across files
     n_steps: int
 
 
-def _load_cell(path: Path, prompt: str, rag: str) -> Cell:
-    """Read one `wmh eval --out` report and reduce it to a single (mean, std, n) cell.
+def _reduce_report(data: dict[str, dict[str, float]]) -> tuple[float, float, int]:
+    """Reduce a `{file_key: ReplayReport}` report to (step-weighted mean, pooled std, total steps).
 
-    The report is `{file_key: {mean_score, score_std, n_steps, ...}}`. Overall fidelity is the
-    step-weighted mean of per-file means; the pooled std combines the per-file variances weighted by
-    step count (the same population-variance pooling `replay()` uses within a file).
+    Pools variance across files via the law of total variance (within-file variance + spread of
+    per-file means), step-weighted, so a single-file report collapses to its own score_std.
     """
-    data = json.loads(path.read_text(encoding="utf-8"))
-    if not data:
-        raise ValueError(f"{path} has no per-file reports")
     total = sum(int(rep["n_steps"]) for rep in data.values())
     if total == 0:
-        raise ValueError(f"{path} reports zero held-out steps")
+        raise ValueError("report has zero held-out steps")
     mean = sum(rep["mean_score"] * rep["n_steps"] for rep in data.values()) / total
-    # Pool variance across files: E[var] + var of the per-file means (law of total variance),
-    # both step-weighted, so a single file collapses to its own score_std.
     within = sum((rep["score_std"] ** 2) * rep["n_steps"] for rep in data.values()) / total
     between = (
         sum(((rep["mean_score"] - mean) ** 2) * rep["n_steps"] for rep in data.values()) / total
     )
-    return Cell(prompt=prompt, rag=rag, fidelity=mean, std=sqrt(within + between), n_steps=total)
+    return mean, sqrt(within + between), total
+
+
+def load_cells(results_dir: Path) -> list[Cell]:
+    """Load every present `grid-<corpus>-<baseline>.json` under `results_dir` into a Cell."""
+    cells: list[Cell] = []
+    for corpus in CORPORA:
+        for suffix, label in BASELINES:
+            path = results_dir / f"grid-{corpus}-{suffix}.json"
+            if not path.exists():
+                continue
+            data = json.loads(path.read_text(encoding="utf-8"))
+            if not data:
+                continue
+            mean, std, n = _reduce_report(data)
+            cells.append(Cell(corpus=corpus, baseline=label, fidelity=mean, std=std, n_steps=n))
+    return cells
 
 
 def _markdown_table(cells: list[Cell]) -> str:
-    """Render the four cells as a 2x2 markdown table (rows = prompt, cols = RAG on/off)."""
-    by_key = {(c.prompt, c.rag): c for c in cells}
-    lines = [
-        "| Prompt | no RAG | with RAG |",
-        "|---|---|---|",
-    ]
-    for prompt in (PROMPT_BASE, PROMPT_GEPA):
+    """Rows = baseline, columns = corpus; each cell is `fidelity ± std (n)`."""
+    by_key = {(c.corpus, c.baseline): c for c in cells}
+    present_corpora = [c for c in CORPORA if any(k[0] == c for k in by_key)]
+    header = "| Baseline | " + " | ".join(present_corpora) + " |"
+    sep = "|" + "---|" * (len(present_corpora) + 1)
+    lines = [header, sep]
+    for _suffix, label in BASELINES:
+        if not any(k[1] == label for k in by_key):
+            continue
         cols = []
-        for rag in (RAG_OFF, RAG_ON):
-            c = by_key.get((prompt, rag))
+        for corpus in present_corpora:
+            c = by_key.get((corpus, label))
             cols.append("—" if c is None else f"{c.fidelity:.3f} ± {c.std:.3f}")
-        label = f"**{prompt}**" if prompt == PROMPT_GEPA else prompt
-        lines.append(f"| {label} | {cols[0]} | {cols[1]} |")
-    n = next(iter(cells)).n_steps
+        bold = label.startswith("AgentWorld") or label == "Opus: GEPA + RAG"
+        name = f"**{label}**" if bold else label
+        lines.append(f"| {name} | " + " | ".join(cols) + " |")
+    # Held-out step counts per corpus (footnote).
+    counts = []
+    for corpus in present_corpora:
+        n = next((c.n_steps for c in cells if c.corpus == corpus), 0)
+        counts.append(f"{corpus} {n}")
     lines.append("")
     lines.append(
-        f"_Open-loop reconstruction fidelity (0–1), {n} held-out steps, Bedrock Opus 4.8._"
+        "_Open-loop reconstruction fidelity (0–1), all held-out turns, Bedrock Opus 4.8 judge. "
+        f"Held-out steps: {', '.join(counts)}._"
     )
     return "\n".join(lines)
 
@@ -93,60 +125,69 @@ def _plot(cells: list[Cell], out: Path) -> None:
     import seaborn as sns
 
     sns.set_theme(style="whitegrid", context="talk")
-    prompts = [PROMPT_BASE, PROMPT_GEPA]
-    rags = [RAG_OFF, RAG_ON]
-    by_key = {(c.prompt, c.rag): c for c in cells}
-    palette = sns.color_palette("deep", 2)
+    by_key = {(c.corpus, c.baseline): c for c in cells}
+    present_corpora = [c for c in CORPORA if any(k[0] == c for k in by_key)]
+    labels = [lab for _s, lab in BASELINES if any(k[1] == lab for k in by_key)]
+    palette = sns.color_palette("deep", len(labels))
 
-    fig, ax = plt.subplots(figsize=(8, 5.5))
-    width = 0.36
-    x = range(len(prompts))
-    for j, rag in enumerate(rags):
-        heights = [by_key[(p, rag)].fidelity for p in prompts]
-        errs = [by_key[(p, rag)].std for p in prompts]
-        positions = [i + (j - 0.5) * width for i in x]
+    fig, ax = plt.subplots(figsize=(12, 6.5))
+    n = len(labels)
+    group_w = 0.8
+    bar_w = group_w / n
+    x = range(len(present_corpora))
+    for j, label in enumerate(labels):
+        heights = [
+            (by_key.get((c, label)).fidelity if (c, label) in by_key else 0.0)
+            for c in present_corpora
+        ]
+        errs = [
+            (by_key.get((c, label)).std if (c, label) in by_key else 0.0) for c in present_corpora
+        ]
+        positions = [i - group_w / 2 + bar_w * (j + 0.5) for i in x]
         bars = ax.bar(
             positions,
             heights,
-            width,
+            bar_w,
             yerr=errs,
-            capsize=5,
-            label=rag,
+            capsize=3,
+            label=label,
             color=palette[j],
             edgecolor="white",
-            error_kw={"alpha": 0.6, "lw": 1.5},
+            linewidth=0.6,
+            error_kw={"alpha": 0.5, "lw": 1.2},
         )
-        ax.bar_label(bars, fmt="%.3f", padding=3, fontsize=12)
+        ax.bar_label(bars, fmt="%.2f", padding=2, fontsize=9)
 
     ax.set_xticks(list(x))
-    ax.set_xticklabels(prompts)
+    ax.set_xticklabels(present_corpora)
     ax.set_ylabel("Reconstruction fidelity")
     ax.set_ylim(0, 1.0)
-    ax.set_title("Open-loop fidelity: prompt × retrieval (Bedrock Opus 4.8)")
-    ax.legend(title="", loc="upper left", frameon=True)
+    ax.set_title("Open-loop world-model fidelity: 5 baselines × 3 corpora")
+    ax.legend(
+        title="",
+        loc="upper center",
+        bbox_to_anchor=(0.5, -0.08),
+        ncol=3,
+        frameon=False,
+        fontsize=11,
+    )
     sns.despine(ax=ax)
     fig.tight_layout()
     out.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(out, dpi=150)
+    fig.savefig(out, dpi=150, bbox_inches="tight")
     print(f"wrote plot -> {out}")
 
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--base-norag", type=Path, required=True)
-    ap.add_argument("--base-rag", type=Path, required=True)
-    ap.add_argument("--gepa-norag", type=Path, required=True)
-    ap.add_argument("--gepa-rag", type=Path, required=True)
+    ap.add_argument("--results-dir", type=Path, default=Path("benchmarks/results"))
     ap.add_argument("--out", type=Path, default=Path("docs/img/baseline_grid.png"))
     ap.add_argument("--table-out", type=Path, default=None)
     args = ap.parse_args()
 
-    cells = [
-        _load_cell(args.base_norag, PROMPT_BASE, RAG_OFF),
-        _load_cell(args.base_rag, PROMPT_BASE, RAG_ON),
-        _load_cell(args.gepa_norag, PROMPT_GEPA, RAG_OFF),
-        _load_cell(args.gepa_rag, PROMPT_GEPA, RAG_ON),
-    ]
+    cells = load_cells(args.results_dir)
+    if not cells:
+        raise SystemExit(f"no grid-*.json reports found under {args.results_dir}")
     table = _markdown_table(cells)
     print(table)
     print()
