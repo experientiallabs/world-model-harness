@@ -43,7 +43,7 @@ and `wmh play` only use models built locally in that directory.
 | Command | What it does |
 |---|---|
 | `wmh build` | Builds a named world model from OTel traces or a vendor trace pull. It ingests traces, normalizes them, splits train/held-out data, builds the retrieval index, runs GEPA prompt optimization, and writes the artifact to `.wmh/models/<name>/`. With no required inputs on a TTY, it opens the guided wizard. |
-| `wmh list` | Lists locally built world models found under `.wmh/models/`, including provider, held-out score, rollout count, and frontier size when those metrics exist. It does not read committed example folders or prebuilt model artifacts. |
+| `wmh list` | Lists world models found under the selected root's `models/` directory, including provider, held-out score, rollout count, and frontier size when those metrics exist. By default, the selected root is `.wmh/`, so plain `wmh list` does not read committed example artifacts. |
 | `wmh eval <trace files...>` | Scores reconstruction fidelity on one or more OTel trace files. It performs a deterministic train/held-out split, replays held-out steps through the base or supplied prompt, grades predicted observations against recorded observations, and prints per-file plus overall fidelity. |
 | `wmh eval list` | Lists named eval suites from `examples/<task>/evals/*.toml`. Suites are example-local definitions for repeatable reconstruction-fidelity runs. |
 | `wmh eval run <suite>` | Runs a named eval suite, using its configured trace files and split/scoring settings. Results are written as local JSON under `.wmh/evals/<task>/<suite>/` unless `--out` is supplied. The default suite for an example can be selected by task name, e.g. `wmh eval run tau-bench`. |

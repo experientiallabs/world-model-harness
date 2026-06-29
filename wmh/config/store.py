@@ -1,18 +1,18 @@
 """Named world models on disk.
 
-The project root (`.wmh/` by default) holds the user's own world models under `models/<name>/`. Each
-model directory is a self-contained artifact in the layout `ArtifactPaths` already understands
+The selected project root (`.wmh/` by default) holds named world models under `models/<name>/`.
+Each model directory is a self-contained artifact in the layout `ArtifactPaths` already understands
 (config.toml, prompts/, index/, metrics.json). The store turns names into directories, lists what
-has been built, and reads a small summary for `wmh list`.
+is available, and reads a small summary for `wmh list`.
 
     .wmh/                <- writable: where `wmh build` writes
       models/
         tau2-airline/    <- one artifact (config.toml, prompts/, index/, metrics.json)
         retail-bench/    <- another
 
-"Filesystem as DB": loading a model is just reading its folder. The store only looks under the
-writable project root; example corpora in `examples/` are inputs for `wmh build`, not prebuilt
-models.
+"Filesystem as DB": loading a model is just reading its folder. The default root is the writable
+`.wmh/` directory used by `wmh build`; callers can pass another root such as `examples/<task>` to
+read intentional prebuilt example artifacts from that root's `models/` directory.
 """
 
 from __future__ import annotations
@@ -55,14 +55,14 @@ class ModelInfo(BaseModel):
 
 
 class WorldModelStore:
-    """Resolves and enumerates named world models under the writable project root."""
+    """Resolves and enumerates named world models under a selected project root."""
 
     def __init__(self, root: str | Path = ARTIFACT_DIR) -> None:
         self.root = Path(root)
 
     @property
     def models_dir(self) -> Path:
-        """The writable models dir (`.wmh/models/`) — where builds are written."""
+        """The selected root's models dir (`.wmh/models/` by default)."""
         return self.root / "models"
 
     def model_dir(self, name: str) -> Path:
