@@ -22,6 +22,9 @@ wmh providers verify
 wmh build --name airline --file examples/tau-bench/traces.otel.jsonl
 wmh list
 wmh eval examples/tau-bench/traces.otel.jsonl
+wmh eval list
+wmh eval run tau-bench
+wmh eval results
 wmh examples list
 wmh examples run tau-bench -- --trace 0
 wmh serve
@@ -42,6 +45,9 @@ and `wmh play` only use models built locally in that directory.
 | `wmh build` | Builds a named world model from OTel traces or a vendor trace pull. It ingests traces, normalizes them, splits train/held-out data, builds the retrieval index, runs GEPA prompt optimization, and writes the artifact to `.wmh/models/<name>/`. With no required inputs on a TTY, it opens the guided wizard. |
 | `wmh list` | Lists locally built world models found under `.wmh/models/`, including provider, held-out score, rollout count, and frontier size when those metrics exist. It does not read committed example folders or prebuilt model artifacts. |
 | `wmh eval <trace files...>` | Scores reconstruction fidelity on one or more OTel trace files. It performs a deterministic train/held-out split, replays held-out steps through the base or supplied prompt, grades predicted observations against recorded observations, and prints per-file plus overall fidelity. |
+| `wmh eval list` | Lists named eval suites from `examples/<task>/evals/*.toml`. Suites are example-local definitions for repeatable reconstruction-fidelity runs. |
+| `wmh eval run <suite>` | Runs a named eval suite, using its configured trace files and split/scoring settings. Results are written as local JSON under `.wmh/evals/<task>/<suite>/` unless `--out` is supplied. The default suite for an example can be selected by task name, e.g. `wmh eval run tau-bench`. |
+| `wmh eval results [suite]` | Summarizes locally saved named eval results from `.wmh/evals/`. These are generated artifacts and should not be committed. |
 | `wmh serve` | Starts the local FastAPI backend on `127.0.0.1:8000` by default. It serves all locally built models, or only the repeated `--name` selections, through `/world_models/...` HTTP routes. |
 | `wmh demo` | Runs a short demo against a built model. A throwaway LLM agent proposes an action from sampled trace examples, the world model predicts the environment observation, and the CLI prints the action, environment prompt, and observation. |
 | `wmh play` | Opens an interactive REPL for a built model. You type tool calls or free-text actions, and the world model returns observations while maintaining session state and history. |
@@ -60,6 +66,10 @@ Dataset-specific logic lives only under `examples/`. Each task folder is self-co
 Each example folder may include task-local capture or launch helpers. Launch them through
 `wmh examples run <task> -- <args>`. Reusable harness behavior belongs in `wmh/` and should be
 exposed through the `wmh` CLI.
+
+Repeatable eval suite definitions live under `examples/<task>/evals/*.toml`. They point at
+example-local trace files and configure replay options such as train split, sampling, RAG, and
+judge. Generated eval results stay local under `.wmh/evals/`.
 
 Example-local prebuilt artifacts live under `examples/<task>/models/<name>/`; pass
 `--root examples/<task>` to `wmh list`, `wmh demo`, `wmh play`, or `wmh serve` to use one without

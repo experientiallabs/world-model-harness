@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+from pathlib import Path
 from typing import cast
 
 import pytest
@@ -154,6 +155,80 @@ def test_examples_run_invokes_task_launcher(monkeypatch) -> None:  # noqa: ANN00
     assert command[1:] == ["--trace", "0"]
     assert str(seen["cwd"]).endswith("examples/tau-bench")
     assert seen["check"] is False
+
+
+def test_eval_trace_file_command_still_scores(patched_provider, tmp_path) -> None:  # noqa: ANN001
+    result = runner.invoke(
+        app,
+        ["eval", _traces_file(tmp_path), "--judge", "match", "--no-rag"],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "OVERALL" in result.output
+    assert "fidelity=0.500" in result.output
+
+
+def test_eval_suite_list_run_and_results(patched_provider, tmp_path) -> None:  # noqa: ANN001
+    examples_root = tmp_path / "examples"
+    task_dir = examples_root / "tiny-task"
+    evals_dir = task_dir / "evals"
+    evals_dir.mkdir(parents=True)
+    trace_path = task_dir / "traces.otel.jsonl"
+    trace_path.write_text(
+        Path(_traces_file(tmp_path)).read_text(encoding="utf-8"), encoding="utf-8"
+    )
+    (evals_dir / "default.toml").write_text(
+        "\n".join(
+            [
+                'description = "Tiny deterministic suite"',
+                'files = ["../traces.otel.jsonl"]',
+                'judge = "match"',
+                "train_split = 0.5",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    listed = runner.invoke(app, ["eval", "list", "--examples-root", str(examples_root)])
+    assert listed.exit_code == 0, listed.output
+    assert "tiny-task/default" in listed.output
+
+    results_root = tmp_path / ".wmh" / "evals"
+    ran = runner.invoke(
+        app,
+        [
+            "eval",
+            "run",
+            "tiny-task",
+            "--examples-root",
+            str(examples_root),
+            "--results-root",
+            str(results_root),
+        ],
+    )
+    assert ran.exit_code == 0, ran.output
+    assert "wrote eval result" in ran.output
+    result_files = list(results_root.glob("tiny-task/default/*.json"))
+    assert len(result_files) == 1
+    payload = json.loads(result_files[0].read_text(encoding="utf-8"))
+    assert payload["suite"] == "tiny-task/default"
+    assert payload["report"]["overall_fidelity"] == 0.5
+
+    summarized = runner.invoke(
+        app,
+        [
+            "eval",
+            "results",
+            "tiny-task",
+            "--examples-root",
+            str(examples_root),
+            "--results-root",
+            str(results_root),
+        ],
+    )
+    assert summarized.exit_code == 0, summarized.output
+    assert "tiny-task/default" in summarized.output
+    assert "0.500" in summarized.output
 
 
 def test_build_then_list_shows_named_model(patched_provider, tmp_path) -> None:  # noqa: ANN001

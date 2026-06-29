@@ -37,14 +37,15 @@ uv run pytest -q
 
 5. **Do not reintroduce top-level benchmark or artifact surfaces.** Do not add top-level
    `benchmarks/`, `docs/`, `scripts/`, `tools/`, or `world-models/` directories. Do not commit
-   benchmark definitions/results or generated model artifacts outside an example folder. Built
-   models normally belong under the local `.wmh/models/` artifact root; intentional prebuilt example
-   artifacts belong under `examples/<task>/models/`.
+   benchmark definitions/results or generated model artifacts outside an example folder. Named eval
+   suite definitions belong under `examples/<task>/evals/`; generated eval results belong under the
+   local `.wmh/evals/` artifact root. Built models normally belong under `.wmh/models/`;
+   intentional prebuilt example artifacts belong under `examples/<task>/models/`.
 
 6. **Keep dataset-specific logic inside examples.** SWE-bench, tau-bench, terminal-task, and similar
    dataset-specific launch or conversion logic belongs under `examples/<task>/`. A standard example
-   folder should be self-contained, with `traces.otel.jsonl` plus task-local helpers if needed. Launch
-   task helpers through `wmh examples run <task> -- <args>`.
+   folder should be self-contained, with `traces.otel.jsonl`, optional `evals/*.toml` definitions,
+   and task-local helpers if needed. Launch task helpers through `wmh examples run <task> -- <args>`.
 
 7. **Route reusable workflows through `wmh`.** Avoid parallel top-level scripts for harness actions.
    If a workflow is generally useful outside one example dataset, implement it in `wmh/` and expose

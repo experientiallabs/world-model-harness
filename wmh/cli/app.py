@@ -8,7 +8,9 @@ models are named (`--name`), stored under `<root>/models/<name>/`, and listed wi
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import typer
 from rich.console import Console
@@ -25,6 +27,9 @@ from wmh.config import (
 from wmh.providers import ProviderConfig, ProviderKind, verify_all, verify_embedder
 from wmh.providers.base import EmbedderKind
 
+if TYPE_CHECKING:
+    from wmh.engine.eval import EvalReport
+
 app = typer.Typer(help="World Model Harness: a frontier LLM acts as your agent's environment.")
 providers_app = typer.Typer(help="Manage and verify LLM providers.")
 examples_app = typer.Typer(help="List and launch self-contained task examples.")
@@ -34,7 +39,22 @@ _console = Console()
 _CHECK = "[green]✓[/green]"
 
 # Module-level singleton: a typer.Argument call can't be a default inline (ruff B008).
-_EVAL_FILES = typer.Argument(..., help="OTel trace files to score (one corpus each).")
+_EVAL_TOKENS = typer.Argument(
+    None,
+    help="Trace files to score, or eval flow: list | run <suite> | results [suite].",
+)
+
+
+@dataclass(frozen=True)
+class _EvalOptions:
+    prompt_file: str | None
+    train_split: float
+    embed_dim: int
+    use_rag: bool
+    judge: str
+    sample_turns: str
+    seed: int
+    top_k: int
 
 
 @providers_app.command("verify")
@@ -340,62 +360,358 @@ def serve(
 
 @app.command("eval")
 def eval_(  # noqa: A001 - `eval` is the user-facing command name; the builtin isn't used here
-    files: list[str] = _EVAL_FILES,
-    prompt_file: str = typer.Option(None, "--prompt", help="Prompt file; default=BASE_ENV_PROMPT."),
+    tokens: list[str] | None = _EVAL_TOKENS,
+    prompt_file: str | None = typer.Option(
+        None, "--prompt", help="Prompt file; default=BASE_ENV_PROMPT."
+    ),
     provider: str = typer.Option("bedrock", "--provider", help="Provider running the model."),
     model: str = typer.Option("us.anthropic.claude-opus-4-8", help="Model id."),
-    region: str = typer.Option(None, help="AWS region (Bedrock)."),
-    train_split: float = typer.Option(0.7, help="Train/holdout ratio per file."),
-    embed_dim: int = typer.Option(512, help="phi dimensionality for the offline embedder."),
-    no_rag: bool = typer.Option(False, "--no-rag", help="Disable retrieval (zero-shot replay)."),
-    judge: str = typer.Option("rubric", help="Scorer: rubric (5-dim) | match (functional)."),
-    sample_turns: str = typer.Option("all", help="Turns scored per trace: all | sampled (5)."),
-    seed: int = typer.Option(0, help="Seed for reproducible turn sampling."),
-    out: str = typer.Option(None, help="Optional path to write the full JSON report."),
+    region: str | None = typer.Option(None, help="AWS region (Bedrock)."),
+    train_split: float | None = typer.Option(
+        None, help="Train/holdout ratio per file (default: 0.7, or suite config)."
+    ),
+    embed_dim: int | None = typer.Option(
+        None, help="phi dimensionality for the offline embedder (default: 512, or suite config)."
+    ),
+    rag: bool | None = typer.Option(
+        None, "--rag/--no-rag", help="Enable retrieval, or disable it for zero-shot replay."
+    ),
+    judge: str | None = typer.Option(
+        None, help="Scorer: rubric (5-dim) | match (functional). Default: rubric, or suite config."
+    ),
+    sample_turns: str | None = typer.Option(
+        None, help="Turns scored per trace: all | sampled (5). Default: all, or suite config."
+    ),
+    seed: int | None = typer.Option(None, help="Seed for reproducible turn sampling."),
+    top_k: int | None = typer.Option(
+        None, help="Retrieved demos per step (default: 5, or suite config)."
+    ),
+    out: str | None = typer.Option(None, help="Optional path to write the full JSON report."),
+    examples_root: str | None = typer.Option(
+        None, help="Directory containing example eval suites. Default: repo-local examples/."
+    ),
+    results_root: str = typer.Option(
+        f"{ARTIFACT_DIR}/evals", help="Local directory for named eval result JSON."
+    ),
+    limit: int = typer.Option(20, help="Rows to show for `wmh eval results`."),
 ) -> None:
-    """Score reconstruction fidelity: replay held-out steps, judge predicted vs. real observations.
+    """Score reconstruction fidelity, or run named example-local eval suites.
 
-    For each trace file: split train/holdout, replay the holdout through the prompt (with leak-free
-    RAG unless --no-rag), and report per-file + overall fidelity (mean±std across steps).
+    Flows:
+    - `wmh eval <trace files...>`: ad hoc replay scoring.
+    - `wmh eval list`: list named suites under `examples/<task>/evals/`.
+    - `wmh eval run <suite>`: run a suite and save a local JSON result.
+    - `wmh eval results [suite]`: summarize local suite results.
     """
-    from pathlib import Path
+    args = tokens or []
+    suite_root = str(_examples_root()) if examples_root is None else examples_root
+    if args and args[0] == "list":
+        if len(args) != 1:
+            raise typer.BadParameter("usage: wmh eval list")
+        _eval_list(suite_root)
+        return
+    if args and args[0] == "results":
+        if len(args) > 2:
+            raise typer.BadParameter("usage: wmh eval results [suite]")
+        suite_filter = args[1] if len(args) == 2 else None
+        _eval_results(results_root, suite_root, suite_filter, limit=limit)
+        return
+    if args and args[0] == "run":
+        if len(args) != 2:
+            raise typer.BadParameter("usage: wmh eval run <suite>")
+        _eval_run_suite(
+            args[1],
+            examples_root=suite_root,
+            results_root=results_root,
+            prompt_file=prompt_file,
+            provider=provider,
+            model=model,
+            region=region,
+            train_split=train_split,
+            embed_dim=embed_dim,
+            rag=rag,
+            judge=judge,
+            sample_turns=sample_turns,
+            seed=seed,
+            top_k=top_k,
+            out=out,
+        )
+        return
+    if not args:
+        raise typer.BadParameter(
+            "provide trace files, or use `wmh eval list`, `wmh eval run <suite>`, "
+            "or `wmh eval results`"
+        )
 
+    options = _eval_options(
+        prompt_file=prompt_file,
+        train_split=train_split,
+        embed_dim=embed_dim,
+        rag=rag,
+        judge=judge,
+        sample_turns=sample_turns,
+        seed=seed,
+        top_k=top_k,
+    )
+    report = _run_eval_files(
+        [Path(f) for f in args],
+        options,
+        provider=provider,
+        model=model,
+        region=region,
+    )
+    _print_eval_report(report)
+    if out:
+        _write_ad_hoc_eval_report(Path(out), report)
+
+
+def _eval_list(examples_root: str) -> None:
+    from rich.table import Table
+
+    from wmh.engine.eval_suites import discover_eval_suites
+
+    suites = discover_eval_suites(examples_root)
+    if not suites:
+        _console.print("[yellow]no eval suites found[/yellow]")
+        return
+    table = Table(title="Eval suites")
+    table.add_column("Suite", no_wrap=True)
+    table.add_column("Files")
+    table.add_column("Split")
+    table.add_column("Scorer")
+    table.add_column("Description")
+    for suite in suites:
+        table.add_row(
+            suite.id,
+            ", ".join(suite.config.files),
+            f"{suite.config.train_split:.2f}",
+            suite.config.judge,
+            suite.config.description or "",
+        )
+    _console.print(table)
+
+
+def _eval_results(
+    results_root: str,
+    examples_root: str,
+    suite_filter: str | None,
+    *,
+    limit: int,
+) -> None:
+    from rich.table import Table
+
+    from wmh.engine.eval_suites import list_eval_results, resolve_eval_suite
+
+    resolved_suite = suite_filter
+    if suite_filter is not None:
+        try:
+            resolved_suite = resolve_eval_suite(suite_filter, examples_root).id
+        except ValueError:
+            resolved_suite = suite_filter
+    summaries = list_eval_results(results_root, resolved_suite, limit=limit)
+    if not summaries:
+        _console.print("[yellow]no eval results found[/yellow]")
+        return
+    table = Table(title="Eval results")
+    table.add_column("Suite", no_wrap=True)
+    table.add_column("Run")
+    table.add_column("Started")
+    table.add_column("Model")
+    table.add_column("Fidelity", justify="right")
+    table.add_column("Steps", justify="right")
+    table.add_column("Path")
+    for summary in summaries:
+        table.add_row(
+            summary.suite,
+            summary.run_id[:8],
+            summary.started_at,
+            summary.model,
+            f"{summary.overall_fidelity:.3f}±{summary.overall_std:.3f}",
+            str(summary.total_steps),
+            str(summary.path),
+        )
+    _console.print(table)
+
+
+def _eval_run_suite(
+    selector: str,
+    *,
+    examples_root: str,
+    results_root: str,
+    prompt_file: str | None,
+    provider: str,
+    model: str,
+    region: str | None,
+    train_split: float | None,
+    embed_dim: int | None,
+    rag: bool | None,
+    judge: str | None,
+    sample_turns: str | None,
+    seed: int | None,
+    top_k: int | None,
+    out: str | None,
+) -> None:
+    import json
+    from datetime import UTC, datetime
+    from uuid import uuid4
+
+    from wmh.engine.eval_suites import resolve_eval_suite, result_path
+
+    suite = resolve_eval_suite(selector, examples_root)
+    suite_prompt = suite.resolve_prompt()
+    options = _eval_options(
+        prompt_file=prompt_file or (str(suite_prompt) if suite_prompt is not None else None),
+        train_split=train_split if train_split is not None else suite.config.train_split,
+        embed_dim=embed_dim if embed_dim is not None else suite.config.embed_dim,
+        rag=rag if rag is not None else not suite.config.no_rag,
+        judge=judge or suite.config.judge,
+        sample_turns=sample_turns or suite.config.sample_turns,
+        seed=seed if seed is not None else suite.config.seed,
+        top_k=top_k if top_k is not None else suite.config.top_k,
+    )
+    files = suite.resolve_files()
+    report = _run_eval_files(files, options, provider=provider, model=model, region=region)
+    _print_eval_report(report)
+
+    run_id = uuid4().hex
+    started_at = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    destination = Path(out) if out else result_path(results_root, suite, run_id)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "run_id": run_id,
+        "started_at": started_at,
+        "suite": suite.id,
+        "suite_path": str(suite.path),
+        "suite_config": suite.config.model_dump(mode="json"),
+        "config": {
+            "provider": provider,
+            "model": model,
+            "region": region,
+            "prompt": options.prompt_file,
+            "files": [str(path) for path in files],
+            "train_split": options.train_split,
+            "top_k": options.top_k,
+            "sample_turns": options.sample_turns,
+            "seed": options.seed,
+            "rag": options.use_rag,
+            "judge": options.judge,
+            "embed_dim": options.embed_dim,
+        },
+        "report": _eval_report_payload(report),
+    }
+    destination.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    _console.print(f"wrote eval result -> {destination}")
+
+
+def _eval_options(
+    *,
+    prompt_file: str | None,
+    train_split: float | None,
+    embed_dim: int | None,
+    rag: bool | None,
+    judge: str | None,
+    sample_turns: str | None,
+    seed: int | None,
+    top_k: int | None,
+) -> _EvalOptions:
+    split = 0.7 if train_split is None else train_split
+    dim = 512 if embed_dim is None else embed_dim
+    retrieval = True if rag is None else rag
+    scorer = "rubric" if judge is None else judge
+    turns = "all" if sample_turns is None else sample_turns
+    rng_seed = 0 if seed is None else seed
+    demos = 5 if top_k is None else top_k
+    if not 0.0 < split < 1.0:
+        raise typer.BadParameter("--train-split must be between 0 and 1")
+    if dim <= 0:
+        raise typer.BadParameter("--embed-dim must be positive")
+    if demos < 0:
+        raise typer.BadParameter("--top-k must be >= 0")
+    if scorer not in {"rubric", "match"}:
+        raise typer.BadParameter("--judge must be one of: rubric, match")
+    if turns not in {"all", "sampled"}:
+        raise typer.BadParameter("--sample-turns must be one of: all, sampled")
+    return _EvalOptions(
+        prompt_file=prompt_file,
+        train_split=split,
+        embed_dim=dim,
+        use_rag=retrieval,
+        judge=scorer,
+        sample_turns=turns,
+        seed=rng_seed,
+        top_k=demos,
+    )
+
+
+def _run_eval_files(
+    files: list[Path],
+    options: _EvalOptions,
+    *,
+    provider: str,
+    model: str,
+    region: str | None,
+) -> EvalReport:
     from wmh.engine.eval import evaluate_files
     from wmh.engine.prompts import BASE_ENV_PROMPT
     from wmh.optimize.judge import LLMJudge, RubricJudge
     from wmh.providers import ProviderConfig, get_provider
     from wmh.retrieval import HashingEmbedder
 
-    serve_provider = ProviderKind(provider)
+    for path in files:
+        if not path.exists():
+            raise typer.BadParameter(f"trace file not found: {path}")
+    try:
+        serve_provider = ProviderKind(provider)
+    except ValueError:
+        kinds = ", ".join(k.value for k in ProviderKind)
+        raise typer.BadParameter(f"unknown provider {provider!r}; choose one of: {kinds}") from None
     llm = get_provider(ProviderConfig(kind=serve_provider, model=model, region=region))
-    prompt = Path(prompt_file).read_text(encoding="utf-8") if prompt_file else BASE_ENV_PROMPT
-    embedder = None if no_rag else HashingEmbedder(dim=embed_dim)
-    scorer = RubricJudge(llm) if judge == "rubric" else LLMJudge(llm)
-
-    report = evaluate_files(
-        [Path(f) for f in files],
+    prompt = (
+        Path(options.prompt_file).read_text(encoding="utf-8")
+        if options.prompt_file
+        else BASE_ENV_PROMPT
+    )
+    embedder = HashingEmbedder(dim=options.embed_dim) if options.use_rag else None
+    scorer = RubricJudge(llm) if options.judge == "rubric" else LLMJudge(llm)
+    return evaluate_files(
+        files,
         prompt,
         llm,
         scorer,
         embedder=embedder,
-        train_split=train_split,
-        sample_turns=sample_turns,
-        seed=seed,
+        train_split=options.train_split,
+        top_k=options.top_k,
+        sample_turns=options.sample_turns,
+        seed=options.seed,
     )
+
+
+def _print_eval_report(report: EvalReport) -> None:
     for name, rep in report.per_file.items():
         _console.print(f"  {name:28} {rep.summary()}")
     _console.print(
         f"[bold]OVERALL[/bold] fidelity={report.overall_fidelity:.3f}±{report.overall_std:.3f} "
         f"over {report.total_steps} held-out steps"
     )
-    if out:
-        import json
 
-        Path(out).write_text(
-            json.dumps({n: r.model_dump() for n, r in report.per_file.items()}, indent=2),
-            encoding="utf-8",
-        )
-        _console.print(f"wrote full report -> {out}")
+
+def _write_ad_hoc_eval_report(path: Path, report: EvalReport) -> None:
+    import json
+
+    path.write_text(
+        json.dumps({n: r.model_dump(mode="json") for n, r in report.per_file.items()}, indent=2),
+        encoding="utf-8",
+    )
+    _console.print(f"wrote full report -> {path}")
+
+
+def _eval_report_payload(report: EvalReport) -> dict[str, object]:
+    return {
+        "overall_fidelity": report.overall_fidelity,
+        "overall_std": report.overall_std,
+        "total_steps": report.total_steps,
+        "per_file": {name: rep.model_dump(mode="json") for name, rep in report.per_file.items()},
+    }
 
 
 @app.command("demo")
