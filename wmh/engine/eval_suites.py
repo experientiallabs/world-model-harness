@@ -162,7 +162,7 @@ def list_eval_results(
 
 def _resolve_relative(base: Path, value: str) -> Path:
     path = Path(value)
-    return path if path.is_absolute() else base / path
+    return path.resolve(strict=False) if path.is_absolute() else (base / path).resolve(strict=False)
 
 
 def _read_result_summary(path: Path) -> EvalResultSummary | None:

@@ -213,6 +213,7 @@ def test_eval_suite_list_run_and_results(patched_provider, tmp_path) -> None:  #
     payload = json.loads(result_files[0].read_text(encoding="utf-8"))
     assert payload["suite"] == "tiny-task/default"
     assert payload["report"]["overall_fidelity"] == 0.5
+    assert set(payload["report"]["per_file"]) == {"tiny-task"}
 
     summarized = runner.invoke(
         app,
