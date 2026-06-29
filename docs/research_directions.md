@@ -59,3 +59,17 @@ band** (experiment 1): an effect smaller than the across-seed std is noise.
 - **Base-prompt sensitivity.** Hold everything fixed and vary the GEPA seed prompt. How much does the
   starting point determine the winner — i.e. how much of the fidelity is GEPA vs. the hand-tuned
   base?
+
+## Run: scaling laws (systems, not optimization)
+
+These measure how a property scales with a resource rather than how a knob changes fidelity, so they
+live alongside the ablations but report their own curve (mean ± std across trials/seeds).
+
+- **Concurrency scaling law** ([`concurrency_scaling.md`](./concurrency_scaling.md)) — batch
+  wall-clock vs. how many scenarios reconstruct at once, for the world model and (with `--side both`)
+  the real sandbox, giving the time *differential* T_real(W)/T_world(W). Built on the merged
+  side-by-side concurrency (`wmh bench side-by-side --scenarios/--concurrency`); runner
+  `scripts/run_concurrency_scaling.py`. **tau-bench first**, extensible to terminal-tasks/swe-bench
+  by name.
+- **Trace scaling law** ([`trace_scaling.md`](./trace_scaling.md)) — held-out fidelity vs. number of
+  *training* traces, and where it saturates.

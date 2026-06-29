@@ -29,6 +29,71 @@ from wmh.tracking.metered import MeteredProvider
 from wmh.tracking.tracker import Phase, RunTracker
 
 
+class ScenarioSelection(BaseModel):
+    """The traces a scenario run will replay, plus how they were chosen.
+
+    `scenarios` is the ordered `(pool_index, trace)` list to run. `widened` is True when a held-out
+    pool was too small for the requested batch and we fell back to the full corpus (the caller may
+    want to warn). `pool_kind` is "held-out" or "all" for messaging.
+    """
+
+    model_config = {"arbitrary_types_allowed": True}
+
+    scenarios: list[tuple[int, Trace]]
+    widened: bool = False
+    pool_kind: str = "held-out"
+
+
+def select_scenarios(
+    traces: list[Trace],
+    holdout: list[Trace],
+    *,
+    trace_index: int | None,
+    scenarios: int,
+) -> ScenarioSelection:
+    """Pick the `scenarios` traces to replay, mirroring the single-scenario default.
+
+    Pure (no console / no Typer) so the CLI commands and the research harness share one selection
+    rule. Held-out traces are preferred; if a demo batch is larger than the held-out pool we widen
+    to the full corpus so the world-model side can line up with the real sandbox runner. With no
+    `trace_index` (or -1) the simplest = fewest-step traces are chosen; otherwise `scenarios`
+    consecutive indexes from `trace_index`. Raises `ValueError` on an out-of-range / too-large
+    request (the CLI wraps it as a `typer.BadParameter`).
+    """
+    if scenarios < 1:
+        raise ValueError("scenarios must be at least 1")
+    pool = holdout or traces
+    kind = "held-out" if holdout else "all"
+    widened = False
+    requested_end = (
+        trace_index + scenarios if trace_index is not None and trace_index >= 0 else scenarios
+    )
+    if holdout and requested_end > len(pool) and requested_end <= len(traces):
+        pool = traces
+        kind = "all"
+        widened = True
+
+    if trace_index is None or trace_index == -1:
+        # The simplest scenario(s): the traces with the fewest recorded steps (ties broken by corpus
+        # order). Keeps the demo short without hunting for small traces.
+        chosen = sorted(enumerate(pool), key=lambda item: len(item[1].steps))[:scenarios]
+    else:
+        if not 0 <= trace_index < len(pool):
+            raise ValueError(f"trace {trace_index} out of range; {len(pool)} {kind} trace(s)")
+        end = trace_index + scenarios
+        if end > len(pool):
+            raise ValueError(
+                f"trace {trace_index} with {scenarios} scenario(s) exceeds the {len(pool)} "
+                f"{kind} trace(s)"
+            )
+        chosen = [(i, pool[i]) for i in range(trace_index, end)]
+    if len(chosen) < scenarios:
+        raise ValueError(
+            f"requested {scenarios} scenario(s), but only {len(chosen)} {kind} trace(s) available"
+        )
+    return ScenarioSelection(scenarios=chosen, widened=widened, pool_kind=kind)
+
+
 class ScenarioStep(BaseModel):
     """One replayed step: the action, what the world model predicted, the recorded truth, and how
     long the prediction took (seconds, wall-clock for that single teacher-forced prediction)."""
@@ -154,4 +219,10 @@ def run_scenario(
     )
 
 
-__all__ = ["ScenarioStep", "ScenarioReport", "run_scenario"]
+__all__ = [
+    "ScenarioStep",
+    "ScenarioReport",
+    "ScenarioSelection",
+    "run_scenario",
+    "select_scenarios",
+]

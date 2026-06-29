@@ -623,7 +623,13 @@ def bench_scenario(
     import time
     from pathlib import Path
 
-    from wmh.bench import ScenarioReport, ScenarioStep, load_benchmark, run_scenario
+    from wmh.bench import (
+        ScenarioReport,
+        ScenarioStep,
+        load_benchmark,
+        run_scenario,
+        select_scenarios,
+    )
     from wmh.config import ArtifactPaths, load_config
     from wmh.core.types import Trace
     from wmh.engine.build import split_traces
@@ -660,41 +666,20 @@ def bench_scenario(
     if not traces:
         raise typer.BadParameter(f"benchmark {name!r} ingested no traces")
     train, holdout = split_traces(traces, bench_def.eval.train_split)
-    pool = holdout or traces  # tiny corpora may have no held-out trace; fall back to all
-    kind = "held-out" if holdout else "all"
-    requested_end = (
-        trace_index + scenarios if trace_index is not None and trace_index >= 0 else scenarios
-    )
-    if holdout and requested_end > len(pool) and requested_end <= len(traces):
+    try:
+        selection = select_scenarios(
+            traces, holdout, trace_index=trace_index, scenarios=scenarios
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(f"{name!r}: {exc}") from exc
+    if selection.widened:
         _console.print(
             f"[yellow]requested {scenarios} scenario(s) from "
             f"{'trace ' + str(trace_index) if trace_index is not None else 'the simplest traces'}, "
-            f"but {name!r} only has {len(pool)} held-out trace(s); using all "
+            f"but {name!r} only has fewer held-out trace(s); using all "
             f"{len(traces)} traces instead[/yellow]"
         )
-        pool = traces
-        kind = "all"
-    if trace_index is None or trace_index == -1:
-        # Default: the simplest scenario(s) — the held-out traces with the fewest recorded steps
-        # (ties broken by corpus order). Keeps the demo short without hunting for small traces.
-        selected = sorted(enumerate(pool), key=lambda item: len(item[1].steps))[:scenarios]
-    else:
-        if not 0 <= trace_index < len(pool):
-            raise typer.BadParameter(
-                f"--trace {trace_index} out of range; {name!r} has {len(pool)} {kind} trace(s)"
-            )
-        end = trace_index + scenarios
-        if end > len(pool):
-            raise typer.BadParameter(
-                f"--trace {trace_index} with --scenarios {scenarios} exceeds {name!r}'s "
-                f"{len(pool)} {kind} trace(s)"
-            )
-        selected = [(i, pool[i]) for i in range(trace_index, end)]
-    if len(selected) < scenarios:
-        raise typer.BadParameter(
-            f"requested {scenarios} scenario(s), but {name!r} only has {len(selected)} "
-            f"available {kind} trace(s)"
-        )
+    selected = selection.scenarios
 
     # Resolve the model dir (default: the benchmark name -> the bundled canonical model), then load
     # its serve provider + optimized prompt + embedder — the exact pieces the eval path uses.
@@ -914,7 +899,13 @@ def bench_side_by_side(
     import time
     from pathlib import Path
 
-    from wmh.bench import ScenarioReport, ScenarioStep, load_benchmark, run_scenario
+    from wmh.bench import (
+        ScenarioReport,
+        ScenarioStep,
+        load_benchmark,
+        run_scenario,
+        select_scenarios,
+    )
     from wmh.bench.side_by_side import (
         RealSandboxResult,
         RealSandboxSpec,
@@ -959,39 +950,20 @@ def bench_side_by_side(
     if not traces:
         raise typer.BadParameter(f"benchmark {name!r} ingested no traces")
     train, holdout = split_traces(traces, bench_def.eval.train_split)
-    pool = holdout or traces
-    kind = "held-out" if holdout else "all"
-    requested_end = (
-        trace_index + scenarios if trace_index is not None and trace_index >= 0 else scenarios
-    )
-    if holdout and requested_end > len(pool) and requested_end <= len(traces):
+    try:
+        selection = select_scenarios(
+            traces, holdout, trace_index=trace_index, scenarios=scenarios
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(f"{name!r}: {exc}") from exc
+    if selection.widened:
         _console.print(
             f"[yellow]requested {scenarios} scenario(s) from "
             f"{'trace ' + str(trace_index) if trace_index is not None else 'the simplest traces'}, "
-            f"but {name!r} only has {len(pool)} held-out trace(s); using all "
+            f"but {name!r} only has fewer held-out trace(s); using all "
             f"{len(traces)} traces instead[/yellow]"
         )
-        pool = traces
-        kind = "all"
-    if trace_index is None or trace_index == -1:
-        selected = sorted(enumerate(pool), key=lambda item: len(item[1].steps))[:scenarios]
-    else:
-        if not 0 <= trace_index < len(pool):
-            raise typer.BadParameter(
-                f"--trace {trace_index} out of range; {name!r} has {len(pool)} {kind} trace(s)"
-            )
-        end = trace_index + scenarios
-        if end > len(pool):
-            raise typer.BadParameter(
-                f"--trace {trace_index} with --scenarios {scenarios} exceeds {name!r}'s "
-                f"{len(pool)} {kind} trace(s)"
-            )
-        selected = [(i, pool[i]) for i in range(trace_index, end)]
-    if len(selected) < scenarios:
-        raise typer.BadParameter(
-            f"requested {scenarios} scenario(s), but {name!r} only has {len(selected)} "
-            f"available {kind} trace(s)"
-        )
+    selected = selection.scenarios
 
     store = WorldModelStore(root)
     try:
@@ -1017,7 +989,7 @@ def bench_side_by_side(
     # Pin the real runner to the SAME pool the world-model side resolved against. Only the fallback
     # case (held-out existed but was too small, so we switched to "all") diverges from the child's
     # own default of held-out-when-present; forwarding "all" keeps both sides on one trace.
-    real_trace_pool = "all" if (kind == "all" and holdout) else None
+    real_trace_pool = "all" if selection.widened else None
 
     real_args = list(real_arg or [])
     # Concurrent cold runs of some runners purge a shared image family, deleting images from under

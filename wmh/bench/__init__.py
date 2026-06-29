@@ -27,7 +27,13 @@ from wmh.bench.results import (
     save_run,
 )
 from wmh.bench.runner import RolloutScore, ScoreOnce, run_benchmark
-from wmh.bench.scenario import ScenarioReport, ScenarioStep, run_scenario
+from wmh.bench.scenario import (
+    ScenarioReport,
+    ScenarioSelection,
+    ScenarioStep,
+    run_scenario,
+    select_scenarios,
+)
 from wmh.bench.scoring import evaluate_files_once
 from wmh.bench.side_by_side import (
     RealSandboxResult,
@@ -45,8 +51,10 @@ __all__ = [
     "LeaderboardRow",
     "build_leaderboard",
     "ScenarioReport",
+    "ScenarioSelection",
     "ScenarioStep",
     "run_scenario",
+    "select_scenarios",
     "RealSandboxResult",
     "RealSandboxSpec",
     "real_sandbox_spec",

@@ -29,6 +29,15 @@ from wmh.research.ablation import (
     aggregate,
     run_ablation,
 )
+from wmh.research.concurrency_scaling import (
+    ConcurrencyPoint,
+    ConcurrencyScalingReport,
+    ConcurrencyTrial,
+    RealBatch,
+    Side,
+    WorldBatch,
+    run_concurrency_scaling,
+)
 from wmh.research.pipeline import optimize_prompt, score_prompt
 from wmh.research.seed_stability import SeedStabilityAblation
 
@@ -43,4 +52,11 @@ __all__ = [
     "optimize_prompt",
     "run_ablation",
     "score_prompt",
+    "ConcurrencyPoint",
+    "ConcurrencyScalingReport",
+    "ConcurrencyTrial",
+    "RealBatch",
+    "Side",
+    "WorldBatch",
+    "run_concurrency_scaling",
 ]
