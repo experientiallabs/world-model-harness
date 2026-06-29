@@ -120,3 +120,20 @@ def test_flattened_tool_call_shape(tmp_path: Path) -> None:
     assert step.action.name == "f"
     assert step.action.arguments == {"a": 1}  # arguments object re-parsed by the normalizer
     assert step.observation.content == "ok"
+
+
+def test_empty_tool_arguments_become_empty_dict(tmp_path: Path) -> None:
+    """A tool call with no/blank arguments yields {} args, not a junk {"value": ""}."""
+    convo = {
+        "messages": [
+            {"role": "user", "content": "go"},
+            {"role": "assistant", "tool_calls": [{"id": "c1", "function": {"name": "noop"}}]},
+            {"role": "tool", "tool_call_id": "c1", "content": "done"},
+        ]
+    }
+    path = tmp_path / "c.json"
+    path.write_text(json.dumps(convo), encoding="utf-8")
+
+    step = ChatMessagesAdapter().from_file(str(path))[0].steps[0]
+    assert step.action.name == "noop"
+    assert step.action.arguments == {}

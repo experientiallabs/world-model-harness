@@ -242,3 +242,21 @@ def test_vendor_pull_unsupported_is_friendly() -> None:
         assert "langsmith" in str(exc)
     else:  # pragma: no cover
         raise AssertionError("expected ValueError")
+
+
+def test_empty_string_error_is_not_an_error(tmp_path: Path) -> None:
+    """Some LangSmith dumps set error="" on a successful run; it must NOT mark the step errored."""
+    run = {
+        "id": "r1",
+        "trace_id": "t-empty-err",
+        "run_type": "tool",
+        "name": "lookup",
+        "outputs": {"output": "ok"},
+        "error": "",  # empty string, not a real error
+        "start_time": "2026-01-01T00:00:00",
+    }
+    path = tmp_path / "run.json"
+    path.write_text(json.dumps(run), encoding="utf-8")
+
+    trace = LangSmithAdapter().from_file(str(path))[0]
+    assert trace.steps[0].observation.is_error is False

@@ -10,12 +10,16 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from wmh.core.types import ActionKind
+from pydantic import JsonValue
+
+from wmh.core.types import ActionKind, JsonObject
 from wmh.ingest.adapter import VendorPull
 from wmh.ingest.base import BaseTraceAdapter
 
 
-def _oi_span(span_id: str, kind: str, attrs: dict, *, start: int, name: str = "") -> dict:
+def _oi_span(
+    span_id: str, kind: str, attrs: JsonObject, *, start: int, name: str = ""
+) -> JsonObject:
     """An OpenInference-style OTLP span with a FLAT attribute map (provider export shape)."""
     return {
         "traceId": "oitrace0000000000000000000000000",
@@ -26,7 +30,7 @@ def _oi_span(span_id: str, kind: str, attrs: dict, *, start: int, name: str = ""
     }
 
 
-def _otlp(spans: list[dict]) -> dict:
+def _otlp(spans: list[JsonObject]) -> JsonObject:
     return {"resourceSpans": [{"scopeSpans": [{"spans": spans}]}]}
 
 
@@ -86,11 +90,15 @@ def test_subclass_can_override_spans_from_payload(tmp_path: Path) -> None:
     class CustomAdapter(BaseTraceAdapter):
         name = "custom"
 
-        def spans_from_payload(self, payload):  # noqa: ANN001, ANN202 - test stub
+        def spans_from_payload(self, payload: JsonValue) -> list[SpanRecord]:
             # payload is {"events": [{"call": "...", "result": "..."}]}
             spans: list[SpanRecord] = []
             events = payload.get("events", []) if isinstance(payload, dict) else []
+            if not isinstance(events, list):
+                return spans
             for i, ev in enumerate(events):
+                if not isinstance(ev, dict):
+                    continue
                 spans.append(
                     SpanRecord(
                         trace_id="c" * 32,
@@ -123,3 +131,51 @@ def test_subclass_can_override_spans_from_payload(tmp_path: Path) -> None:
     assert len(traces) == 1
     assert traces[0].steps[0].action.name == "ping"
     assert traces[0].steps[0].observation.content == "pong"
+
+
+def test_multi_step_trace_split_across_jsonl_lines_keeps_order(tmp_path: Path) -> None:
+    """A trace whose spans arrive one-per-JSONL-line must not collide on span_id / start_nano.
+
+    Row-shaped adapters assign per-payload ordinals (0,1,...). With one row per JSONL line, every
+    payload restarts at 0, so without globally-unique span ids the action/observation spans would
+    share `start_nano=0` and the same span_id, scrambling the pairing (regression guard).
+    """
+    from wmh.ingest.normalize import SpanRecord
+
+    class RowAdapter(BaseTraceAdapter):
+        name = "row"
+
+        def spans_from_payload(self, payload: JsonValue) -> list[SpanRecord]:
+            # Each payload (one JSONL line) is a single {kind, tool, content} row -> one span,
+            # always at the per-payload ordinal 0 (the collision-prone case).
+            if not isinstance(payload, dict):
+                return []
+            tool = payload.get("tool")
+            is_tool = payload.get("kind") == "tool"
+            attrs: JsonObject = {
+                "gen_ai.operation.name": "execute_tool" if is_tool else "chat",
+                "gen_ai.tool.name": tool if isinstance(tool, str) else "",
+            }
+            if is_tool:
+                attrs["gen_ai.tool.message"] = payload.get("content", "")
+            else:
+                attrs["gen_ai.tool.call.arguments"] = "{}"
+            return [SpanRecord(trace_id="t" * 32, span_id="x0", start_nano=0, attributes=attrs)]
+
+    # Two steps (callA->resultA, callB->resultB), four JSONL lines, all one trace.
+    lines = [
+        {"kind": "llm", "tool": "callA"},
+        {"kind": "tool", "tool": "callA", "content": "resultA"},
+        {"kind": "llm", "tool": "callB"},
+        {"kind": "tool", "tool": "callB", "content": "resultB"},
+    ]
+    path = tmp_path / "rows.jsonl"
+    path.write_text("\n".join(json.dumps(line) for line in lines) + "\n", encoding="utf-8")
+
+    traces = RowAdapter().from_file(str(path))
+    assert len(traces) == 1
+    steps = traces[0].steps
+    assert [(s.action.name, s.observation.content) for s in steps] == [
+        ("callA", "resultA"),
+        ("callB", "resultB"),
+    ]

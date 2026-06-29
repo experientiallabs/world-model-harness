@@ -71,17 +71,31 @@ class BaseTraceAdapter:
                     continue  # tolerate a truncated/corrupt line; keep the rest
             return payloads
 
+    def _collect_all(self, payloads: list[JsonValue]) -> list[SpanRecord]:
+        """Map every payload to spans and re-stamp `span_id` globally unique in emission order.
+
+        Adapters assign `span_id`/`start_nano` per payload, so a trace split across payloads (e.g.
+        one row/observation/run per JSONL line) would otherwise emit colliding ids and identical
+        `start_nano`. `spans_to_traces` sorts by `(start_nano, span_id)`, so the collision scrambles
+        the action/observation pairing. Stamping a globally monotonic `span_id` makes equal-time
+        spans (the row-adapter case, all `start_nano=0`) order by emission, while real timestamps
+        (e.g. Phoenix) still dominate the sort. Uniqueness is owned here so adapters can't get it
+        wrong individually.
+        """
+        spans: list[SpanRecord] = []
+        for payload in payloads:
+            for span in self.spans_from_payload(payload):
+                span.span_id = f"{len(spans):012d}-{span.span_id}"
+                spans.append(span)
+        return spans
+
     def from_file(self, path: str) -> list[Trace]:
         text = Path(path).read_text(encoding="utf-8")
-        spans: list[SpanRecord] = []
-        for payload in self._load_payloads(text):
-            spans.extend(self.spans_from_payload(payload))
+        spans = self._collect_all(self._load_payloads(text))
         return spans_to_traces(spans, source=f"{self.name}:{path}")
 
     def from_vendor(self, pull: VendorPull) -> list[Trace]:
-        spans: list[SpanRecord] = []
-        for payload in self._pull_payloads(pull):
-            spans.extend(self.spans_from_payload(payload))
+        spans = self._collect_all(self._pull_payloads(pull))
         traces = spans_to_traces(spans, source=f"{self.name}:{pull.project or 'vendor'}")
         if pull.limit is not None:
             traces = traces[: pull.limit]

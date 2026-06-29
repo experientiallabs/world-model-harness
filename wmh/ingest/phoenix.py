@@ -140,7 +140,17 @@ class PhoenixAdapter(BaseTraceAdapter):
     name = "phoenix"
 
     def spans_from_payload(self, payload: JsonValue) -> list[SpanRecord]:
-        """Phoenix native span dicts -> SpanRecords; OTLP envelopes delegate to `collect_spans`."""
+        """Phoenix native span dicts -> SpanRecords; OTLP envelopes delegate to `collect_spans`.
+
+        A list may mix shapes, so route per item rather than all-or-nothing — otherwise a single
+        OTLP-shaped element would send the whole list to `collect_spans`, silently dropping the
+        native dicts (which lack `traceId`).
+        """
+        if isinstance(payload, list):
+            spans: list[SpanRecord] = []
+            for item in payload:
+                spans.extend(self.spans_from_payload(item))
+            return spans
         if _is_otlp(payload):
             return collect_spans(payload)
         return _phoenix_spans(payload)

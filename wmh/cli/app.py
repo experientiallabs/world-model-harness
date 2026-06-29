@@ -807,7 +807,9 @@ def ingest_run(
             )
         else:
             traces = adapter.from_file(file)
-    except ValueError as exc:
+    except (ValueError, OSError) as exc:
+        # ValueError: adapter rejected the input / unsupported pull. OSError: missing/unreadable
+        # --file. Both surface as a clean usage error, not a traceback.
         raise typer.BadParameter(str(exc)) from exc
 
     out_path = Path(out)

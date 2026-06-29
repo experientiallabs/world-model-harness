@@ -295,6 +295,8 @@ def _tool_args(attrs: JsonObject) -> JsonObject:
     if isinstance(raw, dict):
         return raw
     if isinstance(raw, str):
+        if not raw.strip():
+            return {}  # empty/blank serialized args (e.g. a no-arg tool call) -> no arguments
         try:
             parsed: JsonValue = json.loads(raw)
         except json.JSONDecodeError:

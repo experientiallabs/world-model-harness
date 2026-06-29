@@ -69,6 +69,20 @@ def _as_str(value: JsonValue) -> str:
     return value if isinstance(value, str) else ""
 
 
+def _is_error(run: JsonObject) -> bool:
+    """A non-null/non-empty `error` marks the run as failed; an empty string is NOT an error.
+
+    Some LangSmith dumps set `error: ""` on a successful run, so a bare `is not None` check would
+    misclassify it as a failure.
+    """
+    error = run.get("error")
+    if error is None:
+        return False
+    if isinstance(error, str):
+        return bool(error.strip())
+    return bool(error)
+
+
 def _start_ordinal(run: JsonObject, fallback: int) -> int:
     """Map an ISO-8601 `start_time` to a monotonic int; fall back to the list index when absent.
 
@@ -325,7 +339,7 @@ class LangSmithAdapter(BaseTraceAdapter):
 
         for _, run in indexed:
             run_type = _as_str(run.get("run_type")).lower()
-            error = run.get("error") is not None
+            error = _is_error(run)
             outputs = run.get("outputs")
             out_obj: JsonObject = outputs if isinstance(outputs, dict) else {}
 
