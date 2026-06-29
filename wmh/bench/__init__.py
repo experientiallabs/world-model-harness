@@ -29,6 +29,12 @@ from wmh.bench.results import (
 from wmh.bench.runner import RolloutScore, ScoreOnce, run_benchmark
 from wmh.bench.scenario import ScenarioReport, ScenarioStep, run_scenario
 from wmh.bench.scoring import evaluate_files_once
+from wmh.bench.side_by_side import (
+    RealSandboxResult,
+    RealSandboxSpec,
+    real_sandbox_spec,
+    run_real_sandbox,
+)
 
 __all__ = [
     "BenchmarkDef",
@@ -41,6 +47,10 @@ __all__ = [
     "ScenarioReport",
     "ScenarioStep",
     "run_scenario",
+    "RealSandboxResult",
+    "RealSandboxSpec",
+    "real_sandbox_spec",
+    "run_real_sandbox",
     "BenchRun",
     "SeedResult",
     "load_runs",
