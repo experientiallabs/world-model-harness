@@ -17,6 +17,7 @@ from collections.abc import Callable
 
 from wmh.optimize.judge import JUDGE_MARKER
 from wmh.providers.base import (
+    DEFAULT_MAX_TOKENS,
     Completion,
     Message,
     Provider,
@@ -69,7 +70,7 @@ class MeteredProvider:
         messages: list[Message],
         *,
         temperature: float = 0.7,
-        max_tokens: int = 2048,
+        max_tokens: int = DEFAULT_MAX_TOKENS,
     ) -> Completion:
         completion = self._provider.complete(
             system, messages, temperature=temperature, max_tokens=max_tokens

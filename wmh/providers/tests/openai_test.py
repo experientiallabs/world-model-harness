@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from wmh.providers.base import Message, ProviderConfig, ProviderKind
+from wmh.providers.base import DEFAULT_MAX_TOKENS, Message, ProviderConfig, ProviderKind
 from wmh.providers.openai import OpenAIProvider
 
 
@@ -97,6 +97,17 @@ def test_complete_folds_system_and_uses_max_completion_tokens(
         {"role": "system", "content": "be nice"},
         {"role": "user", "content": "yo"},
     ]
+
+
+def test_complete_default_max_tokens_is_8k(monkeypatch: pytest.MonkeyPatch) -> None:
+    chat = _FakeChatCompletions(_FakeChatResponse("hi there", _FakeUsage(9, 4)))
+    provider = OpenAIProvider(_config())
+    fake = _FakeClient(chat, _FakeEmbeddings(_FakeEmbeddingResponse([])))
+    monkeypatch.setattr(provider, "_get_client", lambda: fake)
+
+    provider.complete("be nice", [Message(role="user", content="yo")])
+
+    assert chat.last_kwargs["max_completion_tokens"] == DEFAULT_MAX_TOKENS
 
 
 def test_embed_uses_embed_model(monkeypatch: pytest.MonkeyPatch) -> None:

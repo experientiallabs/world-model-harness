@@ -21,7 +21,7 @@ class FakeProvider:
         messages: list[Message],
         *,
         temperature: float = 0.7,
-        max_tokens: int = 2048,
+        max_tokens: int = 8192,
     ) -> Completion:
         self.last_user = messages[0].content
         return Completion(text=self._reply)

@@ -8,7 +8,7 @@ from typing import cast
 
 import pytest
 
-from wmh.providers.base import Message, ProviderConfig, ProviderKind
+from wmh.providers.base import DEFAULT_MAX_TOKENS, Message, ProviderConfig, ProviderKind
 from wmh.providers.bedrock import BedrockProvider
 
 
@@ -60,6 +60,17 @@ def test_complete_builds_anthropic_body_and_parses(monkeypatch: pytest.MonkeyPat
     assert body["system"] == "sys"
     assert body["messages"] == [{"role": "user", "content": "hi"}]
     assert "temperature" not in body  # Claude 4.8 rejects sampling params
+
+
+def test_complete_default_max_tokens_is_8k(monkeypatch: pytest.MonkeyPatch) -> None:
+    fake = _FakeClient(_payload())
+    provider = BedrockProvider(_config())
+    monkeypatch.setattr(provider, "_get_client", lambda: fake)
+
+    provider.complete("sys", [Message(role="user", content="hi")])
+
+    body = json.loads(cast("str", fake.last_kwargs["body"]))
+    assert body["max_tokens"] == DEFAULT_MAX_TOKENS
 
 
 class _FakeEmbedClient:

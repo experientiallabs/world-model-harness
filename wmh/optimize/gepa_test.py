@@ -19,7 +19,7 @@ from wmh.optimize.gepa import (
     predict_observation,
 )
 from wmh.optimize.judge import JudgeResult
-from wmh.providers.base import Completion, Message, ProviderConfig, ProviderKind
+from wmh.providers.base import DEFAULT_MAX_TOKENS, Completion, Message, ProviderConfig, ProviderKind
 
 
 class FakeProvider:
@@ -32,6 +32,7 @@ class FakeProvider:
         self.reflection_calls = 0
         self.rollout_calls = 0
         self.last_rollout_user: str | None = None
+        self.last_rollout_max_tokens: int | None = None
 
     def complete(
         self,
@@ -39,13 +40,14 @@ class FakeProvider:
         messages: list[Message],
         *,
         temperature: float = 0.7,
-        max_tokens: int = 2048,
+        max_tokens: int = 8192,
     ) -> Completion:
         if "improve the system prompt" in system:
             self.reflection_calls += 1
             return Completion(text=self._mutation)
         self.rollout_calls += 1
         self.last_rollout_user = messages[0].content
+        self.last_rollout_max_tokens = max_tokens
         return Completion(text=self._prediction)
 
     def embed(self, texts: list[str]) -> list[list[float]]:
@@ -91,6 +93,7 @@ def test_predict_observation_uses_provider() -> None:
         demos=[],
     )
     assert obs.content == "the cart now has 1 item"
+    assert provider.last_rollout_max_tokens == DEFAULT_MAX_TOKENS
 
 
 def test_predict_observation_can_include_history() -> None:
@@ -146,7 +149,7 @@ def test_optimize_can_retrieve_from_separate_rag_corpus() -> None:
             messages: list[Message],
             *,
             temperature: float = 0.7,
-            max_tokens: int = 2048,
+            max_tokens: int = 8192,
         ) -> Completion:
             if "improve the system prompt" not in system:
                 self.rollout_user_messages.append(messages[0].content)
@@ -203,7 +206,7 @@ class _TempRecordingProvider(FakeProvider):
         messages: list[Message],
         *,
         temperature: float = 0.7,
-        max_tokens: int = 2048,
+        max_tokens: int = 8192,
     ) -> Completion:
         if "improve the system prompt" not in system:
             self.rollout_temps.append(temperature)

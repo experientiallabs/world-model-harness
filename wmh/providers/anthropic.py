@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, cast
 
 from wmh.providers.base import (
+    DEFAULT_MAX_TOKENS,
     Completion,
     Message,
     ProviderConfig,
@@ -40,7 +41,7 @@ class AnthropicProvider:
         messages: list[Message],
         *,
         temperature: float = 0.7,
-        max_tokens: int = 2048,
+        max_tokens: int = DEFAULT_MAX_TOKENS,
     ) -> Completion:
         # Opus 4.8 takes `system` as a top-level arg and rejects sampling params, so temperature
         # is intentionally not forwarded; adaptive thinking is the default.

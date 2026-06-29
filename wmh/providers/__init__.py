@@ -5,6 +5,7 @@ verified on startup with a cheap ping. Built fresh for this repo; no external cl
 """
 
 from wmh.providers.base import (
+    DEFAULT_MAX_TOKENS,
     Completion,
     EmbedderKind,
     Message,
@@ -20,6 +21,7 @@ __all__ = [
     "ProviderConfig",
     "ProviderKind",
     "EmbedderKind",
+    "DEFAULT_MAX_TOKENS",
     "Completion",
     "Message",
     "VerifyResult",
