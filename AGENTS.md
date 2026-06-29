@@ -1,9 +1,8 @@
 # Agent guide — world-model-harness
 
 A frontier LLM acts as the *environment* an agent steps against, reconstructed from the user's
-OpenTelemetry traces. Three layers: an optimized base prompt, GEPA prompt evolution on a held-out
-trace split, and DreamGym-style top-k retrieval over a trace replay buffer. See `README.md` for the
-value prop and `DESIGN.md` (local, gitignored) for the full design.
+OpenTelemetry traces. The reusable harness lives under `wmh/`; task-specific examples live under
+`examples/`.
 
 ## Toolchain
 
@@ -33,4 +32,19 @@ uv run pytest -q
 
 4. **Keep the structure deep and the command surface small.** Code is organized into domain
    subpackages under `wmh/` (`core`, `config`, `providers`, `ingest`, `retrieval`, `optimize`,
-   `engine`, `serving`, `cli`). The CLI is intentionally minimal — add commands only when needed.
+   `engine`, `serving`, `cli`). The CLI is intentionally minimal; add commands only when they expose
+   reusable harness behavior.
+
+5. **Do not reintroduce committed benchmark or artifact surfaces.** Do not add top-level
+   `benchmarks/`, `docs/`, `scripts/`, `tools/`, or `world-models/` directories. Do not commit
+   benchmark definitions/results, generated world-model artifacts, or prebuilt model indexes. Built
+   models belong under the local `.wmh/models/` artifact root.
+
+6. **Keep dataset-specific logic inside examples.** SWE-bench, tau-bench, terminal-task, and similar
+   dataset-specific launch or conversion logic belongs under `examples/<task>/`. A standard example
+   folder should be self-contained, with `traces.otel.jsonl` plus task-local helpers if needed. Launch
+   task helpers through `wmh examples run <task> -- <args>`.
+
+7. **Route reusable workflows through `wmh`.** Avoid parallel top-level scripts for harness actions.
+   If a workflow is generally useful outside one example dataset, implement it in `wmh/` and expose
+   it through the CLI.

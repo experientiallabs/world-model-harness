@@ -64,8 +64,7 @@ def evaluate_files(
         if not holdout:  # tiny corpus: evaluate on everything
             train, holdout = traces, traces
         retriever = EmbeddingRetriever(embedder) if embedder is not None else None
-        # Clean display name: "tau2-bench.otel.jsonl" -> "tau2-bench".
-        name = path.name.removesuffix(".jsonl").removesuffix(".otel")
+        name = _display_name(path)
         per_file[name] = replay(
             prompt,
             holdout,
@@ -88,3 +87,9 @@ def evaluate_files(
         overall_std=overall_std,
         total_steps=len(step_scores),
     )
+
+
+def _display_name(path: Path) -> str:
+    """Human label for a corpus, using the example folder name for `traces.otel.jsonl`."""
+    name = path.name.removesuffix(".jsonl").removesuffix(".otel")
+    return path.parent.name if name == "traces" else name

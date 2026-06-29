@@ -4,8 +4,7 @@ Replay is TEACHER-FORCED and so perfectly repeatable per step: for each held-out
 all *real recorded* prior same-trace steps plus the step's `(state_before, action)`, have the world
 model predict the observation, then score it against the *real recorded* observation. Nothing the
 model generates feeds forward, so a bad prediction at one step never contaminates another — the
-score isolates per-step fidelity. (The closed-loop counterpart, where predictions feed forward, is a
-future direction: see docs/closed_loop.md.)
+score isolates per-step fidelity.
 
 The judge is pluggable; `RubricJudge` (the Qwen-AgentWorld-style 5-dimension scorer) is the default
 for evaluation, and the report carries per-step scores plus their mean ± std across steps.
@@ -126,7 +125,11 @@ def _score_step(
 ) -> StepResult:
     """Predict the observation for one step and score it against the recorded observation."""
     predicted = predict_observation(
-        provider, prompt, step.task, step.state_before, step.action,
+        provider,
+        prompt,
+        step.task,
+        step.state_before,
+        step.action,
         demos=demos.demos_for(trace_id, step),
         history=history,
     )

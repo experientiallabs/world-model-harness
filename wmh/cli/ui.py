@@ -34,8 +34,6 @@ from rich.progress import (
 )
 from rich.table import Table
 
-from wmh.bench.definition import BenchmarkDef
-from wmh.bench.leaderboard import LeaderboardRow
 from wmh.config import PROVIDER_ENV_VARS, ModelInfo, validate_name
 from wmh.core.types import Action, ActionKind, Session
 from wmh.engine.play import PlayTurn, parse_action, play_turn
@@ -115,7 +113,7 @@ def run_build_wizard(
                 ask,
                 "Path to exported traces (OTLP-JSON / JSONL)",
                 None,
-                example="examples/tau2-bench.otel.jsonl",
+                example="examples/tau-bench/traces.otel.jsonl",
             )
             if not file:
                 console.print("[red]a traces path is required (or pass --vendor)[/red]")
@@ -374,56 +372,6 @@ def build_summary_panel(info: ModelInfo, root: str) -> Panel:
         subtitle="serve it with `wmh serve` or step into it with `wmh play`",
         border_style="green",
     )
-
-
-def benchmarks_table(defs: list[BenchmarkDef]) -> Table:
-    """A table of committed benchmark definitions (for `wmh bench list`)."""
-    table = Table(title="benchmarks")
-    table.add_column("name", style="bold")
-    table.add_column("version", justify="right")
-    table.add_column("traces", justify="right")
-    table.add_column("sample", justify="right")
-    table.add_column("rollouts", justify="right")
-    table.add_column("seeds", justify="right")
-    table.add_column("judge")
-    for d in defs:
-        n_traces = len(d.traces)
-        missing = len(d.missing_traces())
-        traces_cell = str(n_traces) if not missing else f"[red]{n_traces} ({missing} missing)[/red]"
-        sample = "all" if d.eval.sample_turns == "all" else str(d.eval.sample_turns)
-        table.add_row(
-            d.name,
-            d.version,
-            traces_cell,
-            sample,
-            str(d.eval.rollouts),
-            str(len(d.eval.seeds)),
-            d.eval.judge.model,
-        )
-    return table
-
-
-def leaderboard_table(rows: list[LeaderboardRow]) -> Table:
-    """The leaderboard: each prompt's latest fidelity per benchmark (for bare `wmh bench`)."""
-    table = Table(title="leaderboard (open-loop fidelity)")
-    table.add_column("benchmark", style="bold")
-    table.add_column("prompt")
-    table.add_column("fidelity", justify="right")
-    table.add_column("sample", justify="right")
-    table.add_column("rollouts", justify="right")
-    table.add_column("seeds", justify="right")
-    table.add_column("steps", justify="right")
-    for r in rows:
-        table.add_row(
-            r.benchmark,
-            r.prompt_label,
-            f"{r.fidelity_mean:.3f} ± {r.fidelity_std:.3f}",
-            r.sample_turns,
-            str(r.rollouts),
-            str(r.n_seeds),
-            str(r.total_steps),
-        )
-    return table
 
 
 def models_table(infos: list[ModelInfo]) -> Table:
