@@ -11,7 +11,7 @@ It is deliberately isolated:
   trace JSONL is carried back into the repo.
 - The cloned `tau2-bench/`, the `.venv/`, and any `data/` simulations are **git-ignored**. Only
   the example assets in this folder are tracked: the converter, launcher scripts, README,
-  `traces.otel.jsonl`, and `world_model/`.
+  `traces.otel.jsonl`, and `models/`.
 - `examples/` is excluded from the `wmh` lint/type gate (`pyproject.toml`), since these task helpers
   can target different Python versions and import packages `wmh` doesn't depend on.
 
@@ -20,16 +20,16 @@ It is deliberately isolated:
 This example includes the old committed tau world models under:
 
 ```text
-examples/tau-bench/world_model/models/tau-bench/
-examples/tau-bench/world_model/models/tau-telecom/
+examples/tau-bench/models/tau-bench/
+examples/tau-bench/models/tau-telecom/
 ```
 
 Use them as a local model root:
 
 ```bash
-uv run wmh list --root examples/tau-bench/world_model
-uv run wmh demo --root examples/tau-bench/world_model --name tau-telecom
-uv run wmh play --root examples/tau-bench/world_model --name tau-telecom
+uv run wmh list --root examples/tau-bench
+uv run wmh demo --root examples/tau-bench --name tau-telecom
+uv run wmh play --root examples/tau-bench --name tau-telecom
 ```
 
 ## Why capture from the REAL benchmark

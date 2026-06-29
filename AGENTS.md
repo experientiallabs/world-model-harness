@@ -39,7 +39,7 @@ uv run pytest -q
    `benchmarks/`, `docs/`, `scripts/`, `tools/`, or `world-models/` directories. Do not commit
    benchmark definitions/results or generated model artifacts outside an example folder. Built
    models normally belong under the local `.wmh/models/` artifact root; intentional prebuilt example
-   artifacts belong under `examples/<task>/world_model/`.
+   artifacts belong under `examples/<task>/models/`.
 
 6. **Keep dataset-specific logic inside examples.** SWE-bench, tau-bench, terminal-task, and similar
    dataset-specific launch or conversion logic belongs under `examples/<task>/`. A standard example

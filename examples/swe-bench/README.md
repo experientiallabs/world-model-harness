@@ -15,7 +15,7 @@ It is deliberately isolated, exactly like `examples/tau-bench/` and
   Docker daemon. Only the produced trace JSONL is carried back into the repo.
 - The cloned harness, the `.venv/`, the pulled Docker images, and the raw run output are
   **git-ignored**. The tracked example assets are the converter, launcher scripts, README,
-  `traces.otel.jsonl`, and `world_model/`.
+  `traces.otel.jsonl`, and `models/`.
 - `examples/` is excluded from the `wmh` lint/type gate (`pyproject.toml`), since these task helpers
   can target different Python versions and import packages `wmh` doesn't depend on.
 
@@ -24,15 +24,15 @@ It is deliberately isolated, exactly like `examples/tau-bench/` and
 This example includes the old committed SWE-bench world model under:
 
 ```text
-examples/swe-bench/world_model/models/swe-bench/
+examples/swe-bench/models/swe-bench/
 ```
 
 Use it as a local model root:
 
 ```bash
-uv run wmh list --root examples/swe-bench/world_model
-uv run wmh demo --root examples/swe-bench/world_model --name swe-bench
-uv run wmh play --root examples/swe-bench/world_model --name swe-bench
+uv run wmh list --root examples/swe-bench
+uv run wmh demo --root examples/swe-bench --name swe-bench
+uv run wmh play --root examples/swe-bench --name swe-bench
 ```
 
 ## Why capture from the REAL benchmark

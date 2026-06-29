@@ -19,15 +19,15 @@ Like the other task examples, this is isolated from `wmh`:
 This example includes the old committed terminal-tasks world model under:
 
 ```text
-examples/terminal-tasks/world_model/models/terminal-tasks/
+examples/terminal-tasks/models/terminal-tasks/
 ```
 
 Use it as a local model root:
 
 ```bash
-uv run wmh list --root examples/terminal-tasks/world_model
-uv run wmh demo --root examples/terminal-tasks/world_model --name terminal-tasks
-uv run wmh play --root examples/terminal-tasks/world_model --name terminal-tasks
+uv run wmh list --root examples/terminal-tasks
+uv run wmh demo --root examples/terminal-tasks --name terminal-tasks
+uv run wmh play --root examples/terminal-tasks --name terminal-tasks
 ```
 
 ## Source data
