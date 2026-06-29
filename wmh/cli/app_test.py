@@ -129,6 +129,63 @@ def test_bench_subcommand_is_registered() -> None:
     assert "bench" in group_names
 
 
+def test_ingest_subcommand_is_registered() -> None:
+    group_names = {group.name for group in app.registered_groups}
+    assert "ingest" in group_names
+
+
+def test_ingest_list_shows_adapters() -> None:
+    result = runner.invoke(app, ["ingest", "list"])
+    assert result.exit_code == 0, result.output
+    assert "otel-genai" in result.output
+    assert "chat-json" in result.output
+
+
+def test_ingest_run_chat_json_to_otel_jsonl(tmp_path) -> None:  # noqa: ANN001 - pytest fixture
+    convo = {
+        "messages": [
+            {"role": "user", "content": "q"},
+            {
+                "role": "assistant",
+                "tool_calls": [{"id": "c1", "function": {"name": "f", "arguments": "{}"}}],
+            },
+            {"role": "tool", "tool_call_id": "c1", "content": "ok"},
+        ]
+    }
+    src = tmp_path / "convo.json"
+    src.write_text(json.dumps(convo), encoding="utf-8")
+    out = tmp_path / "out.otel.jsonl"
+
+    result = runner.invoke(
+        app, ["ingest", "run", "--source", "chat-json", "--file", str(src), "--out", str(out)]
+    )
+    assert result.exit_code == 0, result.output
+    assert out.exists()
+
+    # The output reloads through the otel-genai adapter (ingestion is a front door to the pipeline).
+    from wmh.ingest.otel_genai import OtelGenAIAdapter
+
+    traces = OtelGenAIAdapter().from_file(str(out))
+    assert len(traces) == 1
+    assert traces[0].steps[0].action.name == "f"
+
+
+def test_ingest_run_unknown_source_is_clean_error(tmp_path) -> None:  # noqa: ANN001 - fixture
+    result = runner.invoke(
+        app,
+        ["ingest", "run", "--source", "nope", "--file", "x", "--out", str(tmp_path / "o.jsonl")],
+    )
+    assert result.exit_code != 0
+    assert "nope" in result.output
+
+
+def test_ingest_run_requires_file_or_pull(tmp_path) -> None:  # noqa: ANN001 - fixture
+    result = runner.invoke(
+        app, ["ingest", "run", "--source", "chat-json", "--out", str(tmp_path / "o.jsonl")]
+    )
+    assert result.exit_code != 0
+
+
 def test_build_then_list_shows_named_model(patched_provider, tmp_path) -> None:  # noqa: ANN001
     root = tmp_path / ".wmh"
     _build(root, "tau2-airline", tmp_path)
