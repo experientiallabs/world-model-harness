@@ -41,7 +41,7 @@ _CHECK = "[green]✓[/green]"
 # Module-level singleton: a typer.Argument call can't be a default inline (ruff B008).
 _EVAL_TOKENS = typer.Argument(
     None,
-    help="Trace files to score, or eval flow: list | run <suite> | results [suite].",
+    help="Trace files to score, or eval flow: list | run <suite> | results optional-suite.",
 )
 
 
@@ -401,7 +401,7 @@ def eval_(  # noqa: A001 - `eval` is the user-facing command name; the builtin i
     - `wmh eval <trace files...>`: ad hoc replay scoring.
     - `wmh eval list`: list named suites under `examples/<task>/evals/`.
     - `wmh eval run <suite>`: run a suite and save a local JSON result.
-    - `wmh eval results [suite]`: summarize local suite results.
+    - `wmh eval results optional-suite`: summarize local suite results.
     """
     args = tokens or []
     suite_root = str(_examples_root()) if examples_root is None else examples_root
