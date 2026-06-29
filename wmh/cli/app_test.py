@@ -577,6 +577,60 @@ def test_bench_side_by_side_runs_multiple_scenarios_concurrently(
     assert any(command[command.index("--trace") + 1] == "1" for command in seen)
 
 
+def test_bench_side_by_side_forwards_trace_pool_on_full_corpus_fallback(
+    patched_provider: object, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # When the world side outgrows the held-out pool and switches to the full corpus, the real
+    # runner must be told (--trace-pool all) so it resolves the SAME index against the full corpus.
+    import wmh.bench.side_by_side as side_by_side
+    from wmh.bench.side_by_side import RealSandboxResult
+
+    root = tmp_path / ".wmh"
+    _build(root, "scen", tmp_path)
+    benchmarks = tmp_path / "benchmarks"
+    # "a" is held out at split 0.7; "c" is train -> 1 held-out, 2 total. Two scenarios from trace 0
+    # exceed the held-out pool but fit the full corpus, triggering the fallback.
+    trace = _multi_traces_file(tmp_path, ["a" * 32, "c" * 32])
+    _benchmark_with_trace(benchmarks, "swe-bench", trace)
+    seen: list[list[str]] = []
+
+    def fake_run(spec, *, timeout_seconds=None):  # noqa: ANN001, ANN202
+        seen.append(spec.command)
+        return RealSandboxResult(spec=spec, returncode=0, seconds=1.0, stdout="REAL OUTPUT")
+
+    monkeypatch.setattr(side_by_side, "run_real_sandbox", fake_run)
+
+    result = runner.invoke(
+        app,
+        ["bench", "side-by-side", "swe-bench", "--model", "scen", "--trace", "0",
+         "--scenarios", "2", "--concurrency", "2", "--benchmarks", str(benchmarks),
+         "--root", str(root)],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "using all 2 traces instead" in result.output
+    assert len(seen) == 2
+    assert all("--trace-pool" in command for command in seen)
+    assert all(command[command.index("--trace-pool") + 1] == "all" for command in seen)
+
+
+def test_bench_side_by_side_rejects_zero_concurrency(
+    patched_provider: object, tmp_path: Path
+) -> None:
+    # An explicit --concurrency 0 must be rejected, not silently treated as unset.
+    root = tmp_path / ".wmh"
+    _build(root, "scen", tmp_path)
+    benchmarks = tmp_path / "benchmarks"
+    _benchmark(benchmarks, "swe-bench", tmp_path)
+    result = runner.invoke(
+        app,
+        ["bench", "side-by-side", "swe-bench", "--model", "scen", "--concurrency", "0",
+         "--benchmarks", str(benchmarks), "--root", str(root)],
+    )
+    assert result.exit_code != 0
+    assert "at least 1" in result.output
+
+
 def test_bench_scenario_unknown_benchmark_is_clean_error(tmp_path) -> None:  # noqa: ANN001
     result = runner.invoke(
         app, ["bench", "scenario", "ghost", "--benchmarks", str(tmp_path / "benchmarks")]

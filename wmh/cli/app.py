@@ -635,9 +635,11 @@ def bench_scenario(
 
     if scenarios < 1:
         raise typer.BadParameter("--scenarios must be at least 1")
-    workers = concurrency or scenarios
-    if workers < 1:
+    # `concurrency or scenarios` would treat an explicit --concurrency 0 as unset, so validate the
+    # raw option before defaulting it.
+    if concurrency is not None and concurrency < 1:
         raise typer.BadParameter("--concurrency must be at least 1")
+    workers = concurrency or scenarios
 
     bench_dir = Path(_resolve_benchmarks_dir(benchmarks)) / name
     try:
@@ -719,6 +721,13 @@ def bench_scenario(
     if serve_updates:
         serve_config = serve_config.model_copy(update=serve_updates)
 
+    # Build the leak-free demo retriever ONCE and share it across workers: index() embeds the whole
+    # train split (expensive), and it is read-only during replay (topk never mutates, add() is never
+    # called), so a per-scenario rebuild would re-embed the train split N times.
+    shared_demos = DemoRetriever(
+        EmbeddingRetriever(get_embedder(config)), train or traces, top_k=config.top_k
+    )
+
     output_lock = threading.Lock()
 
     def render_step(step: ScenarioStep) -> None:
@@ -748,10 +757,6 @@ def bench_scenario(
     def run_one(
         pool_index: int, scenario_trace: Trace, *, live: bool = False, stream_steps: bool = False
     ) -> tuple[int, ScenarioReport]:
-        provider = get_provider(serve_config)
-        # Leak-free demos from TRAIN only, never the query's own trace; identical to eval.
-        retriever = EmbeddingRetriever(get_embedder(config))
-        demos = DemoRetriever(retriever, train or traces, top_k=config.top_k)
         on_step = render_step if live else None
         if stream_steps:
             def on_batch_step(step: ScenarioStep) -> None:
@@ -759,10 +764,10 @@ def bench_scenario(
 
             on_step = on_batch_step
         report = run_scenario(
-            provider,
+            get_provider(serve_config),
             env_prompt,
             scenario_trace,
-            demos,
+            shared_demos,
             benchmark=name,
             model=(model or name),
             on_step=on_step,
@@ -910,7 +915,13 @@ def bench_side_by_side(
     from pathlib import Path
 
     from wmh.bench import ScenarioReport, ScenarioStep, load_benchmark, run_scenario
-    from wmh.bench.side_by_side import RealSandboxResult, real_sandbox_spec, run_real_sandbox
+    from wmh.bench.side_by_side import (
+        RealSandboxResult,
+        RealSandboxSpec,
+        real_sandbox_spec,
+        run_real_sandbox,
+        runner_info,
+    )
     from wmh.config import ArtifactPaths, load_config
     from wmh.core.types import Trace
     from wmh.engine.build import split_traces
@@ -922,14 +933,19 @@ def bench_side_by_side(
 
     if scenarios < 1:
         raise typer.BadParameter("--scenarios must be at least 1")
-    workers = concurrency or scenarios
-    if workers < 1:
+    if concurrency is not None and concurrency < 1:
         raise typer.BadParameter("--concurrency must be at least 1")
+    workers = concurrency or scenarios
 
     bench_dir = Path(_resolve_benchmarks_dir(benchmarks)) / name
     try:
         bench_def = load_benchmark(bench_dir)
     except (FileNotFoundError, ValueError) as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    # Fail before any work if there is no real runner for this benchmark (the real half needs one).
+    try:
+        runner_info(name)
+    except ValueError as exc:
         raise typer.BadParameter(str(exc)) from exc
     missing = bench_def.missing_traces()
     if missing:
@@ -998,16 +1014,30 @@ def bench_side_by_side(
     if serve_updates:
         serve_config = serve_config.model_copy(update=serve_updates)
 
+    # Pin the real runner to the SAME pool the world-model side resolved against. Only the fallback
+    # case (held-out existed but was too small, so we switched to "all") diverges from the child's
+    # own default of held-out-when-present; forwarding "all" keeps both sides on one trace.
+    real_trace_pool = "all" if (kind == "all" and holdout) else None
+
     real_args = list(real_arg or [])
-    if name == "swe-bench" and scenarios > 1 and "--warm" not in real_args:
-        real_args.append("--warm")
-    if name == "swe-bench" and scenarios > 1 and "--cache" not in real_args:
-        real_args.append("--cache")
-    if name == "swe-bench" and scenarios > 1:
-        _console.print(
-            "[yellow]multi-scenario SWE-bench run: adding --warm --cache to avoid concurrent "
-            "global image purges[/yellow]"
-        )
+    # Concurrent cold runs of some runners purge a shared image family, deleting images from under
+    # each other; force warm+cache for those so a multi-scenario batch is safe. Keyed off the runner
+    # registry, not a hardcoded benchmark name.
+    if workers > 1 and runner_info(name).concurrent_purges_images:
+        added = [flag for flag in ("--warm", "--cache") if flag not in real_args]
+        real_args.extend(added)
+        if added:
+            _console.print(
+                f"[yellow]concurrent {name} run: adding {' '.join(added)} to avoid concurrent "
+                "global image purges[/yellow]"
+            )
+
+    # Build the leak-free demo retriever ONCE and share it across workers: it indexes (embeds) the
+    # whole train split, which is expensive, and it is read-only during replay (topk never mutates;
+    # add() is never called), so re-embedding per scenario would be N× wasted work.
+    shared_demos = DemoRetriever(
+        EmbeddingRetriever(get_embedder(config)), train or traces, top_k=config.top_k
+    )
 
     def run_world(pool_index: int, scenario_trace: Trace) -> tuple[int, ScenarioReport, list[str]]:
         world_lines: list[str] = []
@@ -1020,28 +1050,36 @@ def bench_side_by_side(
                 f"world model ->{err} {_clip(step.predicted, 260)}"
             )
 
-        provider = get_provider(serve_config)
-        retriever = EmbeddingRetriever(get_embedder(config))
-        demos = DemoRetriever(retriever, train or traces, top_k=config.top_k)
         report = run_scenario(
-            provider,
+            get_provider(serve_config),
             env_prompt,
             scenario_trace,
-            demos,
+            shared_demos,
             benchmark=name,
             model=(model or name),
             on_step=on_step,
         )
         return pool_index, report, world_lines
 
-    def run_real(pool_index: int) -> tuple[int, RealSandboxResult]:
-        spec = real_sandbox_spec(
+    def make_real_spec(pool_index: int) -> RealSandboxSpec:
+        return real_sandbox_spec(
             name,
             trace_index=pool_index,
             train_split=bench_def.eval.train_split,
+            trace_pool=real_trace_pool,
             extra_args=real_args,
         )
-        return pool_index, run_real_sandbox(spec, timeout_seconds=real_timeout)
+
+    def run_real(pool_index: int) -> tuple[int, RealSandboxResult]:
+        result = run_real_sandbox(make_real_spec(pool_index), timeout_seconds=real_timeout)
+        return pool_index, result
+
+    # Build one spec up front: validates the runner exists (clean error before any work) and gives
+    # the table headers a label. run_real rebuilds per index inside its worker.
+    try:
+        real_spec = make_real_spec(selected[0][0])
+    except (FileNotFoundError, ValueError) as exc:
+        raise typer.BadParameter(str(exc)) from exc
 
     _console.print(
         f"\n[bold]world model[/bold] [cyan]{model or name}[/cyan] — replaying "
@@ -1050,28 +1088,27 @@ def bench_side_by_side(
     world_started = time.monotonic()
     world_results: dict[int, ScenarioReport] = {}
     world_lines_by_index: dict[int, list[str]] = {}
+    world_failures: dict[int, str] = {}
     with cf.ThreadPoolExecutor(max_workers=workers) as executor:
-        futures = [executor.submit(run_world, pool_index, trace) for pool_index, trace in selected]
+        futures = {
+            executor.submit(run_world, pool_index, trace): pool_index
+            for pool_index, trace in selected
+        }
         for future in cf.as_completed(futures):
-            pool_index, report, lines = future.result()
+            fallback_index = futures[future]
+            try:
+                pool_index, report, lines = future.result()
+            except Exception as exc:  # noqa: BLE001 - record per-trace failure, keep the batch going
+                world_failures[fallback_index] = _format_exception(exc)
+                _console.print(
+                    f"  [red]failed trace {fallback_index}: "
+                    f"{_clip(world_failures[fallback_index], 320)}[/red]"
+                )
+                continue
             world_results[pool_index] = report
             world_lines_by_index[pool_index] = lines
     world_wall = time.monotonic() - world_started
 
-    try:
-        real_specs = {
-            pool_index: real_sandbox_spec(
-                name,
-                trace_index=pool_index,
-                train_split=bench_def.eval.train_split,
-                extra_args=real_args,
-            )
-            for pool_index, _trace in selected
-        }
-    except (FileNotFoundError, ValueError) as exc:
-        raise typer.BadParameter(str(exc)) from exc
-
-    real_spec = next(iter(real_specs.values()))
     _console.print(
         f"[bold]{real_spec.label}[/bold] — running {len(selected)} scenario(s) with concurrency "
         f"{workers}"
@@ -1079,9 +1116,19 @@ def bench_side_by_side(
     real_started = time.monotonic()
     real_results: dict[int, RealSandboxResult] = {}
     with cf.ThreadPoolExecutor(max_workers=workers) as executor:
-        futures = [executor.submit(run_real, pool_index) for pool_index, _trace in selected]
+        futures = {executor.submit(run_real, pool_index): pool_index for pool_index, _t in selected}
         for future in cf.as_completed(futures):
-            pool_index, result = future.result()
+            fallback_index = futures[future]
+            try:
+                pool_index, result = future.result()
+            except Exception as exc:  # noqa: BLE001 - surface runner launch failures, keep going
+                real_results[fallback_index] = RealSandboxResult(
+                    spec=real_spec,
+                    returncode=None,
+                    seconds=0.0,
+                    error=_format_exception(exc),
+                )
+                continue
             real_results[pool_index] = result
     real_wall = time.monotonic() - real_started
 
@@ -1103,6 +1150,7 @@ def bench_side_by_side(
         if step.is_error_predicted == step.is_error_actual
     )
     fidelity = (world_matches / world_steps) if world_steps else 0.0
+    world_ok = len(world_results)
     real_total = sum(r.seconds for r in real_results.values())
     real_ok = sum(1 for r in real_results.values() if r.ok)
     summary.add_row(
@@ -1111,7 +1159,8 @@ def bench_side_by_side(
         str(workers),
         f"{world_wall:.1f}s",
         f"{world_total:.1f}s",
-        f"{world_tokens} tokens, ${world_cost:.4f}, fidelity {fidelity:.0%}",
+        f"{world_ok}/{len(selected)} ok, {world_tokens} tokens, ${world_cost:.4f}, "
+        f"fidelity {fidelity:.0%}",
     )
     summary.add_row(
         real_spec.label,
@@ -1130,26 +1179,41 @@ def bench_side_by_side(
     details.add_column("world model", justify="right")
     details.add_column(real_spec.label)
     for pool_index, trace in selected:
-        world_report = world_results[pool_index]
-        real_result = real_results[pool_index]
+        world_report = world_results.get(pool_index)
+        world_cell = (
+            world_report.summary()
+            if world_report is not None
+            else f"failed: {_clip(world_failures.get(pool_index, 'no result'), 60)}"
+        )
+        real_result = real_results.get(pool_index)
+        real_cell = real_result.summary() if real_result is not None else "no result"
         details.add_row(
             str(pool_index),
             trace.trace_id[:8],
             str(len(trace.steps)),
-            world_report.summary(),
-            real_result.summary(),
+            world_cell,
+            real_cell,
         )
     _console.print(details)
 
     if len(selected) != 1:
+        if world_failures:
+            raise typer.Exit(1)
         return
 
     pool_index, _trace = selected[0]
-    world_text = "\n\n".join(world_lines_by_index[pool_index]) or "(no world-model steps)"
-    real_result = real_results[pool_index]
-    real_text = real_result.stdout.strip() or "(no stdout)"
+    world_text = "\n\n".join(world_lines_by_index.get(pool_index, [])) or (
+        f"(world model failed: {world_failures.get(pool_index, 'no result')})"
+    )
+    real_result = real_results.get(pool_index)
+    if real_result is None:
+        raise typer.Exit(1)
+    # Cap the real runner's transcript: a cold SWE-bench build streams thousands of lines, which
+    # would flood the side-by-side panel and dwarf the (clipped) world-model column. Keep the TAIL
+    # (where the result lands) and preserve newlines so the panel stays readable.
+    real_text = _tail(real_result.stdout.strip(), 4000) or "(no stdout)"
     if real_result.stderr.strip():
-        real_text = f"{real_text}\n\n[stderr]\n{real_result.stderr.strip()}"
+        real_text = f"{real_text}\n\n[stderr]\n{_tail(real_result.stderr.strip(), 1000)}"
     if real_result.error:
         real_text = f"{real_text}\n\n[error]\n{real_result.error}"
     if real_result.timed_out:
@@ -1179,6 +1243,13 @@ def _clip(text: str, limit: int = 160) -> str:
     """One-line clip of an observation for the live scenario view."""
     flat = " ".join(text.split())
     return flat if len(flat) <= limit else flat[: limit - 1] + "…"
+
+
+def _tail(text: str, limit: int) -> str:
+    """Keep the last `limit` chars of a long transcript (newlines preserved), marking the cut."""
+    if len(text) <= limit:
+        return text
+    return "…[earlier output truncated]…\n" + text[-limit:]
 
 
 def _format_exception(exc: BaseException) -> str:

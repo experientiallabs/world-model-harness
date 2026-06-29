@@ -56,16 +56,23 @@ def _attr_map(span: dict[str, Any]) -> dict[str, str]:
 
 
 def _load_traces(corpus: Path) -> "list[dict[str, Any]]":
-    """Group the OTel spans into ordered traces: [{trace_id, instance_id, commands:[...]}]."""
+    """Group the OTel spans into ordered traces: [{trace_id, instance_id, commands:[...]}].
+
+    Traces are ordered by their earliest span's (startTimeUnixNano, spanId) — IDENTICAL to the wmh
+    adapter (wmh/ingest/otel_genai.py), NOT by first appearance in the file. `--trace N` must select
+    the SAME scenario index on both sides; ordering by file position would silently diverge from the
+    world-model side whenever the corpus is not already start-time sorted.
+    """
     spans = [json.loads(line) for line in corpus.read_text(encoding="utf-8").splitlines() if line]
-    order: list[str] = []
     by_trace: dict[str, list[dict[str, Any]]] = {}
     for span in spans:
-        tid = span["traceId"]
-        if tid not in by_trace:
-            by_trace[tid] = []
-            order.append(tid)
-        by_trace[tid].append(span)
+        by_trace.setdefault(span["traceId"], []).append(span)
+
+    def _span_key(span: dict[str, Any]) -> tuple[int, str]:
+        return (int(span.get("startTimeUnixNano") or 0), str(span.get("spanId") or ""))
+
+    # Earliest span per trace = its sort key; matches otel_genai's group[0] inter-trace ordering.
+    order = sorted(by_trace, key=lambda tid: _span_key(min(by_trace[tid], key=_span_key)))
 
     traces: list[dict[str, Any]] = []
     for tid in order:
@@ -235,9 +242,11 @@ def _run_many(
     args: argparse.Namespace, selected: list[tuple[int, dict[str, Any]]], *, pool_name: str
 ) -> int:
     """Run several single-scenario invocations concurrently and summarize their timings."""
-    workers = args.concurrency or args.scenarios
-    if workers < 1:
+    # `args.concurrency or args.scenarios` would treat an explicit --concurrency 0 as unset; reject
+    # it before defaulting.
+    if args.concurrency is not None and args.concurrency < 1:
         raise SystemExit("--concurrency must be at least 1")
+    workers = args.concurrency or args.scenarios
     warm = args.warm
     cache = args.cache
     if not warm or not cache:
@@ -325,9 +334,25 @@ def _run_many(
     batch_start = time.monotonic()
     results: list[dict[str, Any]] = []
     with cf.ThreadPoolExecutor(max_workers=workers) as ex:
-        futures = {ex.submit(run_child, item): item[0] for item in selected}
+        futures = {ex.submit(run_child, item): item for item in selected}
         for fut in cf.as_completed(futures):
-            result = fut.result()
+            trace_i, trace = futures[fut]
+            try:
+                result = fut.result()
+            except Exception as exc:  # noqa: BLE001 - record a failed child, keep the batch going
+                # e.g. the child failed to even spawn (bad interpreter, fd exhaustion). Record it as
+                # a failure rather than aborting the batch and orphaning sibling children.
+                result = {
+                    "trace_index": trace_i,
+                    "trace_id": trace["trace_id"],
+                    "instance_id": trace["instance_id"],
+                    "commands": len(trace["commands"]),
+                    "returncode": 1,
+                    "seconds": 0.0,
+                }
+                print(f"[done] trace {trace_i} {trace['instance_id']}: failed to run: {exc}")
+                results.append(result)
+                continue
             results.append(result)
             status = "ok" if result["returncode"] == 0 else f"exit {result['returncode']}"
             print(
