@@ -35,6 +35,20 @@ wmh play --name airline
 World models are named and stored under `.wmh/models/<name>/`. `wmh list`, `wmh serve`, `wmh demo`,
 and `wmh play` only use models built locally in that directory.
 
+## CLI Reference
+
+| Command | What it does |
+|---|---|
+| `wmh build` | Builds a named world model from OTel traces or a vendor trace pull. It ingests traces, normalizes them, splits train/held-out data, builds the retrieval index, runs GEPA prompt optimization, and writes the artifact to `.wmh/models/<name>/`. With no required inputs on a TTY, it opens the guided wizard. |
+| `wmh list` | Lists locally built world models found under `.wmh/models/`, including provider, held-out score, rollout count, and frontier size when those metrics exist. It does not read committed example folders or prebuilt model artifacts. |
+| `wmh eval <trace files...>` | Scores reconstruction fidelity on one or more OTel trace files. It performs a deterministic train/held-out split, replays held-out steps through the base or supplied prompt, grades predicted observations against recorded observations, and prints per-file plus overall fidelity. |
+| `wmh serve` | Starts the local FastAPI backend on `127.0.0.1:8000` by default. It serves all locally built models, or only the repeated `--name` selections, through `/world_models/...` HTTP routes. |
+| `wmh demo` | Runs a short demo against a built model. A throwaway LLM agent proposes an action from sampled trace examples, the world model predicts the environment observation, and the CLI prints the action, environment prompt, and observation. |
+| `wmh play` | Opens an interactive REPL for a built model. You type tool calls or free-text actions, and the world model returns observations while maintaining session state and history. |
+| `wmh providers verify` | Checks provider connectivity for locally built models. It verifies configured completion providers and any provider-backed embedder paths, skipping the offline hashing embedder. |
+| `wmh examples list` | Lists self-contained task examples under `examples/<task>/` that include a `traces.otel.jsonl` corpus or `run.sh` launcher. |
+| `wmh examples run <task> -- <args>` | Runs the selected example's local `run.sh` launcher and forwards all arguments after `--`. This is the standard entrypoint for dataset-specific example helpers. |
+
 ## Examples
 
 Dataset-specific logic lives only under `examples/`. Each task folder is self-contained:
