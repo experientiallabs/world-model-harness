@@ -35,10 +35,11 @@ uv run pytest -q
    `engine`, `serving`, `cli`). The CLI is intentionally minimal; add commands only when they expose
    reusable harness behavior.
 
-5. **Do not reintroduce committed benchmark or artifact surfaces.** Do not add top-level
+5. **Do not reintroduce top-level benchmark or artifact surfaces.** Do not add top-level
    `benchmarks/`, `docs/`, `scripts/`, `tools/`, or `world-models/` directories. Do not commit
-   benchmark definitions/results, generated world-model artifacts, or prebuilt model indexes. Built
-   models belong under the local `.wmh/models/` artifact root.
+   benchmark definitions/results or generated model artifacts outside an example folder. Built
+   models normally belong under the local `.wmh/models/` artifact root; intentional prebuilt example
+   artifacts belong under `examples/<task>/world_model/`.
 
 6. **Keep dataset-specific logic inside examples.** SWE-bench, tau-bench, terminal-task, and similar
    dataset-specific launch or conversion logic belongs under `examples/<task>/`. A standard example

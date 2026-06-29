@@ -61,6 +61,10 @@ Each example folder may include task-local capture or launch helpers. Launch the
 `wmh examples run <task> -- <args>`. Reusable harness behavior belongs in `wmh/` and should be
 exposed through the `wmh` CLI.
 
+Example-local prebuilt artifacts live under `examples/<task>/world_model/models/<name>/`; pass
+`--root examples/<task>/world_model` to `wmh list`, `wmh demo`, `wmh play`, or `wmh serve` to use
+one without copying it into `.wmh/`.
+
 ## Python API
 
 ```python

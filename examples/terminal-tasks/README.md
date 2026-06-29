@@ -1,90 +1,97 @@
-# Terminal Tasks Example
+# terminal-tasks trace capture (isolated)
 
-This directory is a self-contained terminal-task example. It can build or evaluate a world model
-from the committed `traces.otel.jsonl` corpus, regenerate that corpus from real terminal-task agent
-trajectories, and run a recorded scenario against a real shell environment.
+Converts terminal-task computer-use-agent trajectories into the world-model-harness trace corpus
+(`examples/terminal-tasks/traces.otel.jsonl`). These are real agent runs on a terminal/bash
+environment —
+an LLM agent issues `bash` tool calls and the **real command output** is recorded per call (including
+real failures: tracebacks, HTTP 301s, retries). The environment being reconstructed is a Unix shell:
+predict a command's real output given the command.
 
-The source data is real computer-use-agent terminal runs: an LLM agent issues `bash` tool calls and
-the real command output is recorded per call, including failures such as tracebacks, HTTP redirects,
-and retries. The environment being reconstructed is a Unix shell.
+Like the other task examples, this is isolated from `wmh`:
 
-## Files
+- `convert_to_wmh.py` is **stdlib-only** (no `wmh` import, no third-party deps). It reads the source
+  trajectories **in place** and never copies them into the repo — only the produced OTel JSONL is
+  written out.
+- `examples/` is excluded from the `wmh` lint/type gate.
 
-- `traces.otel.jsonl`: OTel trace corpus consumed by `wmh build` and `wmh eval`.
-- `convert_to_wmh.py`: stdlib-only converter from terminal-task trajectories.
-- `run.sh`: one-command launcher for the real terminal scenario runner.
-- `run_real_scenario.py`: real-environment scenario runner for comparison or trace inspection.
+## Prebuilt world model
 
-Generated files stay local and ignored. The converter reads source trajectories in place and only
-writes the OTel JSONL corpus.
+This example includes the old committed terminal-tasks world model under:
 
-## Harness Commands
-
-```bash
-uv run wmh build --name terminal-tasks --file examples/terminal-tasks/traces.otel.jsonl
-uv run wmh eval examples/terminal-tasks/traces.otel.jsonl
-uv run wmh examples run terminal-tasks -- --trace 0
+```text
+examples/terminal-tasks/world_model/models/terminal-tasks/
 ```
 
-`wmh examples run terminal-tasks -- ...` invokes this folder's `run.sh` and forwards the remaining
-arguments.
+Use it as a local model root:
 
-## Source Data
+```bash
+uv run wmh list --root examples/terminal-tasks/world_model
+uv run wmh demo --root examples/terminal-tasks/world_model --name terminal-tasks
+uv run wmh play --root examples/terminal-tasks/world_model --name terminal-tasks
+```
 
-The trajectories are JSONL, one trajectory per line, with a `tool_calls` array. Each tool call has
-`name`, `arguments`, `output`, and an `isError` flag:
+## Source data
+
+The trajectories ship outside this repo as JSONL, one trajectory per line, with a `tool_calls` array;
+each tool call has `name`, `arguments`, `output`, and an `isError` flag:
 
 ```json
 {"task": "...", "task_category": "...", "returncode": 0,
  "tool_calls": [{"name": "bash", "arguments": {"command": "..."}, "output": "...", "isError": false}]}
 ```
 
-## Convert to the Corpus
+## Convert
 
 ```bash
 cd examples/terminal-tasks
-python convert_to_wmh.py <path/to/trajectories.jsonl> \
+python convert_to_wmh.py \
+  <path/to/trajectories.jsonl> \
   --out traces.otel.jsonl --benchmark terminal-tasks \
   --exclude-substr <source-specific-path-fragment>
 ```
 
-`--exclude-substr` is repeatable. It drops any trajectory whose raw JSON contains the given
-case-insensitive substring. This is used to omit trajectories whose captured command output happens
-to reference source-specific filesystem paths. It drops the whole trajectory instead of redacting a
+`--exclude-substr` (repeatable) drops any trajectory whose raw JSON contains the given
+case-insensitive substring — used to omit trajectories whose captured command output happens to
+reference source-specific filesystem paths. It drops the whole trajectory rather than redacting a
 real observation, so every committed observation stays exactly what the environment returned.
 
-Per trajectory, the converter produces one Step per tool call:
+Per trajectory, one Step per tool call:
 
-- `action`: the real tool call, such as `bash {"command": "..."}`.
-- `observation`: the real recorded output, with `is_error` from the call's `isError` flag.
-- `task`: the trajectory's task instruction, carried on the first step.
-- `Trace.metadata`: `benchmark`, `task_category`, and `returncode`.
+- `action` — the real tool call (`bash` + `{"command": ...}`).
+- `observation` — the real recorded `output`, `is_error` from the call's `isError`.
+- `task` — the trajectory's task instruction (on the first step as `gen_ai.prompt`).
+- `Trace.metadata` — `benchmark`, `task_category`, `returncode`.
 
-`state_before` is empty because a shell has no compact, non-leaky state snapshot. Open-loop replay
-reconstructs from the action, retrieved similar steps, and teacher-forced history.
+`state_before` is empty (a shell has no compact, non-leaky state snapshot; open-loop replay
+reconstructs from action + retrieved steps + teacher-forced history).
 
-## Run One Real Scenario
+The output is OTel-GenAI span JSONL that `wmh.ingest.otel_genai` reads directly.
 
-Use the standard examples launcher:
+## Run ONE real scenario (the real-environment side of the comparison)
+
+### One command: `run.sh`
+
+`./run.sh [--trace N]` does it end to end — sets up the venv/deps if missing, builds the
+environment from scratch, runs the recorded scenario, and streams all stdout, ending with the
+total time. That whole standup is the cost the world-model side skips.
+Defaults to the simplest held-out scenario; `--trace N` pins one. Details below.
+
+## Run ONE real scenario (manual)
+
+`run_real_scenario.py` is the real half of the scenario comparison. The world-model side runs the
+same held-out scenario through the model; this runs the SAME held-out scenario for real — and to be
+honest about the standup the world model skips, it **builds a fresh container from scratch**
+first (a `debian:bookworm-slim` base + the real `apt-get install` of `curl`, `python3`, `jq`,
+`ca-certificates`), streams that build, counts it in the total time, *then* `docker exec`s the exact
+recorded `bash` commands. Compare the two end times by eye.
 
 ```bash
-uv run wmh examples run terminal-tasks -- --trace 1
-uv run wmh examples run terminal-tasks -- --trace 1 --cache
+python run_real_scenario.py --trace 1            # cold --no-cache build (default)
+python run_real_scenario.py --trace 1 --cache    # reuse the cached tools image
 ```
 
-Or run the local script directly:
-
-```bash
-cd examples/terminal-tasks
-./run.sh --trace 1
-```
-
-`run.sh` calls `run_real_scenario.py`, which builds a fresh Docker image from `debian:bookworm-slim`
-with real `apt-get install` steps for `curl`, `python3`, `jq`, and `ca-certificates`. The build is
-streamed and counted in total time before the exact recorded `bash` commands are executed.
-
-The runner reads `traces.otel.jsonl` and reuses the harness's train/held-out split logic inline so
-`--trace N` selects the same scenario consistently. These commands may hit live public APIs, so a
-rerun reflects current data and can differ from the recorded observation.
-
-Observed for `--trace 1`, cold build: 8.7s standup plus 10 commands, 10.8s total.
+Stdlib-only (needs Docker); reads the committed `traces.otel.jsonl` and
+re-implements the harness's blake2b train/holdout split inline so `--trace N` matches the world-model
+side. These commands hit live public APIs, so a real re-run reflects *current* data and the output
+may differ from the recorded observation (rates change, releases bump) — that is the honest real
+environment. Observed (`--trace 1`, cold): build from scratch 8.7s + 10 commands, 10.8s total.

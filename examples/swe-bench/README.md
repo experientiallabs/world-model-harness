@@ -1,129 +1,143 @@
-# SWE-bench Example
+# SWE-bench trace capture (isolated)
 
-This directory is a self-contained, local-only SWE-bench example. It can build or evaluate a world
-model from the committed `traces.otel.jsonl` corpus, regenerate that corpus from real
-mini-swe-agent trajectories, and run a recorded scenario against the real SWE-bench environment.
+This directory is a **self-contained, local-only capture tool**. It runs the *real*
+[SWE-bench Verified](https://www.swebench.com/) benchmark with the standard
+[mini-swe-agent](https://github.com/SWE-agent/mini-swe-agent) harness and converts the recorded
+agent trajectories into the world-model-harness trace corpus
+(`examples/swe-bench/traces.otel.jsonl`).
 
-SWE-bench Verified runs each instance in its own Docker image: the buggy repo at a pinned commit plus
-its full test environment. The harness intentionally does not import SWE-bench or mini-swe-agent.
-Only this example folder knows how to set up those dependencies and convert their recorded
-trajectories.
+It is deliberately isolated, exactly like `examples/tau-bench/` and
+`examples/terminal-tasks/`:
 
-## Files
+- **`wmh` never imports SWE-bench or mini-swe-agent.** SWE-bench Verified runs each instance in its
+  own per-instance Docker image (the buggy repo at a pinned commit + its full test env); the agent
+  harness needs its own heavy dependency tree. This tool runs in its own `.venv` and uses the local
+  Docker daemon. Only the produced trace JSONL is carried back into the repo.
+- The cloned harness, the `.venv/`, the pulled Docker images, and the raw run output are
+  **git-ignored**. The tracked example assets are the converter, launcher scripts, README,
+  `traces.otel.jsonl`, and `world_model/`.
+- `examples/` is excluded from the `wmh` lint/type gate (`pyproject.toml`), since these task helpers
+  can target different Python versions and import packages `wmh` doesn't depend on.
 
-- `traces.otel.jsonl`: OTel trace corpus consumed by `wmh build` and `wmh eval`.
-- `convert_to_wmh.py`: stdlib-only converter from mini-swe-agent trajectories.
-- `run.sh`: one-command launcher for the real SWE-bench scenario runner.
-- `run_real_scenario.py`: real-environment scenario runner for comparison or trace inspection.
+## Prebuilt world model
 
-Generated files stay local and ignored: `.venv/`, `mini-swe-agent/`, run output, and Docker images.
+This example includes the old committed SWE-bench world model under:
 
-## Harness Commands
-
-```bash
-uv run wmh build --name swe-bench --file examples/swe-bench/traces.otel.jsonl
-uv run wmh eval examples/swe-bench/traces.otel.jsonl
-uv run wmh examples run swe-bench -- --trace 0
+```text
+examples/swe-bench/world_model/models/swe-bench/
 ```
 
-`wmh examples run swe-bench -- ...` invokes this folder's `run.sh` and forwards the remaining
-arguments.
+Use it as a local model root:
 
-## Why Capture from the Real Benchmark
+```bash
+uv run wmh list --root examples/swe-bench/world_model
+uv run wmh demo --root examples/swe-bench/world_model --name swe-bench
+uv run wmh play --root examples/swe-bench/world_model --name swe-bench
+```
 
-The world model's job is to reconstruct the actual downstream environment. SWE-bench is a real shell
-inside a real repository container: the agent runs commands such as `ls`, `cat`, `sed`, and
-`python -m pytest`, and the environment returns real stdout, stderr, exit codes, tracebacks, build
-errors, and test logs.
+## Why capture from the REAL benchmark
 
-The converter records exactly what the real environment returned. It does not reimplement the
-benchmark. SWE-bench is also the hardest example here for a world model because its observations are
-arbitrary code execution output.
+The world model's job is to reconstruct the **actual downstream benchmark**. SWE-bench's environment
+is a real shell inside a real repo container: the agent runs commands (`ls`, `cat`, `sed`, `python
+-m pytest`, …) and the environment returns the **real** stdout/stderr + exit code — including
+tracebacks, build errors, and test logs. We record exactly what the real environment returned, never
+a re-implementation. (This also makes SWE-bench the *low-fidelity* end of the spectrum for a world
+model: its observations are arbitrary code-execution output, the hardest thing to reconstruct — by
+design, so the harness is honest about where it's hard.)
 
-## Setup for New Captures
+## Setup
 
 ```bash
 cd examples/swe-bench
 git clone --depth 1 https://github.com/SWE-agent/mini-swe-agent.git
 uv venv --python 3.12 .venv
 uv pip install --python .venv ./mini-swe-agent 'swebench' boto3
+#   swebench: the Verified dataset loader + (optionally) the official evaluation harness
+#   boto3:    litellm's AWS Bedrock route
+# Docker must be running locally; the agent execs commands inside the per-instance images.
 ```
 
-Docker must be running locally. `swebench` provides the Verified dataset loader and evaluation
-harness. `boto3` supports litellm's AWS Bedrock route.
+## Run a capture (live, on Bedrock Opus 4.8 — the only creds available here)
 
-## Run a Capture
-
-mini-swe-agent's SWE-bench runner pulls each instance's Docker image, runs the agent loop inside it,
-and writes one `<instance_id>.traj.json` per instance under the output directory.
-
-Opus 4.8 on Bedrock rejects the `temperature` parameter, so the model config must not set one.
+mini-swe-agent's `swebench` runner pulls each instance's Docker image, runs the agent loop inside it,
+and writes one `<instance_id>.traj.json` per instance under the output dir. Opus 4.8 on Bedrock
+rejects the `temperature` parameter, so the model config must not set one.
 
 ```bash
-cd examples/swe-bench
 export AWS_REGION=us-east-1 AWS_REGION_NAME=us-east-1
-
+# A SMALL slice: --subset verified, the first few instances. Each instance pulls a multi-GB
+# x86_64 image (runs under emulation on arm64) and runs a real agent loop, so keep the slice small.
 .venv/bin/python -m minisweagent.run.benchmarks.swebench \
   --subset verified --split test --slice 0:3 \
   --environment-class docker \
   -m bedrock/us.anthropic.claude-opus-4-8 \
   -o runs/verified_capture
+# -> runs/verified_capture/<instance_id>/<instance_id>.traj.json  (one per instance)
 ```
 
-Flag names follow the installed mini-swe-agent version. Check:
+(Flag names follow the installed mini-swe-agent version — see `python -m
+minisweagent.run.benchmarks.swebench --help`. The shape that matters: a per-instance `*.traj.json`
+whose `messages` are the recorded agent loop. The default model config must not set `temperature`
+since Opus 4.8 rejects it; the bundled `swebench.yaml` config is a fine base.)
+
+## Convert to the wmh corpus
 
 ```bash
-.venv/bin/python -m minisweagent.run.benchmarks.swebench --help
-```
-
-The important output shape is a per-instance `*.traj.json` whose `messages` are the recorded agent
-loop.
-
-## Convert to the Corpus
-
-```bash
-cd examples/swe-bench
-.venv/bin/python convert_to_wmh.py runs/verified_capture \
+.venv/bin/python convert_to_wmh.py \
+  runs/verified_capture \
   --out traces.otel.jsonl --benchmark swe-bench
 ```
 
-`convert_to_wmh.py` reads every `*.traj.json` under the run directory and produces one Step per
-agent shell command:
+`convert_to_wmh.py` (stdlib-only, no `wmh` import) reads every `*.traj.json` under the run dir and
+produces, per trajectory, one Step per agent **shell command**:
 
-- `action`: the real command the agent ran, encoded as `bash {"command": "..."}`.
-- `observation`: the real recorded command output the agent saw, with `is_error` set from the
-  recorded non-zero return code.
-- `task`: the instance problem statement, carried on the first step.
-- `Trace.metadata`: `benchmark`, `instance_id`, `repo`, and any gold `model_patch` or `exit_status`
-  present in the source trajectory.
+- `action` — the real command the agent ran (`bash {"command": "..."}`), parsed from the assistant
+  message's fenced command block.
+- `observation` — the **real recorded command output** the agent saw (the following environment
+  message: stdout/stderr inside `<output>…</output>`), with `is_error` from the recorded
+  `<returncode>` being non-zero.
+- `task` — the instance's problem statement (the GitHub issue), carried on the first step.
+- `Trace.metadata` — `benchmark`, `instance_id`, `repo`, and the gold `model_patch`/`exit_status`
+  when present (gold rides along for the deferred closed-loop eval; the open-loop scorer ignores it).
 
-`state_before` is left empty. The environment state is an entire repo working tree, and including it
-would be huge and often leaky. Open-loop replay reconstructs from the action, retrieved similar
-steps, and teacher-forced history.
+`state_before` is left **empty**: the environment state is an entire repo working tree (huge, and a
+`cat` of the buggy file would leak the answer to "what does this file contain?"). Open-loop replay
+reconstructs from the action + retrieved similar steps + teacher-forced history — the whole point.
 
-Reasoning-only assistant turns are not Steps because they have no environment observation to score.
+Pure-reasoning turns (assistant messages with no command) are not Steps: open-loop replay scores a
+predicted observation for `(state, action)`, and a reasoning turn has no environment observation.
 
-## Run One Real Scenario
+The output is OTel-GenAI span JSONL that `wmh.ingest.otel_genai` reads directly.
 
-Use the standard examples launcher:
+## Run ONE real scenario (the real-environment side of the comparison)
+
+### One command: `run.sh`
+
+`./run.sh [--trace N]` does it end to end — sets up the venv/deps if missing, builds the
+environment from scratch, runs the recorded scenario, and streams all stdout, ending with the
+total time. That whole standup is the cost the world-model side skips.
+Defaults to the simplest held-out scenario; `--trace N` pins one. Details below.
+
+## Run ONE real scenario (manual)
+
+`run_real_scenario.py` is the real half of the scenario comparison. The world-model side runs the
+same held-out scenario through the model; this runs the SAME held-out scenario for real — and
+crucially it **builds the environment from scratch** before running anything: the SWE-bench base
+image → the environment image (the real conda/pip **dependency install**) → the instance image
+(clone repo + checkout commit + install). Every `docker build` line is streamed and the whole
+standup is counted in the total time, *then* the recorded commands are `docker exec`'d. That build
+is the slow, multi-minute cost the world model skips entirely.
 
 ```bash
-uv run wmh examples run swe-bench -- --trace 0
-uv run wmh examples run swe-bench -- --trace 0 --cache
+# from the swebench .venv; same --trace index the world-model side uses (same held-out split)
+.venv/bin/python run_real_scenario.py --trace 0           # cold --no-cache build (default)
+.venv/bin/python run_real_scenario.py --trace 0 --cache   # reuse cached layers after the first build
 ```
 
-Or run the local script directly:
+Imports `swebench` (for the official base/env/instance Dockerfiles + setup scripts) but never `wmh`;
+reads the committed `traces.otel.jsonl` and re-implements the harness's blake2b
+train/holdout split inline so `--trace N` selects the SAME scenario as the world-model side.
 
-```bash
-cd examples/swe-bench
-./run.sh --trace 0
-```
-
-`run.sh` sets up the `.venv` if needed, installs dependencies, stands up the real SWE-bench
-environment, and streams stdout. By default the standup is cold: the runner purges local SWE-bench
-images and builds with `--no-cache`. Pass `--warm` or `--cache` for faster repeat runs, and
-`--keep-image` to keep the stood-up images.
-
-`run_real_scenario.py` reads `traces.otel.jsonl` and reuses the harness's train/held-out split
-logic inline so `--trace N` selects the same scenario consistently. Observed for
-`astropy__astropy-13453`, `--trace 0`, cold build: 339.5s standup plus 19 commands, 362.0s total.
+Observed (astropy__astropy-13453, `--trace 0`, cold `--no-cache`): **build from scratch 339.5s + 19
+commands, 362.0s total** — vs. the world model reconstructing the same 19-step scenario in ~96s with
+**zero** standup. The dependency install is the gap.
