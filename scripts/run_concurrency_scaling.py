@@ -53,7 +53,7 @@ from wmh.research.concurrency_scaling import ConcurrencyPoint, RealRunner, World
 from wmh.retrieval import EmbeddingRetriever, get_embedder
 from wmh.retrieval.leakfree import DemoRetriever
 
-DEFAULT_LEVELS = "1,2,4,8"
+DEFAULT_LEVELS = "1,2,4,8,16"
 
 
 def _parse_ints(text: str) -> list[int]:

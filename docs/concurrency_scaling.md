@@ -55,15 +55,27 @@ the measurement), and sweeps.
 ```bash
 # world-model side only — no tau2 venv needed; the cleanest speedup curve
 AWS_REGION=us-east-1 uv run python scripts/run_concurrency_scaling.py tau-bench \
-    --scenarios 8 --concurrency-levels 1,2,4,8 --side world --out conc_world.json
+    --scenarios 16 --concurrency-levels 1,2,4,8,16 --side world --out conc_world.json
 
 # both sides — needs tools/tau2-capture venv + TAU2_DATA_DIR; gives the differential
 AWS_REGION=us-east-1 uv run python scripts/run_concurrency_scaling.py tau-bench \
-    --scenarios 8 --concurrency-levels 1,2,4,8 --side both --out conc_both.json
+    --scenarios 16 --concurrency-levels 1,2,4,8,16 --side both --out conc_both.json
 ```
 
-Use `--serve-model` to swap the LLM (e.g. Haiku for a cheaper sweep), `--trials` for error bars, and
-`--real-arg` to forward flags to the real runner.
+The default sweep is `1,2,4,8,16`. Use `--serve-model` to swap the LLM (e.g. Haiku for a cheaper
+sweep), `--trials` for error bars, and `--real-arg` to forward flags to the real runner.
+
+### Plotting
+
+`scripts/plot_concurrency_scaling.py` renders a report with seaborn (needs the `viz` extra):
+
+```bash
+uv run --extra viz python scripts/plot_concurrency_scaling.py conc_world.json --out conc.png
+```
+
+It draws batch wall-clock vs. concurrency (log-log, mean±std error bars), the world-model speedup vs.
+ideal-linear, and — when the report has both sides — the time differential T_real/T_world. Pass
+several report JSONs to overlay them (e.g. tau-bench vs. swe-bench).
 
 ### Measured (tau-bench, Haiku 4.5, N=4, `--side world`)
 
