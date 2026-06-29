@@ -96,7 +96,7 @@ the same judge.
 | Opus: base + RAG | 0.877 ± 0.176 | 0.704 ± 0.244 | 0.813 ± 0.208 |
 | Opus: GEPA | 0.665 ± 0.180 | 0.645 ± 0.237 | 0.805 ± 0.208 |
 | **Opus: GEPA + RAG** | 0.877 ± 0.176 | 0.692 ± 0.240 | 0.809 ± 0.211 |
-| **AgentWorld + RAG** | _(pending)_ | _(pending)_ | _(pending)_ |
+| **AgentWorld + RAG** | 0.546 ± 0.427 | 0.350 ± 0.245 | 0.085 ± 0.124 |
 
 _Held-out steps: tau2-bench 84, terminal-tasks 48, swe-bench 52. Full per-step reports under
 `benchmarks/results/grid-*.json`._
@@ -118,13 +118,27 @@ _Held-out steps: tau2-bench 84, terminal-tasks 48, swe-bench 52. Full per-step r
    remains the mechanism for specializing *from* a good starting point; it just has no gap to close
    on these corpora today.
 
-3. **The factuality ceiling persists** (the dominant error mode): the model reproduces response
-   *shape* and success/error status near-perfectly, but cannot know concrete values the environment
-   alone holds (exact prices, ids, flights). The largest lever here is **state grounding** — see the
-   design note below.
+3. **A frontier model prompted as the environment beats a purpose-trained 35B world model, by a
+   wide margin.** Qwen-AgentWorld-35B-A3B (a *trained* world model) trails Opus on every corpus:
+   0.55 vs 0.88 on tau2, 0.35 vs 0.70 on terminal, 0.09 vs 0.81 on swe-bench. Two failure modes,
+   read off the per-step reports: it **breaks character** (on swe-bench it emits agent-style
+   `THOUGHT: I need to…` reasoning instead of the file contents the environment should return), and
+   it **under-predicts** (returns an empty observation where the real environment produced output or
+   an error — 41/84 empty on tau2, 38/48 on terminal). Its huge tau2 variance (±0.43) is bimodal:
+   when RAG surfaces a matching record it reproduces it *perfectly* (1.00), otherwise it returns
+   nothing. So a 35B model can be a high-fidelity world model for structured lookups, but is far
+   less robust than a frontier model across surfaces. _(Judge is Opus 4.8 for this row too, so the
+   gap is the world model, not the scorer.)_
 
-> Numbers are one seed on small held-out splits (per-step std ±0.18–0.25) — directional, not a
-> leaderboard. Retrieval uses the offline lexical embedder (semantic untested).
+4. **The factuality ceiling persists** for the Opus rows (the dominant error mode there): the model
+   reproduces response *shape* and success/error status near-perfectly, but cannot know concrete
+   values the environment alone holds (exact prices, ids, flights). The largest lever here is
+   **state grounding** — see the design note below.
+
+> Numbers are one seed on small held-out splits (per-step std ±0.18–0.43) — directional, not a
+> leaderboard. Retrieval uses the offline lexical embedder (semantic untested). AgentWorld ran on a
+> local vLLM server (`max-num-seqs` batched, `max_tokens=4096`); a reasoning world model needs a
+> large token budget or its think-trace truncates the observation to empty.
 > **Reproduce them** (exact commands + the 5-baseline grid runner): [`docs/benchmark_results.md`](./docs/benchmark_results.md).
 
 ### Design note: the world model's internal database

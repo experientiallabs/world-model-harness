@@ -33,9 +33,11 @@ def main() -> None:
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--embed-dim", type=int, default=512)
     ap.add_argument("--no-rag", action="store_true", help="Disable retrieval (zero-shot replay).")
-    # AgentWorld is a reasoning model: it emits a long hidden think-trace before the JSON. The eval
-    # default (1024) truncates mid-think -> empty observation, so give it generous room.
-    ap.add_argument("--max-tokens", type=int, default=16384)
+    # AgentWorld is a reasoning model: it emits a hidden think-trace before the JSON. The eval
+    # default (1024) truncates mid-think -> empty observation. Measured real generations are
+    # ~600-1000 completion tokens (finish=stop), so 4096 gives ample headroom without pushing a
+    # single request past the client read timeout.
+    ap.add_argument("--max-tokens", type=int, default=4096)
     ap.add_argument("--out", type=Path, required=True)
     args = ap.parse_args()
 

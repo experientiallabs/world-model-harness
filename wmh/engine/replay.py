@@ -88,7 +88,7 @@ def replay(
     - `retriever` + `train` enable leak-free RAG (demos from the train corpus, never the own trace);
       omit either for zero-shot.
     - `max_tokens` bounds each world-model completion; raise it well above the default for a
-      reasoning world model whose think-trace precedes the JSON observation (see `predict_observation`).
+      reasoning world model whose think-trace precedes the JSON (see `predict_observation`).
 
     Each step is scored once (the world model is queried deterministically). `score_std` is the
     spread of per-step scores *across steps*, not across repeated samples — sampling the world model

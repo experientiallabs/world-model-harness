@@ -136,13 +136,9 @@ def _plot(cells: list[Cell], out: Path) -> None:
     bar_w = group_w / n
     x = range(len(present_corpora))
     for j, label in enumerate(labels):
-        heights = [
-            (by_key.get((c, label)).fidelity if (c, label) in by_key else 0.0)
-            for c in present_corpora
-        ]
-        errs = [
-            (by_key.get((c, label)).std if (c, label) in by_key else 0.0) for c in present_corpora
-        ]
+        cells_for_label = [by_key.get((c, label)) for c in present_corpora]
+        heights = [cell.fidelity if cell is not None else 0.0 for cell in cells_for_label]
+        errs = [cell.std if cell is not None else 0.0 for cell in cells_for_label]
         positions = [i - group_w / 2 + bar_w * (j + 0.5) for i in x]
         bars = ax.bar(
             positions,

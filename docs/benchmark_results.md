@@ -1,9 +1,54 @@
 # Benchmark results: reproducibility
 
 The headline numbers in the README's *Benchmark results* section come from open-loop reconstruction
-fidelity (`wmh eval`) on the committed `examples/tau2-bench.otel.jsonl` corpus (66 traces / 433
-steps; telecom + airline + retail, captured from Sierra's real tau²-bench). This doc records the
-exact methodology so the numbers can be regenerated.
+fidelity (`wmh eval`) on the committed `examples/*.otel.jsonl` corpora (tau2-bench, terminal-tasks,
+swe-bench, captured from the upstream benchmarks). This doc records the exact methodology so the
+numbers can be regenerated.
+
+## The 5-baseline × 3-corpus grid
+
+The README table sweeps five baselines across three corpora. Reproduce the whole grid with the
+committed runners (`--train-split 0.7 --seed 0`, all held-out turns, rubric judge = Bedrock Opus
+4.8 for every row):
+
+```bash
+# Baselines 1-4: Opus 4.8 prompted as the environment. Per corpus, four cells —
+#   base / base+RAG / GEPA / GEPA+RAG  (--no-rag toggles retrieval; --prompt swaps the GEPA prompt).
+AWS_REGION=us-west-1 uv run wmh eval examples/tau2-bench.otel.jsonl \
+  --region us-west-1 --judge rubric --train-split 0.7 --seed 0 --no-rag \
+  --out benchmarks/results/grid-tau2-bench-base-norag.json
+# ...drop --no-rag for base+RAG; add --prompt benchmarks/gepa-v2-prompts/tau2-bench.optimized.txt
+# for the GEPA cells. Repeat for terminal-tasks and swe-bench.
+
+# Baseline 5: Qwen-AgentWorld-35B-A3B as the world model (vLLM, OpenAI-compatible), Opus judge.
+# The world model and judge are split apart (wmh eval couples them) by scripts/eval_agentworld.py.
+OPENAI_BASE_URL=http://localhost:8001/v1 OPENAI_API_KEY=dummy AWS_REGION=us-west-1 \
+  uv run python scripts/eval_agentworld.py examples/tau2-bench.otel.jsonl \
+  --train-split 0.7 --seed 0 --max-tokens 4096 \
+  --out benchmarks/results/grid-tau2-bench-agentworld-rag.json
+```
+
+The GEPA prompts were rebuilt on the *current* base prompt (`wmh build --train-split 0.7
+--gepa-budget 50`); for tau2-bench and swe-bench GEPA returned a prompt byte-identical to the base
+(it found no improvement), saved under `benchmarks/gepa-v2-prompts/`. Render the plot + markdown
+table from the committed per-step reports:
+
+```bash
+uv run --extra viz python scripts/plot_baseline_grid.py \
+  --results-dir benchmarks/results --out docs/img/baseline_grid.png \
+  --table-out docs/baseline_grid_table.md
+```
+
+**AgentWorld notes.** It is a reasoning model: it emits a hidden think-trace before the JSON
+observation, so the eval default (`max_tokens=1024`) truncates it to an empty string — use ≥4096
+(measured generations are ~600-1000 completion tokens, `finish=stop`). Served via vLLM with
+`--max-num-seqs` ≥ the number of concurrent corpus streams so they batch. The judge stays Opus 4.8
+so the AgentWorld fidelity is directly comparable to the Opus rows.
+
+## tau2-only deep dive (historical: base vs GEPA on the old base prompt)
+
+The numbers below predate the base-prompt hand-tuning and the 5-baseline grid; they document the
+*original* GEPA lift on the old base prompt, kept for provenance.
 
 ## Reproduce
 
