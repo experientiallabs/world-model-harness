@@ -81,9 +81,20 @@ def test_reporter_degrades_to_plain_lines_when_not_a_tty() -> None:
     assert "ingested 3 traces" in out
     assert "normalized 9 steps" in out
     assert "2 train / 1 held-out" in out
-    assert "rollout 1/20" in out  # non-TTY heartbeat
-    assert "rollout 10/20" in out
+    assert "GEPA metric call 1/20" in out  # non-TTY heartbeat
+    assert "GEPA metric call 10/20" in out
     assert "held-out 0.600" in out
+
+
+def test_reporter_does_not_show_impossible_progress_denominator() -> None:
+    console = Console(force_terminal=False, no_color=True, width=100)
+    reporter = RichBuildReporter(console, "airline")
+    with console.capture() as cap:
+        reporter.optimize_start(1)
+        reporter.rollout(10, 1, 0.6)
+    out = cap.get()
+    assert "GEPA metric call 10 (budget target 1)" in out
+    assert "10/1" not in out
 
 
 def test_models_table_renders_names() -> None:

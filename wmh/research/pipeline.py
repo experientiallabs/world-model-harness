@@ -10,12 +10,11 @@ These wrap the real pipeline so an ablation measures the deployed behavior, not 
   free).
 
 Both take an explicit `Provider`, `Judge`, and `Embedder` so callers control whether they hit a live
-backend (the `scripts/` runner) or fakes (the unit tests) — no network is assumed here.
+backend or fakes in tests — no network is assumed here.
 
 Note on temperature: the rollout temperature is intentionally NOT a knob here. Every shipped
 provider runs Opus 4.8 / GPT 5.5, which reject sampling params, so a temperature sweep would be
-inert. It is parked as a future direction (docs/research_directions.md) pending a sampling-capable
-provider.
+inert. It is parked pending a sampling-capable provider.
 """
 
 from __future__ import annotations

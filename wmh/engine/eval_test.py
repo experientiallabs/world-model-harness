@@ -99,6 +99,26 @@ def test_evaluate_files_scores_and_aggregates(tmp_path) -> None:  # noqa: ANN001
     assert report.overall_fidelity == 0.75  # constant judge -> step-weighted mean is the score
 
 
+def test_evaluate_files_uses_example_folder_name_for_standard_trace_file(tmp_path) -> None:  # noqa: ANN001
+    tau = tmp_path / "examples" / "tau-bench"
+    terminal = tmp_path / "examples" / "terminal-tasks"
+    tau.mkdir(parents=True)
+    terminal.mkdir(parents=True)
+    _write_corpus(tau / "traces.otel.jsonl", n_traces=2)
+    _write_corpus(terminal / "traces.otel.jsonl", n_traces=2)
+
+    report = evaluate_files(
+        [tau / "traces.otel.jsonl", terminal / "traces.otel.jsonl"],
+        "BASE",
+        FakeProvider('{"output": "found u0", "is_error": false}'),
+        FakeJudge(0.75),
+        embedder=HashingEmbedder(dim=32),
+        train_split=0.5,
+    )
+
+    assert set(report.per_file) == {"tau-bench", "terminal-tasks"}
+
+
 def test_evaluate_files_zero_shot_without_embedder(tmp_path) -> None:  # noqa: ANN001 - fixture
     corpus = tmp_path / "bench.otel.jsonl"
     _write_corpus(corpus, n_traces=2)

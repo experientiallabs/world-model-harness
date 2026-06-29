@@ -16,8 +16,8 @@ Two layers:
   `wmh.engine.replay`, leak-free).
 
 `seed_stability` is the first concrete experiment: how reproducible is GEPA's evolved prompt across
-seeds. The train-vs-eval temperature sweep is parked (the shipped providers reject sampling params);
-see docs/research_directions.md.
+seeds. The train-vs-eval temperature sweep is parked because the shipped providers reject sampling
+params.
 """
 
 from wmh.research.ablation import (

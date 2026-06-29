@@ -24,8 +24,7 @@ from wmh.retrieval import EmbeddingRetriever
 class EvalReport(BaseModel):
     """Per-file fidelity reports plus the step-weighted overall mean ± std.
 
-    This is the frozen contract the reporting/leaderboard layer consumes: `per_file` maps a trace
-    file's clean name to its `ReplayReport` (per-step `StepResult`s), and
+    `per_file` maps a trace file's clean name to its `ReplayReport` (per-step `StepResult`s), and
     `overall_fidelity`/`overall_std` are the step-weighted aggregates across files.
     """
 
@@ -64,8 +63,7 @@ def evaluate_files(
         if not holdout:  # tiny corpus: evaluate on everything
             train, holdout = traces, traces
         retriever = EmbeddingRetriever(embedder) if embedder is not None else None
-        # Clean display name: "tau2-bench.otel.jsonl" -> "tau2-bench".
-        name = path.name.removesuffix(".jsonl").removesuffix(".otel")
+        name = _display_name(path)
         per_file[name] = replay(
             prompt,
             holdout,
@@ -88,3 +86,9 @@ def evaluate_files(
         overall_std=overall_std,
         total_steps=len(step_scores),
     )
+
+
+def _display_name(path: Path) -> str:
+    """Human label for a corpus, using the example folder name for `traces.otel.jsonl`."""
+    name = path.name.removesuffix(".jsonl").removesuffix(".otel")
+    return path.parent.name if name == "traces" else name

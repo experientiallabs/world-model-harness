@@ -20,7 +20,7 @@ from wmh.core.render import render_demo
 from wmh.core.types import Action, Session, Step
 
 # Layer (a): the env-agnostic base prompt. GEPA (layer b) evolves a specialized version of this.
-# Tuned via replay-fidelity measurement across benchmark traces (see docs/base_prompt_iteration.md):
+# Tuned via replay-fidelity measurement across example traces:
 # the failure modes a generic prompt makes are (1) fabricating concrete data the env alone knows,
 # (2) inventing stdout when the real command prints nothing, and (3) guessing success/error wrong.
 # This base targets all three while staying domain-agnostic, so it is a strong GEPA starting point.

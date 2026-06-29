@@ -169,7 +169,7 @@ def test_committed_tau2_corpus_satisfies_the_replay_contract() -> None:
     DB is huge and would leak the answer (open-loop replay must reconstruct, not look up), so the
     converter omits it; the adapter still supports `wmh.state.*` for future small-state benchmarks.
     """
-    corpus = _EXAMPLES / "tau2-bench.otel.jsonl"
+    corpus = _EXAMPLES / "tau-bench" / "traces.otel.jsonl"
     if not corpus.exists():  # pragma: no cover - committed corpus; only missing in a partial slice
         pytest.skip("tau2-bench corpus not present")
 
@@ -195,7 +195,7 @@ def test_committed_terminal_tasks_corpus_satisfies_the_replay_contract() -> None
     Real bash tool calls with real recorded outputs (including failures). Each step has a tool-call
     action and the originating task; state_before is empty (a shell has no compact state snapshot).
     """
-    corpus = _EXAMPLES / "terminal-tasks.otel.jsonl"
+    corpus = _EXAMPLES / "terminal-tasks" / "traces.otel.jsonl"
     if not corpus.exists():  # pragma: no cover - committed corpus; only missing in a partial slice
         pytest.skip("terminal-tasks corpus not present")
 

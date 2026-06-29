@@ -90,8 +90,7 @@ def predict_observation(
     predicted observation (content + is_error + state_note) matches what the world model produces.
 
     Rollouts run deterministically: the providers (Opus 4.8 / GPT 5.5) reject sampling params, so no
-    temperature is forwarded. A temperature sweep is parked until a sampling-capable provider exists
-    (see docs/research_directions.md).
+    temperature is forwarded.
     """
     system, user = build_env_prompt(prompt, task, state, action, history=history, demos=demos)
     completion = provider.complete(
@@ -279,8 +278,7 @@ class GEPAOptimizer:
         # Optional retriever for RAG-aware evaluation. When None, GEPA evaluates zero-shot.
         self._retriever = retriever
         self._on_rollout = on_rollout
-        # The GEPA engine seed (minibatch sampling + candidate selection). Defaults to the
-        # historical 0; the research harness sweeps it for seed stability (docs/gepa_research.md).
+        # The GEPA engine seed controls minibatch sampling and candidate selection.
         self._seed = seed
 
     def optimize(
