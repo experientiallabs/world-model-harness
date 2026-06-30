@@ -317,7 +317,7 @@ class RichBuildReporter:
             )
 
     def rollout(self, done: int, budget: int, score: float | None) -> None:
-        label = f"best held-out {score:.3f}" if score is not None else "score n/a"
+        label = f"avg fidelity {score:.3f}" if score is not None else "score n/a"
         if self._progress is not None and self._task_id is not None:
             self._progress.update(self._task_id, completed=min(done, budget), score=label)
         elif not self._tty:

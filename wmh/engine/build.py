@@ -14,7 +14,7 @@ from wmh.core.types import Trace
 from wmh.engine.prompts import BASE_ENV_PROMPT
 from wmh.engine.reporting import BuildReporter, NullReporter
 from wmh.ingest import VendorPull, get_adapter
-from wmh.optimize import GEPAOptimizer, LLMJudge, OptimizeResult
+from wmh.optimize import GEPAOptimizer, OptimizeResult, RubricJudge
 from wmh.providers import get_provider
 from wmh.providers.base import Embedder, Provider
 from wmh.retrieval import EmbeddingRetriever, HashingEmbedder
@@ -96,9 +96,12 @@ def build(
     def _on_rollout(done: int, score: float | None) -> None:
         report.rollout(done, budget, score)
 
+    # Optimize against the SAME scorer we evaluate with (RubricJudge), so GEPA hill-climbs the
+    # metric we actually report. The coarser LLMJudge here would let GEPA improve a proxy objective
+    # that doesn't move the reported rubric fidelity.
     optimizer = GEPAOptimizer(
         provider,
-        LLMJudge(provider),
+        RubricJudge(provider),
         retriever=EmbeddingRetriever(embed),
         on_rollout=_on_rollout,
     )

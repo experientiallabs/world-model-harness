@@ -37,7 +37,7 @@ from wmh.retrieval.leakfree import DemoRetriever
 # The single named component GEPA evolves: the specialized env (system) prompt.
 ENV_PROMPT_COMPONENT = "env_prompt"
 
-# Called once per judged rollout: (rollouts_done, best_score_so_far). Used to drive build progress.
+# Called once per judged rollout: (rollouts_done, mean_score_so_far). Used to drive build progress.
 RolloutCallback = Callable[[int, float | None], None]
 
 
@@ -157,7 +157,7 @@ class WorldModelGEPAAdapter(GEPAAdapter[_EvalStep, _StepTrajectory, Observation]
         self._judge = judge
         self._on_rollout = on_rollout
         self._rollouts = 0
-        self._best_score: float | None = None
+        self._score_sum = 0.0
 
     def evaluate(
         self,
@@ -222,12 +222,16 @@ class WorldModelGEPAAdapter(GEPAAdapter[_EvalStep, _StepTrajectory, Observation]
         return {component: records for component in components_to_update}
 
     def _note_rollout(self, score: float) -> None:
-        """Tick the rollout counter + running best score and notify the callback, if any."""
+        """Tick the rollout counter + running MEAN score and notify the callback, if any.
+
+        Reports the running mean across rollouts, not max-over-single-steps. The old max saturated
+        to 1.000 the instant any one step scored perfectly (common), making the progress display
+        meaningless — it always read "best held-out 1.000" regardless of real fidelity.
+        """
         self._rollouts += 1
-        if self._best_score is None or score > self._best_score:
-            self._best_score = score
+        self._score_sum += score
         if self._on_rollout is not None:
-            self._on_rollout(self._rollouts, self._best_score)
+            self._on_rollout(self._rollouts, self._score_sum / self._rollouts)
 
 
 # --- reflection LM adapter -----------------------------------------------------------------------
@@ -301,6 +305,13 @@ class GEPAOptimizer:
         """Run GEPA over optimization splits, optionally retrieving demos from another corpus.
 
         `train`/`test` are GEPA's optimization data: minibatch examples and validation examples.
+        `budget` is the number of optimization ITERATIONS (candidate prompts to propose and fully
+        evaluate) — NOT a raw metric-call count. It is translated to GEPA's `max_metric_calls`
+        budget by `_metric_call_budget`, which adds the one-time seed valset evaluation so the
+        iterations actually fund exploration. (Passing `budget` straight through as
+        `max_metric_calls` is the classic footgun: if `budget < len(valset)`, GEPA spends the whole
+        budget validating the seed prompt and proposes ZERO candidates — "no lift" that is really
+        "no search".)
         `rag_corpus`, when supplied, is the replay-buffer corpus used for retrieved demos during
         those GEPA evaluations. Keeping it separate lets callers optimize a prompt on a dev split
         while using an independently chosen RAG/index split, instead of forcing the GEPA trainset to
@@ -324,6 +335,7 @@ class GEPAOptimizer:
         trainset = _eval_steps(train_src, demos)
         valset = _eval_steps(val_src, demos)
         adapter = WorldModelGEPAAdapter(self._provider, self._judge, self._on_rollout)
+        minibatch = min(3, len(trainset))
         result = gepa.optimize(
             seed_candidate={ENV_PROMPT_COMPONENT: base_prompt},
             trainset=trainset,
@@ -331,8 +343,8 @@ class GEPAOptimizer:
             adapter=adapter,
             reflection_lm=_reflection_lm(self._provider),
             candidate_selection_strategy="pareto",
-            max_metric_calls=budget,
-            reflection_minibatch_size=min(3, len(trainset)),
+            max_metric_calls=_metric_call_budget(budget, len(valset), minibatch),
+            reflection_minibatch_size=minibatch,
             display_progress_bar=False,
             raise_on_exception=False,
             seed=self._seed,
@@ -348,6 +360,23 @@ class GEPAOptimizer:
                 rollouts_used=int(result.total_metric_calls or 0),
             ),
         )
+
+
+def _metric_call_budget(iterations: int, valset_size: int, minibatch: int) -> int:
+    """Translate `iterations` (candidates to try) into GEPA's `max_metric_calls`.
+
+    GEPA's budget is a raw count of per-example metric calls. Each optimization iteration costs
+    roughly one reflection minibatch eval (~`minibatch` calls) plus, when a candidate looks
+    promising, a full valset eval (~`valset_size` calls). On top of that, GEPA always spends one
+    full valset eval up front to score the seed prompt. So a budget that merely equals the desired
+    iteration count starves the search — the seed eval alone can exceed it (this was the
+    "GEPA proposes nothing" bug: budget 50 < valset 84).
+
+    We size the budget as: seed eval + iterations * (minibatch + full valset), with a floor of two
+    valset passes so even `iterations=1` can evaluate the seed AND one real candidate.
+    """
+    per_iter = minibatch + valset_size
+    return max(2 * valset_size, valset_size + max(1, iterations) * per_iter)
 
 
 def _eval_steps(traces: list[Trace], demos: DemoRetriever) -> list[_EvalStep]:

@@ -25,3 +25,5 @@ demos/
 # baseline-grid run scratch (not artifacts)
 .wmh-rebuild/
 logs/
+
+.wmh-fixed/

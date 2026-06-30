@@ -16,10 +16,23 @@ from wmh.optimize.gepa import (
     WorldModelGEPAAdapter,
     _eval_steps,
     _EvalStep,
+    _metric_call_budget,
     predict_observation,
 )
 from wmh.optimize.judge import JudgeResult
 from wmh.providers.base import Completion, Message, ProviderConfig, ProviderKind
+
+
+def test_metric_call_budget_funds_exploration_not_just_seed_eval() -> None:
+    # The bug: passing iterations straight through as max_metric_calls. If budget < valset, GEPA
+    # spends everything on the seed valset eval and proposes nothing. The budget must always exceed
+    # one valset pass (so the seed is scored AND at least one candidate can be evaluated).
+    valset = 84  # tau2's held-out step count — the case that silently produced zero candidates
+    assert _metric_call_budget(50, valset, minibatch=3) > valset  # was 50 < 84 -> no search
+    # Scales with iterations: more iterations -> strictly more budget.
+    assert _metric_call_budget(10, valset, 3) > _metric_call_budget(1, valset, 3)
+    # Floor: even a single iteration funds two full valset passes (seed + one candidate).
+    assert _metric_call_budget(1, valset, 3) >= 2 * valset
 
 
 class FakeProvider:
@@ -124,9 +137,10 @@ def test_optimize_runs_bounded_loop_and_returns_valid_frontier() -> None:
     assert result.prompt  # a non-empty winning prompt
     assert len(result.frontier) >= 1
     assert all(isinstance(p, str) and p for p in result.frontier)
-    # The loop terminates and stays near the budget. GEPA treats max_metric_calls as a *soft* cap:
-    # it finishes the in-flight iteration, so it can overshoot by up to a minibatch + valset eval.
-    assert 0 < result.metrics.rollouts_used <= budget * 2
+    # `budget` is ITERATIONS, translated to a metric-call budget that funds the seed valset eval
+    # PLUS exploration (see `_metric_call_budget`). So rollouts run past `budget` itself; the point
+    # of the fix is that GEPA actually explores instead of spending everything validating the seed.
+    assert result.metrics.rollouts_used > budget
     assert 0.0 <= result.metrics.held_out_accuracy <= 1.0
     # The judge was actually consulted, and the loop terminated (didn't run forever).
     assert judge.calls > 0
@@ -185,9 +199,7 @@ def test_optimize_with_no_traces_returns_base_prompt() -> None:
 
 
 def _eval_batch(trace: Trace) -> list[_EvalStep]:
-    return [
-        _EvalStep(step=s, demos=[], history=trace.steps[:i]) for i, s in enumerate(trace.steps)
-    ]
+    return [_EvalStep(step=s, demos=[], history=trace.steps[:i]) for i, s in enumerate(trace.steps)]
 
 
 class _TempRecordingProvider(FakeProvider):
