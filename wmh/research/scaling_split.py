@@ -15,8 +15,8 @@ Two deterministic carves, both stable as the corpus grows so a checked-in run re
    for a given seed, so the n=10 sample is a prefix of the n=20 sample (nested): each step up the
    curve *adds* traces rather than resampling, isolating the effect of corpus size.
 
-Counts are capped at what the pool holds, so the same code runs on today's 66-trace tau2 corpus and
-a future 1000-trace one without change — it just stops the curve where the data runs out.
+Counts are capped at what the pool holds, so the same code runs on a small corpus or the committed
+~1000-trace tau2 one without change — it just stops the curve where the data runs out.
 """
 
 from __future__ import annotations

@@ -1,9 +1,16 @@
 # Benchmark results: reproducibility
 
 The headline numbers in the README's *Benchmark results* section come from open-loop reconstruction
-fidelity (`wmh eval`) on the committed `examples/tau2-bench.otel.jsonl` corpus (66 traces / 433
-steps; telecom + airline + retail, captured from Sierra's real tau²-bench). This doc records the
-exact methodology so the numbers can be regenerated.
+fidelity (`wmh eval`) on the committed `examples/tau2-bench.otel.jsonl` corpus (telecom + airline +
+retail, captured from Sierra's real tau²-bench). This doc records the exact methodology so the
+numbers can be regenerated.
+
+> **Note (corpus grown to ~1000 traces).** The fidelity tables below were measured on an earlier
+> 66-trace / 433-step cut of this corpus. The committed corpus is now ~1000 traces (~5300 steps) —
+> see [`trace_scaling.md`](./trace_scaling.md) for how it was captured. The methodology and commands
+> here are unchanged, but the specific numbers need re-running on the larger corpus (the deterministic
+> split now yields a much bigger held-out set). Treat the tables below as the small-corpus baseline
+> until re-measured.
 
 ## Reproduce
 

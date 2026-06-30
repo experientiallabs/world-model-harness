@@ -46,8 +46,9 @@ test set GEPA never touched.
   winner is scored on the test set. The real "learning from more traces" curve — one GEPA run per
   count × seed, so it is the expensive one.
 
-Counts are capped at the train pool, so the same sweep definition (`10,20,…,1000`) runs unchanged on
-today's 66-trace tau2 corpus (collapsing to the few counts it can serve) and a future 1000-trace one.
+Counts are capped at the train pool, so the same sweep definition (`10,20,…,1000`) runs unchanged
+whether the corpus is small (collapsing to the few counts it can serve) or the committed
+~1000-trace tau2 corpus (train pool ~650 after the fixed test/valid bands).
 
 ## Running
 
@@ -66,18 +67,28 @@ The runner takes a **benchmark name** (`tau-bench`, reusing its corpus + pinned 
 `(mode@count, seed)` and writes the full `AblationReport` JSON. Defaults: Bedrock Opus 4.8, offline
 HashingEmbedder, `RubricJudge`.
 
-**Extensible across benchmarks.** The ablation takes an ingested corpus + a base prompt, nothing tau2-
-specific — `terminal-tasks` and `swe-bench` are just a different benchmark name (their corpora are
-already committed under `examples/`). They are smaller today, so expect short curves until generated.
+**Extensible across benchmarks.** The ablation takes an ingested corpus + a base prompt, nothing
+tau2-specific — `terminal-tasks` and `swe-bench` are just a different benchmark name (their corpora
+are already committed under `examples/`). They are smaller today, so expect short curves until
+generated.
 
-## Growing the corpus toward 1000
+## The corpus (and how it was grown to ~1000)
 
-tau2 ships ~66 traces; terminal-tasks ~71; swe-bench ~21. To extend the curve, generate more traces
-from the **real** benchmark and append to the corpus — the capture tooling is already in place:
+The committed `examples/tau2-bench.otel.jsonl` holds **~1000 distinct traces** across tau2's three
+domains — airline (50 tasks), retail (114), telecom (the bulk, drawn from its 2285-task `full`
+split). All valid simulations are kept (reward rides along in `Trace.metadata`), so ~80% are
+fully-correct (reward 1.0) and the rest are real partial trajectories.
 
-- tau2: `tools/tau2-capture/` (run Sierra's real tau²-bench live on Bedrock, then `convert_to_wmh.py`
-  → append to `examples/tau2-bench.otel.jsonl`). Sweep `tau2 run --num-tasks N` and concatenate. See
-  that directory's README.
+To regrow or extend it, the capture tooling lives in `tools/tau2-capture/` (runs Sierra's real
+tau²-bench live on Bedrock, then `convert_to_wmh.py` → `examples/tau2-bench.otel.jsonl`):
+
+- `capture_corpus.sh` — airline + retail + telecom end to end. Telecom needs `--task-split-name full`
+  (the default `base` split only exposes 114 telecom tasks).
+- `capture_telecom_multimodel.py` — **the key to scale.** A single Opus model on Bedrock throttles
+  (litellm `ServiceUnavailableError`) under telecom's sustained, call-heavy load — a single-model
+  run salvaged only ~180/980. Sharding the task list across **three Opus models (4.6 / 4.7 / 4.8)**,
+  each its own per-model quota, lifts that to ~850+ with near-zero throttling. Disjoint round-robin
+  slices per model (with `--offset` for top-ups) keep traces unique.
 - terminal-tasks / swe-bench: the sibling `tools/terminal-tasks-capture/` and `tools/swe-bench-capture/`.
 
 Because the split is hash-stable, appending traces never disturbs the existing test/valid bands — a

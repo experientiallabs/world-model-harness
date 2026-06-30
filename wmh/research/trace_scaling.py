@@ -88,7 +88,7 @@ class TraceScalingAblation:
             corpus, test_frac=test_frac, valid_frac=valid_frac
         )
         # Cap counts at the train pool and drop duplicates created by the cap, preserving order, so
-        # a 1000-point sweep on a 66-trace corpus collapses cleanly to the few counts it can serve.
+        # a 1000-point sweep on a small corpus collapses cleanly to the few counts it can serve.
         pool = len(self._split.train_pool)
         self._counts = _dedupe([min(c, pool) for c in counts if c > 0])
 
