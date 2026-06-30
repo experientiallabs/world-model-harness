@@ -68,6 +68,31 @@ export TAU2_DATA_DIR="$PWD/tau2-bench/data" AWS_REGION=us-east-1 AWS_REGION_NAME
 # -> tau2-bench/data/simulations/airline_capture/results.json
 ```
 
+## Bulk capture: the committed ~1000-trace corpus
+
+`traces.otel.jsonl` here holds **~1000 distinct traces** across all three tau2 domains —
+airline (50 tasks) + retail (114) + telecom (the bulk, from its 2285-task `full` split). Two helper
+scripts capture and merge it; both are idempotent/resumable:
+
+```bash
+# airline + retail + telecom (single-model), then convert + merge -> traces.otel.jsonl
+./capture_corpus.sh
+
+# telecom at scale, sharded across THREE Opus models to beat per-model Bedrock throttling
+TAU2_DATA_DIR="$PWD/tau2-bench/data" AWS_REGION=us-east-1 \
+  .venv/bin/python capture_telecom_multimodel.py --total 990 --concurrency 3
+```
+
+Why two scripts: a **single** Opus model on Bedrock throttles hard under telecom's long,
+call-heavy trajectories (litellm `ServiceUnavailableError` — a single-model run salvaged only
+~180/980 telecom sims). `capture_telecom_multimodel.py` shards the telecom task list across
+`opus-4-6-v1` / `opus-4-7` / `opus-4-8` — each its own per-model quota — lifting that to ~850+ with
+near-zero throttling. Disjoint round-robin slices per model (`--offset` for top-ups) keep traces
+unique. All valid sims are kept (reward rides along in metadata), so ~80% are reward-1.0 and the
+rest are real partial trajectories. Bedrock model ids (default AWS profile, us-east-1):
+`us.anthropic.claude-opus-4-7`, `us.anthropic.claude-opus-4-6-v1` (the `-v1` suffix is required),
+`us.anthropic.claude-opus-4-8`.
+
 ## Convert to the wmh corpus
 
 ```bash
