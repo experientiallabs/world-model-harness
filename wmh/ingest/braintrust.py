@@ -41,14 +41,21 @@ Pull: live pull via the Braintrust SDK is not implemented; export to a file and 
 from __future__ import annotations
 
 import json
+import os
 from datetime import datetime
 
+import httpx
 from pydantic import JsonValue
 
 from wmh.core.types import JsonObject
-from wmh.ingest.adapter import register_adapter
+from wmh.ingest.adapter import VendorPull, register_adapter
 from wmh.ingest.base import BaseTraceAdapter
 from wmh.ingest.normalize import SpanRecord, as_text
+
+# Braintrust REST API. The fetch endpoint returns `{"events": [span rows]}`; the project list
+# resolves a human project name to its id. Overridable for self-hosted deployments.
+_API_BASE = os.environ.get("BRAINTRUST_API_URL", "https://api.braintrust.dev").rstrip("/")
+_API_KEY_ENV = "BRAINTRUST_API_KEY"
 
 # Row types (`span_attributes.type`) that represent a model/agent turn (a potential action), vs a
 # tool execution (a result). Braintrust's common types are: "llm", "tool", "function", "task",
@@ -168,6 +175,49 @@ class BraintrustAdapter(BaseTraceAdapter):
     """Map a Braintrust span-row export into normalized `Trace`s. No SDK."""
 
     name = "braintrust"
+
+    def _pull_payloads(self, pull: VendorPull) -> list[JsonValue]:
+        """Fetch span rows live from the Braintrust REST API.
+
+        `pull.project` is a project name or id; `pull.api_key` (else `$BRAINTRUST_API_KEY`) auths.
+        Resolves a name to an id via `/v1/project`, then fetches `/v1/project_logs/{id}/fetch`,
+        whose `{"events": [...]}` body is handed straight to `spans_from_payload`.
+        """
+        api_key = pull.api_key or os.environ.get(_API_KEY_ENV)
+        if not api_key:
+            raise ValueError(
+                f"braintrust pull needs an API key: pass --api-key or set ${_API_KEY_ENV}"
+            )
+        if not pull.project:
+            raise ValueError("braintrust pull needs --project (a project name or id)")
+        headers = {"Authorization": f"Bearer {api_key}"}
+        project_id = self._resolve_project_id(pull.project, headers)
+        params: dict[str, str] = {}
+        if pull.limit is not None:
+            params["limit"] = str(pull.limit)
+        resp = httpx.get(
+            f"{_API_BASE}/v1/project_logs/{project_id}/fetch",
+            headers=headers,
+            params=params,
+            timeout=60.0,
+        )
+        resp.raise_for_status()
+        return [resp.json()]
+
+    def _resolve_project_id(self, project: str, headers: dict[str, str]) -> str:
+        """Return `project` unchanged if it looks like an id, else look the name up via the API."""
+        resp = httpx.get(
+            f"{_API_BASE}/v1/project", headers=headers, params={"limit": "100"}, timeout=30.0
+        )
+        resp.raise_for_status()
+        body = resp.json()
+        objects = body.get("objects", []) if isinstance(body, dict) else []
+        for obj in objects:
+            if isinstance(obj, dict) and (obj.get("id") == project or obj.get("name") == project):
+                pid = obj.get("id")
+                if isinstance(pid, str):
+                    return pid
+        raise ValueError(f"braintrust project {project!r} not found for this API key")
 
     def spans_from_payload(self, payload: JsonValue) -> list[SpanRecord]:
         """Map a Braintrust export (a row, a list, or a page wrapper) to `SpanRecord`s."""

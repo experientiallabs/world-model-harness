@@ -165,11 +165,46 @@ def test_jsonl_multiple_traces(tmp_path: Path) -> None:
     assert len(traces) == 2
 
 
-def test_vendor_pull_unsupported_is_friendly() -> None:
+def test_vendor_pull_without_key_is_friendly(monkeypatch) -> None:  # noqa: ANN001 - fixture
+    monkeypatch.delenv("BRAINTRUST_API_KEY", raising=False)
     try:
-        BraintrustAdapter().from_vendor(VendorPull())
+        BraintrustAdapter().from_vendor(VendorPull(project="p"))
     except ValueError as exc:
-        assert "does not support live vendor pulls" in str(exc)
-        assert "braintrust" in str(exc)
+        assert "API key" in str(exc)
     else:  # pragma: no cover
         raise AssertionError("expected ValueError")
+
+
+def test_vendor_pull_without_project_is_friendly() -> None:
+    try:
+        BraintrustAdapter().from_vendor(VendorPull(api_key="k"))
+    except ValueError as exc:
+        assert "project" in str(exc)
+    else:  # pragma: no cover
+        raise AssertionError("expected ValueError")
+
+
+def test_vendor_pull_resolves_project_and_fetches(monkeypatch) -> None:  # noqa: ANN001 - fixture
+    """Live-pull path with httpx mocked: resolve project name -> id, fetch logs, normalize."""
+    import wmh.ingest.braintrust as bt
+
+    def fake_get(url, headers=None, params=None, timeout=None):  # noqa: ANN001, ANN202 - test stub
+        class _Resp:
+            def raise_for_status(self) -> None: ...
+
+            def __init__(self, payload: dict) -> None:
+                self._payload = payload
+
+            def json(self) -> dict:
+                return self._payload
+
+        if url.endswith("/v1/project"):
+            return _Resp({"objects": [{"id": "pid-1", "name": "Demo"}]})
+        assert "/v1/project_logs/pid-1/fetch" in url  # resolved the name to the id
+        assert headers == {"Authorization": "Bearer k"}
+        return _Resp({"events": _ROWS})
+
+    monkeypatch.setattr(bt.httpx, "get", fake_get)
+    traces = BraintrustAdapter().from_vendor(VendorPull(api_key="k", project="Demo"))
+    assert len(traces) == 1
+    assert traces[0].steps[0].action.name == "get_weather"
