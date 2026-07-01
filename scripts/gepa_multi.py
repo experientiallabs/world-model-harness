@@ -51,15 +51,18 @@ def score(prompt, test, train, provider, embedder, max_tokens):  # noqa: ANN001,
     from wmh.optimize.judge import RubricJudge
     from wmh.retrieval import EmbeddingRetriever
 
-    retr = EmbeddingRetriever(embedder)
-    retr.index(train)
+    # embedder=None -> zero-shot (no RAG): pass no retriever/train, matching evaluate_files.
+    retriever = None
+    if embedder is not None:
+        retriever = EmbeddingRetriever(embedder)
+        retriever.index(train)
     return replay(
         prompt,
         test,
         provider,
         RubricJudge(provider),
-        retriever=retr,
-        train=train,
+        retriever=retriever,
+        train=train if embedder is not None else None,
         top_k=5,
         sample_turns="all",
         seed=0,
