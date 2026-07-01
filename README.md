@@ -78,3 +78,19 @@ uv run ruff format .     # format
 uv run ty check          # type check
 uv run pytest -q         # tests
 ```
+
+## Usage telemetry
+
+`wmh` uses anonymous usage telemetry to track the volume of usage.
+Telemetry is strictly metadata. It never includes prompts, traces, actions, observations, file paths,
+model names, provider credentials, or raw user content.
+
+Telemetry is enabled by default. To opt out for a project:
+
+```bash
+uv run wmh config telemetry disable
+```
+
+This writes `.wmh/settings.toml`. You can re-enable it with `uv run wmh config telemetry enable`,
+check the current setting with `uv run wmh config telemetry status`, or disable it for a process
+with `DO_NOT_TRACK=1` or `WMH_TELEMETRY=0`.

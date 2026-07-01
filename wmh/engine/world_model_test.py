@@ -2,16 +2,23 @@
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 import pytest
 
+import wmh.telemetry as telemetry
+from wmh.config import ArtifactPaths, HarnessConfig, save_config
+from wmh.config.settings import set_telemetry_enabled
 from wmh.core.types import Action, ActionKind, EnvState, Observation, Step, Trace
 from wmh.engine.world_model import WorldModel
-from wmh.providers.base import Completion, Message, ProviderConfig, ProviderKind
+from wmh.providers.base import Completion, Message, ProviderConfig, ProviderKind, TokenUsage
 from wmh.retrieval import EmbeddingRetriever, HashingEmbedder
 
 
 def test_world_model_new_session_works() -> None:
     wm = WorldModel.__new__(WorldModel)
+    wm._telemetry_root = Path(".wmh")
     wm._sessions = {}
     wm._trackers = {}
     session = WorldModel.new_session(wm, task="hi")
@@ -103,8 +110,6 @@ class _UsageProvider(FakeProvider):
         temperature: float = 0.7,
         max_tokens: int = 8192,
     ) -> Completion:
-        from wmh.providers.base import TokenUsage
-
         self.last_system = system
         self.last_user = messages[0].content
         return Completion(text=self._reply, usage=TokenUsage(input_tokens=120, output_tokens=30))
@@ -128,9 +133,48 @@ def test_step_meters_usage_per_session() -> None:
     assert usage.total.cost_usd == pytest.approx(0.0027)
 
 
-def test_load_reads_artifact(tmp_path) -> None:  # noqa: ANN001 - pytest fixture
-    from wmh.config import ArtifactPaths, HarnessConfig, save_config
+def test_step_telemetry_counts_steps_without_content(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    calls: list[object] = []
 
+    class FakePosthog:
+        def __init__(self, project_api_key: str, **kwargs: object) -> None:
+            pass
+
+        def capture(self, event: str, **kwargs: object) -> str:
+            calls.append({"event": event, **kwargs})
+            return "message-id"
+
+        def shutdown(self) -> None:
+            pass
+
+    telemetry._CLIENTS.clear()
+    monkeypatch.setattr(telemetry, "Posthog", FakePosthog)
+    monkeypatch.setenv("WMH_TELEMETRY", "1")
+    monkeypatch.setenv("WMH_POSTHOG_PROJECT_API_KEY", "phc_test")
+
+    provider = _UsageProvider('{"output": "secret observation", "is_error": false}')
+    provider.config = ProviderConfig(kind=ProviderKind.BEDROCK, model="claude-opus-4-8")
+    wm = WorldModel(provider, _retriever_with([]), top_k=1, telemetry_root=tmp_path / ".wmh")
+    session = wm.new_session(task="secret task")
+    wm.step(
+        session.id,
+        Action(kind=ActionKind.TOOL_CALL, name="secret_tool", arguments={"secret": "value"}),
+    )
+
+    serialized = json.dumps(calls)
+    assert "wmh generated trace started" in serialized
+    assert "wmh generated step completed" in serialized
+    assert "generated_trace_count" in serialized
+    assert "generated_step_count" in serialized
+    assert "secret task" not in serialized
+    assert "secret_tool" not in serialized
+    assert "secret observation" not in serialized
+    assert "value" not in serialized
+
+
+def test_load_reads_artifact(tmp_path) -> None:  # noqa: ANN001 - pytest fixture
     root = tmp_path / ".wmh"
     # embed_dim must match the embedder the index was built with (64 here), or load() rebuilds a
     # mismatched query embedder. This is the contract WorldModel.load relies on.
@@ -156,3 +200,35 @@ def test_load_reads_artifact(tmp_path) -> None:  # noqa: ANN001 - pytest fixture
         EnvState(), Action(kind=ActionKind.TOOL_CALL, name="get_user", arguments={"id": "x"}), k=1
     )
     assert len(restored) == 1 and restored[0].observation.content == "ok"
+
+
+def test_load_named_model_uses_project_root_for_telemetry_opt_out(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    calls: list[object] = []
+
+    class FakePosthog:
+        def __init__(self, project_api_key: str, **kwargs: object) -> None:
+            pass
+
+        def capture(self, event: str, **kwargs: object) -> str:
+            calls.append({"event": event, **kwargs})
+            return "message-id"
+
+        def shutdown(self) -> None:
+            pass
+
+    project_root = tmp_path / ".wmh"
+    model_dir = project_root / "models" / "demo"
+    save_config(HarnessConfig(top_k=2, embed_dim=64), model_dir)
+    set_telemetry_enabled(False, project_root)
+    telemetry._CLIENTS.clear()
+    monkeypatch.setattr(telemetry, "Posthog", FakePosthog)
+    monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
+    monkeypatch.setenv("WMH_POSTHOG_PROJECT_API_KEY", "phc_test")
+
+    wm = WorldModel.load(str(model_dir), FakeProvider("{}"))
+    wm.new_session(task="should respect project opt-out")
+
+    assert wm._telemetry_root == project_root
+    assert calls == []
