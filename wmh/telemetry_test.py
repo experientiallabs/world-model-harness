@@ -74,6 +74,23 @@ def test_capture_respects_project_opt_out(monkeypatch: pytest.MonkeyPatch, tmp_p
     assert clients == []
 
 
+def test_capture_skips_when_settings_file_cannot_be_read(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    clients = _install_fake_posthog(monkeypatch)
+
+    def unreadable_settings(root: str | Path) -> object:
+        raise PermissionError
+
+    monkeypatch.setattr(telemetry, "load_settings", unreadable_settings)
+    monkeypatch.delenv("WMH_TELEMETRY", raising=False)
+    monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
+    monkeypatch.setenv("WMH_POSTHOG_PROJECT_API_KEY", "phc_test")
+
+    assert capture("wmh test event", root=tmp_path / ".wmh") is False
+    assert clients == []
+
+
 def test_do_not_track_wins_over_env_enable(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     clients = _install_fake_posthog(monkeypatch)
 

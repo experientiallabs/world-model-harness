@@ -172,7 +172,7 @@ def _enabled(root: str | Path) -> bool:
         return False
     try:
         return load_settings(root).telemetry.enabled
-    except ValueError:
+    except (OSError, ValueError):
         return False
 
 
