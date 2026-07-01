@@ -23,6 +23,7 @@ from wmh.ingest import langsmith as langsmith  # noqa: F401
 from wmh.ingest import messages as messages  # noqa: F401
 from wmh.ingest import otel_genai as otel_genai  # noqa: F401
 from wmh.ingest import phoenix as phoenix  # noqa: F401
+from wmh.ingest import posthog as posthog  # noqa: F401
 from wmh.ingest.adapter import (
     TraceAdapter,
     VendorPull,

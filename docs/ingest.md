@@ -33,12 +33,22 @@ Under the hood the chosen adapter normalizes to OTel-GenAI span JSONL — the sa
 | `phoenix` | Arize Phoenix / OpenInference spans | ✅ | provider-dependent |
 | `langfuse` | Langfuse trace + observation tree | ✅ | provider-dependent |
 | `langsmith` | LangSmith run tree | ✅ | provider-dependent |
-| `braintrust` | Braintrust span/log rows | ✅ | provider-dependent |
+| `braintrust` | Braintrust span/log rows | ✅ | ✅ (REST fetch API) |
+| `posthog` | PostHog LLM-observability `$ai_*` events | ✅ | ✅ (HogQL query API) |
 
 Per-provider export instructions, payload shapes, and caveats:
 [Phoenix](./ingest.phoenix.md) · [Langfuse](./ingest.langfuse.md) ·
-[LangSmith](./ingest.langsmith.md) · [Braintrust](./ingest.braintrust.md). Runnable examples live in
-[`examples/ingest/`](../examples/ingest/).
+[LangSmith](./ingest.langsmith.md) · [Braintrust](./ingest.braintrust.md) ·
+[PostHog](./ingest.posthog.md). Runnable examples live in [`examples/ingest/`](../examples/ingest/).
+
+### Databases and other stores
+
+There is no bespoke database adapter — instead, **point your store at OpenTelemetry** and ingest with
+`--source otel-genai`. If your agent runs are in a SQL table, a warehouse, or a custom log, the clean
+hook-up is to emit OTel GenAI spans (most agent frameworks and the OTel GenAI instrumentations do
+this out of the box) and either export them to a file (`--file spans.otlp.json`) or serve them from
+an OTLP-compatible query backend and `--pull`. One OTel format, any store behind it — no per-database
+code to maintain.
 
 **File vs. pull.** Every adapter supports `--file` (an export you already have); `--pull` (live from
 the vendor API) is opt-in per adapter and errors with a clear "export to a file" message when a

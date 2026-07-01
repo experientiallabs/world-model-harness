@@ -174,6 +174,7 @@ _SOURCES: dict[str, tuple[str, bool]] = {
     "phoenix": ("Arize Phoenix", True),
     "langfuse": ("Langfuse", True),
     "langsmith": ("LangSmith", True),
+    "posthog": ("PostHog", True),
 }
 
 
