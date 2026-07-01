@@ -5,69 +5,100 @@ from __future__ import annotations
 from pathlib import Path
 from typing import cast
 
-import httpx
 import pytest
 
+import wmh.telemetry as telemetry
 from wmh.config.settings import set_telemetry_enabled
 from wmh.telemetry import capture
+
+
+class _FakePosthog:
+    instances: list[_FakePosthog] = []
+
+    def __init__(self, project_api_key: str, **kwargs: object) -> None:
+        self.project_api_key = project_api_key
+        self.kwargs = kwargs
+        self.calls: list[tuple[str, dict[str, object]]] = []
+        self.shutdown_called = False
+        self.instances.append(self)
+
+    def capture(self, event: str, **kwargs: object) -> str:
+        self.calls.append((event, kwargs))
+        return "message-id"
+
+    def shutdown(self) -> None:
+        self.shutdown_called = True
+
+
+def _install_fake_posthog(monkeypatch: pytest.MonkeyPatch) -> list[_FakePosthog]:
+    _FakePosthog.instances = []
+    telemetry._CLIENTS.clear()
+    monkeypatch.setattr(telemetry, "Posthog", _FakePosthog)
+    return _FakePosthog.instances
 
 
 def test_capture_posts_anonymous_metadata_event(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    calls: list[tuple[str, object, float]] = []
+    clients = _install_fake_posthog(monkeypatch)
 
-    def fake_post(url: str, *, json: object, timeout: float) -> httpx.Response:
-        calls.append((url, json, timeout))
-        return httpx.Response(200)
-
-    monkeypatch.setattr(httpx, "post", fake_post)
     monkeypatch.setenv("WMH_TELEMETRY", "1")
     monkeypatch.setenv("WMH_POSTHOG_PROJECT_API_KEY", "phc_test")
 
     assert capture("wmh test event", {"generated_step_count": 1}, root=tmp_path / ".wmh")
 
-    assert len(calls) == 1
-    url, raw_payload, timeout = calls[0]
-    payload = cast(dict[str, object], raw_payload)
-    properties = cast(dict[str, object], payload["properties"])
-    assert url == "https://us.i.posthog.com/i/v0/e/"
-    assert timeout == 0.5
-    assert payload["api_key"] == "phc_test"
-    assert payload["event"] == "wmh test event"
-    assert isinstance(payload["distinct_id"], str)
+    assert len(clients) == 1
+    client = clients[0]
+    assert client.project_api_key == "phc_test"
+    assert client.kwargs["host"] == "https://us.i.posthog.com"
+    assert client.kwargs["timeout"] == 0.5
+    assert len(client.calls) == 1
+    event, kwargs = client.calls[0]
+    properties = cast(dict[str, object], kwargs["properties"])
+    assert event == "wmh test event"
+    assert isinstance(kwargs["distinct_id"], str)
     assert properties["$process_person_profile"] is False
     assert properties["generated_step_count"] == 1
 
 
 def test_capture_respects_project_opt_out(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    calls: list[object] = []
-
-    def fake_post(url: str, *, json: object, timeout: float) -> httpx.Response:
-        calls.append((url, json, timeout))
-        return httpx.Response(200)
+    clients = _install_fake_posthog(monkeypatch)
 
     root = tmp_path / ".wmh"
     set_telemetry_enabled(False, root)
     monkeypatch.delenv("WMH_TELEMETRY", raising=False)
     monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
     monkeypatch.setenv("WMH_POSTHOG_PROJECT_API_KEY", "phc_test")
-    monkeypatch.setattr(httpx, "post", fake_post)
 
     assert capture("wmh test event", root=root) is False
-    assert calls == []
+    assert clients == []
 
 
 def test_do_not_track_wins_over_env_enable(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    calls: list[object] = []
-
-    def fake_post(url: str, *, json: object, timeout: float) -> httpx.Response:
-        calls.append((url, json, timeout))
-        return httpx.Response(200)
+    clients = _install_fake_posthog(monkeypatch)
 
     monkeypatch.setenv("WMH_TELEMETRY", "1")
     monkeypatch.setenv("DO_NOT_TRACK", "1")
-    monkeypatch.setattr(httpx, "post", fake_post)
 
     assert capture("wmh test event", root=tmp_path / ".wmh") is False
-    assert calls == []
+    assert clients == []
+
+
+def test_capture_uses_unknown_version_when_distribution_metadata_is_missing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    clients = _install_fake_posthog(monkeypatch)
+
+    def missing_version(distribution_name: str) -> str:
+        raise telemetry.PackageNotFoundError(distribution_name)
+
+    monkeypatch.setattr(telemetry, "version", missing_version)
+    monkeypatch.setenv("WMH_TELEMETRY", "1")
+    monkeypatch.setenv("WMH_POSTHOG_PROJECT_API_KEY", "phc_test")
+
+    assert capture("wmh test event", root=tmp_path / ".wmh")
+
+    assert len(clients) == 1
+    _event, kwargs = clients[0].calls[0]
+    properties = cast(dict[str, object], kwargs["properties"])
+    assert properties["wmh_version"] == "unknown"

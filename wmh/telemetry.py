@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import os
 import sys
+from atexit import register
 from dataclasses import dataclass
-from importlib.metadata import version
+from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 
-import httpx
+from posthog import Posthog
 
 from wmh.config import ARTIFACT_DIR
 from wmh.config.settings import ensure_telemetry_anonymous_id, load_settings
@@ -23,6 +24,7 @@ TelemetryProperties = dict[str, TelemetryValue]
 
 _FALSE_VALUES = {"0", "false", "off", "no"}
 _TRUE_VALUES = {"1", "true", "on", "yes"}
+_CLIENTS: dict[tuple[str, str], Posthog] = {}
 
 
 @dataclass
@@ -85,18 +87,13 @@ def capture(
             **(properties or {}),
         }
         # Never log prompts, traces, actions, observations, paths, models, credentials, or text.
-        response = httpx.post(
-            f"{host}/i/v0/e/",
-            json={
-                "api_key": api_key,
-                "event": event,
-                "distinct_id": distinct_id,
-                "properties": event_properties,
-            },
-            timeout=0.5,
+        message_id = _posthog_client(api_key, host).capture(
+            event,
+            distinct_id=distinct_id,
+            properties=event_properties,
         )
-        return 200 <= response.status_code < 300
-    except (httpx.HTTPError, OSError, ValueError):
+        return message_id is not None
+    except (OSError, ValueError):
         return False
 
 
@@ -190,4 +187,23 @@ def _env_truthy(name: str) -> bool:
 
 
 def _wmh_version() -> str:
-    return version("world-model-harness")
+    try:
+        return version("world-model-harness")
+    except PackageNotFoundError:
+        return "unknown"
+
+
+def _posthog_client(api_key: str, host: str) -> Posthog:
+    key = (api_key, host)
+    client = _CLIENTS.get(key)
+    if client is None:
+        client = Posthog(
+            api_key,
+            host=host,
+            flush_interval=1.0,
+            max_retries=1,
+            timeout=0.5,
+        )
+        _CLIENTS[key] = client
+        register(client.shutdown)
+    return client

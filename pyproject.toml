@@ -14,6 +14,7 @@ dependencies = [
     "rich>=13.7",
     "gepa>=0.1.1",
     "tomli-w>=1.0",  # writing .wmh/config.toml (stdlib tomllib reads); every `wmh build` needs it
+    "posthog>=7.0",
 ]
 
 [project.optional-dependencies]

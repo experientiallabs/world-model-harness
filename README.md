@@ -81,8 +81,7 @@ uv run pytest -q         # tests
 
 ## Usage telemetry
 
-`wmh` sends anonymous PostHog usage telemetry so we can understand whether the harness is useful:
-build/eval metadata, generated world-model session counts, and generated world-model step counts.
+`wmh` uses anonymous usage telemetry to track the volume of usage.
 Telemetry is strictly metadata. It never includes prompts, traces, actions, observations, file paths,
 model names, provider credentials, or raw user content.
 

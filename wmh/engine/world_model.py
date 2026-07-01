@@ -72,7 +72,7 @@ class WorldModel:
             retriever,
             env_prompt=env_prompt,
             top_k=config.top_k,
-            telemetry_root=telemetry_root or artifact_dir,
+            telemetry_root=telemetry_root or _default_telemetry_root(artifact_dir),
         )
 
     def new_session(self, task: str | None = None, seed_state: EnvState | None = None) -> Session:
@@ -84,7 +84,7 @@ class WorldModel:
         capture(
             "wmh generated trace started",
             {"generated_trace_count": 1},
-            root=getattr(self, "_telemetry_root", ".wmh"),
+            root=self._telemetry_root,
         )
         return session
 
@@ -184,3 +184,10 @@ class WorldModel:
 
 def _user_message(text: str) -> Message:
     return Message(role="user", content=text)
+
+
+def _default_telemetry_root(artifact_dir: str | Path) -> Path:
+    path = Path(artifact_dir)
+    if path.parent.name == "models":
+        return path.parent.parent
+    return path
