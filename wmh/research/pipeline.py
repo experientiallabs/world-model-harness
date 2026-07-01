@@ -57,12 +57,17 @@ def score_prompt(
     embedder: Embedder | None,
     train: list[Trace] | None,
     top_k: int = 5,
+    sample_turns: str = "all",
+    seed: int = 0,
+    concurrency: int = 1,
 ) -> float:
     """Replay-score `prompt`'s held-out fidelity, leak-free. Returns the mean judge score (0..1).
 
     Thin adapter over `wmh.engine.replay.replay`: builds the serving retriever from `embedder` and
     forwards the leak-free `train` corpus, then returns the aggregate `mean_score`. Using `replay`
     (not a private loop) means the rubric/judge the rest of the harness uses scores ablations too.
+    `sample_turns="sampled"` scores Qwen-AgentWorld's 5 turns per trace (cheaper on big test sets);
+    `seed` makes that turn selection reproducible.
     """
     retriever = EmbeddingRetriever(embedder) if embedder is not None else None
     report = replay(
@@ -73,5 +78,8 @@ def score_prompt(
         retriever=retriever,
         train=train if embedder is not None else None,
         top_k=top_k,
+        sample_turns=sample_turns,
+        seed=seed,
+        concurrency=concurrency,
     )
     return report.mean_score
