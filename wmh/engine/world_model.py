@@ -11,11 +11,14 @@ import time
 import uuid
 from pathlib import Path
 
+from wmh.config import ArtifactPaths, load_config
 from wmh.core.parsing import parse_observation
 from wmh.core.types import Action, EnvState, Observation, Session, Step
 from wmh.engine.prompts import BASE_ENV_PROMPT, build_env_prompt
 from wmh.providers.base import Embedder, Message, Provider
 from wmh.retrieval import EmbeddingRetriever, Retriever
+from wmh.retrieval.embedders import get_embedder
+from wmh.telemetry import capture
 from wmh.tracking import Phase, RunRecord, RunTracker
 
 
@@ -52,9 +55,6 @@ class WorldModel:
         when omitted we reconstruct the configured embedder (`embed_provider` + `embed_dim`), which
         defaults to the offline `HashingEmbedder` so loading needs no embedding credentials.
         """
-        from wmh.config import ArtifactPaths, load_config
-        from wmh.retrieval.embedders import get_embedder
-
         config = load_config(artifact_dir)
         paths = ArtifactPaths(artifact_dir)
         env_prompt = (
@@ -76,8 +76,6 @@ class WorldModel:
         )
 
     def new_session(self, task: str | None = None, seed_state: EnvState | None = None) -> Session:
-        from wmh.telemetry import capture
-
         session = Session(id=uuid.uuid4().hex, task=task, state=seed_state or EnvState())
         self._sessions[session.id] = session
         tracker = RunTracker(run_id=session.id, kind="serve")
@@ -120,8 +118,6 @@ class WorldModel:
 
     def step(self, session_id: str, action: Action) -> Observation:
         """Predict the observation for `action` and advance the session. DreamGym Eq. (4)."""
-        from wmh.telemetry import capture
-
         started = time.monotonic()
         session = self._sessions[session_id]
 

@@ -50,3 +50,7 @@ uv run pytest -q
 7. **Route reusable workflows through `wmh`.** Avoid parallel top-level scripts for harness actions.
    If a workflow is generally useful outside one example dataset, implement it in `wmh/` and expose
    it through the CLI.
+
+8. **Keep imports explicit and fail-fast.** Put imports at module scope unless moving them is
+   required to break a real circular dependency. Do not use lazy imports for optional convenience,
+   and do not catch `ImportError`/`ModuleNotFoundError` to silently fall back to alternate behavior.

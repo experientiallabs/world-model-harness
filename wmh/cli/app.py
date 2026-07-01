@@ -8,28 +8,67 @@ models are named (`--name`), stored under `<root>/models/<name>/`, and listed wi
 
 from __future__ import annotations
 
+import json
+import subprocess
+import uuid
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING
+from uuid import uuid4
 
 import typer
+import uvicorn
 from rich.console import Console
+from rich.table import Table
 
+import wmh.providers as providers
+from wmh.cli.ui import (
+    BuildParams,
+    RichBuildReporter,
+    build_summary_panel,
+    models_table,
+    run_build_wizard,
+    run_play_repl,
+    select_model,
+)
 from wmh.config import (
     ARTIFACT_DIR,
     DEFAULT_MODEL_NAME,
     PROVIDER_ENV_VARS,
+    ArtifactPaths,
     HarnessConfig,
     WorldModelStore,
     load_config,
+    load_settings,
+    set_telemetry_enabled,
+    settings_path,
     validate_name,
 )
+from wmh.engine.build import build as run_build
+from wmh.engine.demo import run_demo
+from wmh.engine.eval import EvalReport, evaluate_files
+from wmh.engine.eval_suites import (
+    discover_eval_suites,
+    list_eval_results,
+    resolve_eval_suite,
+    result_path,
+)
+from wmh.engine.loader import load_world_model
+from wmh.engine.prompts import BASE_ENV_PROMPT
+from wmh.ingest import VendorPull
+from wmh.optimize.judge import LLMJudge, RubricJudge
 from wmh.providers import ProviderConfig, ProviderKind, verify_all, verify_embedder
 from wmh.providers.base import EmbedderKind
-
-if TYPE_CHECKING:
-    from wmh.engine.eval import EvalReport
-    from wmh.engine.reporting import BuildReporter
+from wmh.retrieval import HashingEmbedder, get_embedder
+from wmh.serving.server import create_app
+from wmh.telemetry import (
+    BuildTelemetryStats,
+    TelemetryBuildReporter,
+    capture_build_completed,
+    capture_eval_completed,
+    settings_root_from_results_root,
+)
+from wmh.tracking import MeteredProvider, Phase, RunTracker, classify_build_call, save_run
 
 app = typer.Typer(help="World Model Harness: a frontier LLM acts as your agent's environment.")
 providers_app = typer.Typer(help="Manage and verify LLM providers.")
@@ -60,56 +99,12 @@ class _EvalOptions:
     top_k: int
 
 
-@dataclass
-class _BuildTelemetryStats:
-    input_trace_count: int = 0
-    input_step_count: int = 0
-    train_trace_count: int = 0
-    heldout_trace_count: int = 0
-    indexed_step_count: int = 0
-    frontier_size: int = 0
-    rollouts_used: int = 0
-
-
-class _TelemetryBuildReporter:
-    def __init__(self, inner: BuildReporter, stats: _BuildTelemetryStats) -> None:
-        self._inner = inner
-        self._stats = stats
-
-    def ingest_done(self, traces: int, steps: int) -> None:
-        self._stats.input_trace_count = traces
-        self._stats.input_step_count = steps
-        self._inner.ingest_done(traces, steps)
-
-    def split_done(self, train: int, test: int) -> None:
-        self._stats.train_trace_count = train
-        self._stats.heldout_trace_count = test
-        self._inner.split_done(train, test)
-
-    def index_done(self, steps: int) -> None:
-        self._stats.indexed_step_count = steps
-        self._inner.index_done(steps)
-
-    def optimize_start(self, budget: int) -> None:
-        self._inner.optimize_start(budget)
-
-    def rollout(self, done: int, budget: int, score: float | None) -> None:
-        self._inner.rollout(done, budget, score)
-
-    def optimize_done(self, held_out_accuracy: float, frontier_size: int, rollouts: int) -> None:
-        self._stats.frontier_size = frontier_size
-        self._stats.rollouts_used = rollouts
-        self._inner.optimize_done(held_out_accuracy, frontier_size, rollouts)
-
-
 @config_app.command("telemetry")
 def config_telemetry(
     action: str = typer.Argument("status", help="status | enable | disable"),
     root: str = typer.Option(ARTIFACT_DIR, help="Project dir holding local settings."),
 ) -> None:
     """View or change project-local usage telemetry settings."""
-    from wmh.config import load_settings, set_telemetry_enabled, settings_path
-
     normalized = action.lower()
     if normalized == "status":
         settings = load_settings(root)
@@ -195,8 +190,6 @@ def examples_run(
     name: str = typer.Argument(..., help="Example task name."),
 ) -> None:
     """Run an example's local launcher, forwarding any extra args after `--`."""
-    import subprocess
-
     example_dir = _resolve_example(name)
     runner = example_dir / "run.sh"
     if not runner.exists():
@@ -237,17 +230,6 @@ def build(
     With no `--name`/`--file` on an interactive terminal, this launches a guided creation wizard;
     pass `--no-interactive` (or any of those flags) to stay fully scriptable.
     """
-    import uuid
-
-    from wmh.cli.ui import BuildParams, RichBuildReporter, build_summary_panel, run_build_wizard
-    from wmh.config import ArtifactPaths
-    from wmh.engine.build import build as run_build
-    from wmh.ingest import VendorPull
-    from wmh.providers import get_provider
-    from wmh.retrieval import get_embedder
-    from wmh.telemetry import capture
-    from wmh.tracking import MeteredProvider, Phase, RunTracker, classify_build_call, save_run
-
     # Decide whether to run the wizard: explicit flag wins; otherwise auto when at a TTY and the
     # essential inputs (a name and a trace source) were not supplied.
     needs_input = name is None or (file is None and vendor is None)
@@ -316,11 +298,11 @@ def build(
     # the optimizer. `classify_build_call` splits judge vs GEPA by system prompt.
     tracker = RunTracker(run_id=uuid.uuid4().hex, kind="build")
     metered = MeteredProvider(
-        get_provider(config.serve_provider_config()),
+        providers.get_provider(config.serve_provider_config()),
         tracker,
         classify=classify_build_call,
     )
-    build_stats = _BuildTelemetryStats()
+    build_stats = BuildTelemetryStats()
     with tracker.timed(), RichBuildReporter(_console, params.name) as reporter:
         result = run_build(
             config,
@@ -329,28 +311,16 @@ def build(
             root=model_dir,
             serve_provider=metered,
             embedder=get_embedder(config),
-            reporter=_TelemetryBuildReporter(reporter, build_stats),
+            reporter=TelemetryBuildReporter(reporter, build_stats),
         )
     record = tracker.record_summary()
     save_run(record, ArtifactPaths(model_dir).runs)
-    capture(
-        "wmh build completed",
-        {
-            "success": True,
-            "input_trace_count": build_stats.input_trace_count,
-            "input_step_count": build_stats.input_step_count,
-            "train_trace_count": build_stats.train_trace_count,
-            "heldout_trace_count": build_stats.heldout_trace_count,
-            "indexed_step_count": build_stats.indexed_step_count,
-            "gepa_budget": params.gepa_budget,
-            "rollouts_used": result.metrics.rollouts_used,
-            "frontier_size": len(result.frontier),
-            "duration_seconds": round(record.duration_seconds, 3),
-            "llm_call_count": record.total.calls,
-            "input_tokens": record.total.input_tokens,
-            "output_tokens": record.total.output_tokens,
-            "cost_usd": round(record.total.cost_usd, 6),
-        },
+    capture_build_completed(
+        stats=build_stats,
+        gepa_budget=params.gepa_budget,
+        rollouts_used=result.metrics.rollouts_used,
+        frontier_size=len(result.frontier),
+        record=record,
         root=root,
     )
 
@@ -416,8 +386,6 @@ def _verify_or_abort(config: HarnessConfig) -> None:
 @app.command("list")
 def list_models(root: str = typer.Option(ARTIFACT_DIR, help="Project dir to list.")) -> None:
     """List every world model built under the project dir."""
-    from wmh.cli.ui import models_table
-
     infos = WorldModelStore(root).list_info()
     if not infos:
         _console.print("[yellow]no world models built yet[/yellow]; run `wmh build --name <name>`")
@@ -438,10 +406,6 @@ def serve(
     Serves every built model by default, or just the `--name` ones. Routes are namespaced:
     `/world_models/{name}/sessions` and `.../step`.
     """
-    import uvicorn
-
-    from wmh.serving.server import create_app
-
     names = list(name) if name else None
     uvicorn.run(create_app(root, names=names), host="127.0.0.1", port=port)
 
@@ -551,20 +515,20 @@ def eval_(  # noqa: A001 - `eval` is the user-facing command name; the builtin i
     _print_eval_report(report)
     if out:
         _write_ad_hoc_eval_report(Path(out), report)
-    _capture_eval_completed(
+    capture_eval_completed(
         mode="ad_hoc",
         file_count=len(args),
-        report=report,
-        options=options,
+        scored_step_count=report.total_steps,
+        rag_enabled=options.use_rag,
+        judge_mode=options.judge,
+        sample_turns=options.sample_turns,
+        train_split=options.train_split,
+        top_k=options.top_k,
         root=ARTIFACT_DIR,
     )
 
 
 def _eval_list(examples_root: str) -> None:
-    from rich.table import Table
-
-    from wmh.engine.eval_suites import discover_eval_suites
-
     suites = discover_eval_suites(examples_root)
     if not suites:
         _console.print("[yellow]no eval suites found[/yellow]")
@@ -593,10 +557,6 @@ def _eval_results(
     *,
     limit: int,
 ) -> None:
-    from rich.table import Table
-
-    from wmh.engine.eval_suites import list_eval_results, resolve_eval_suite
-
     resolved_suite = suite_filter
     if suite_filter is not None:
         try:
@@ -646,12 +606,6 @@ def _eval_run_suite(
     top_k: int | None,
     out: str | None,
 ) -> None:
-    import json
-    from datetime import UTC, datetime
-    from uuid import uuid4
-
-    from wmh.engine.eval_suites import resolve_eval_suite, result_path
-
     suite = resolve_eval_suite(selector, examples_root)
     suite_prompt = suite.resolve_prompt()
     options = _eval_options(
@@ -696,12 +650,16 @@ def _eval_run_suite(
     }
     destination.write_text(json.dumps(payload, indent=2), encoding="utf-8")
     _console.print(f"wrote eval result -> {destination}")
-    _capture_eval_completed(
+    capture_eval_completed(
         mode="suite",
         file_count=len(files),
-        report=report,
-        options=options,
-        root=_settings_root_from_results_root(results_root),
+        scored_step_count=report.total_steps,
+        rag_enabled=options.use_rag,
+        judge_mode=options.judge,
+        sample_turns=options.sample_turns,
+        train_split=options.train_split,
+        top_k=options.top_k,
+        root=settings_root_from_results_root(results_root),
     )
 
 
@@ -753,12 +711,6 @@ def _run_eval_files(
     model: str,
     region: str | None,
 ) -> EvalReport:
-    from wmh.engine.eval import evaluate_files
-    from wmh.engine.prompts import BASE_ENV_PROMPT
-    from wmh.optimize.judge import LLMJudge, RubricJudge
-    from wmh.providers import ProviderConfig, get_provider
-    from wmh.retrieval import HashingEmbedder
-
     for path in files:
         if not path.exists():
             raise typer.BadParameter(f"trace file not found: {path}")
@@ -767,7 +719,7 @@ def _run_eval_files(
     except ValueError:
         kinds = ", ".join(k.value for k in ProviderKind)
         raise typer.BadParameter(f"unknown provider {provider!r}; choose one of: {kinds}") from None
-    llm = get_provider(ProviderConfig(kind=serve_provider, model=model, region=region))
+    llm = providers.get_provider(ProviderConfig(kind=serve_provider, model=model, region=region))
     prompt = (
         Path(options.prompt_file).read_text(encoding="utf-8")
         if options.prompt_file
@@ -798,45 +750,11 @@ def _print_eval_report(report: EvalReport) -> None:
 
 
 def _write_ad_hoc_eval_report(path: Path, report: EvalReport) -> None:
-    import json
-
     path.write_text(
         json.dumps({n: r.model_dump(mode="json") for n, r in report.per_file.items()}, indent=2),
         encoding="utf-8",
     )
     _console.print(f"wrote full report -> {path}")
-
-
-def _capture_eval_completed(
-    *,
-    mode: str,
-    file_count: int,
-    report: EvalReport,
-    options: _EvalOptions,
-    root: str | Path,
-) -> None:
-    from wmh.telemetry import capture
-
-    capture(
-        "wmh eval completed",
-        {
-            "success": True,
-            "eval_mode": mode,
-            "file_count": file_count,
-            "scored_step_count": report.total_steps,
-            "rag_enabled": options.use_rag,
-            "judge_mode": options.judge,
-            "sample_turns": options.sample_turns,
-            "train_split": options.train_split,
-            "top_k": options.top_k,
-        },
-        root=root,
-    )
-
-
-def _settings_root_from_results_root(results_root: str) -> Path:
-    path = Path(results_root)
-    return path.parent if path.name == "evals" else Path(ARTIFACT_DIR)
 
 
 def _eval_report_payload(report: EvalReport) -> dict[str, object]:
@@ -854,8 +772,6 @@ def demo(
     root: str = typer.Option(ARTIFACT_DIR, help="Project dir."),
 ) -> None:
     """Demo the harness: an LLM agent makes a tool call vs the world model; show prompt+output."""
-    from wmh.engine.demo import run_demo
-
     wm, _resolved_name, provider = _load_model(name, root)
     # Seed the demo agent from whatever steps the index holds.
     examples = wm.sample_steps(3)
@@ -872,8 +788,6 @@ def play(
     root: str = typer.Option(ARTIFACT_DIR, help="Project dir."),
 ) -> None:
     """Step into the environment yourself: type actions, the world model returns observations."""
-    from wmh.cli.ui import run_play_repl
-
     wm, resolved_name, _provider = _load_model(name, root)
     run_play_repl(_console, wm, resolved_name, task)
 
@@ -893,8 +807,6 @@ def _resolve_name(store: WorldModelStore, name: str | None) -> str:
         # Only enumerate full model summaries when we actually need the picker (>1 model on a TTY).
         # `list_names` is cheap (a dir scan); `list_info` reads every config/metrics/frontier file.
         if _console.is_terminal and len(store.list_names()) > 1:
-            from wmh.cli.ui import select_model
-
             return select_model(_console, store.list_info())
         return store.resolve(None).name
     except (FileNotFoundError, ValueError) as exc:
@@ -932,8 +844,6 @@ def _load_model(name: str | None, root: str):  # noqa: ANN202 - (WorldModel, nam
     Returns `(world_model, resolved_name, provider)` so callers can reuse the provider without
     re-reading config / reconstructing it.
     """
-    from wmh.engine import load_world_model
-
     store = WorldModelStore(root)
     resolved_name = _resolve_name(store, name)
     world_model, provider = load_world_model(
