@@ -29,12 +29,15 @@ from wmh.providers.base import EmbedderKind
 
 if TYPE_CHECKING:
     from wmh.engine.eval import EvalReport
+    from wmh.engine.reporting import BuildReporter
 
 app = typer.Typer(help="World Model Harness: a frontier LLM acts as your agent's environment.")
 providers_app = typer.Typer(help="Manage and verify LLM providers.")
 examples_app = typer.Typer(help="List and launch self-contained task examples.")
+config_app = typer.Typer(help="Manage local harness config.")
 app.add_typer(providers_app, name="providers")
 app.add_typer(examples_app, name="examples")
+app.add_typer(config_app, name="config")
 _console = Console()
 _CHECK = "[green]✓[/green]"
 
@@ -55,6 +58,69 @@ class _EvalOptions:
     sample_turns: str
     seed: int
     top_k: int
+
+
+@dataclass
+class _BuildTelemetryStats:
+    input_trace_count: int = 0
+    input_step_count: int = 0
+    train_trace_count: int = 0
+    heldout_trace_count: int = 0
+    indexed_step_count: int = 0
+    frontier_size: int = 0
+    rollouts_used: int = 0
+
+
+class _TelemetryBuildReporter:
+    def __init__(self, inner: BuildReporter, stats: _BuildTelemetryStats) -> None:
+        self._inner = inner
+        self._stats = stats
+
+    def ingest_done(self, traces: int, steps: int) -> None:
+        self._stats.input_trace_count = traces
+        self._stats.input_step_count = steps
+        self._inner.ingest_done(traces, steps)
+
+    def split_done(self, train: int, test: int) -> None:
+        self._stats.train_trace_count = train
+        self._stats.heldout_trace_count = test
+        self._inner.split_done(train, test)
+
+    def index_done(self, steps: int) -> None:
+        self._stats.indexed_step_count = steps
+        self._inner.index_done(steps)
+
+    def optimize_start(self, budget: int) -> None:
+        self._inner.optimize_start(budget)
+
+    def rollout(self, done: int, budget: int, score: float | None) -> None:
+        self._inner.rollout(done, budget, score)
+
+    def optimize_done(self, held_out_accuracy: float, frontier_size: int, rollouts: int) -> None:
+        self._stats.frontier_size = frontier_size
+        self._stats.rollouts_used = rollouts
+        self._inner.optimize_done(held_out_accuracy, frontier_size, rollouts)
+
+
+@config_app.command("telemetry")
+def config_telemetry(
+    action: str = typer.Argument("status", help="status | enable | disable"),
+    root: str = typer.Option(ARTIFACT_DIR, help="Project dir holding local settings."),
+) -> None:
+    """View or change project-local usage telemetry settings."""
+    from wmh.config import load_settings, set_telemetry_enabled, settings_path
+
+    normalized = action.lower()
+    if normalized == "status":
+        settings = load_settings(root)
+    elif normalized == "enable":
+        settings = set_telemetry_enabled(True, root)
+    elif normalized == "disable":
+        settings = set_telemetry_enabled(False, root)
+    else:
+        raise typer.BadParameter("action must be one of: status, enable, disable")
+    state = "enabled" if settings.telemetry.enabled else "disabled"
+    _console.print(f"telemetry {state} ({settings_path(root)})")
 
 
 @providers_app.command("verify")
@@ -179,6 +245,7 @@ def build(
     from wmh.ingest import VendorPull
     from wmh.providers import get_provider
     from wmh.retrieval import get_embedder
+    from wmh.telemetry import capture
     from wmh.tracking import MeteredProvider, Phase, RunTracker, classify_build_call, save_run
 
     # Decide whether to run the wizard: explicit flag wins; otherwise auto when at a TTY and the
@@ -253,18 +320,39 @@ def build(
         tracker,
         classify=classify_build_call,
     )
+    build_stats = _BuildTelemetryStats()
     with tracker.timed(), RichBuildReporter(_console, params.name) as reporter:
-        run_build(
+        result = run_build(
             config,
             file=params.file,
             vendor=VendorPull() if params.vendor else None,
             root=model_dir,
             serve_provider=metered,
             embedder=get_embedder(config),
-            reporter=reporter,
+            reporter=_TelemetryBuildReporter(reporter, build_stats),
         )
     record = tracker.record_summary()
     save_run(record, ArtifactPaths(model_dir).runs)
+    capture(
+        "wmh build completed",
+        {
+            "success": True,
+            "input_trace_count": build_stats.input_trace_count,
+            "input_step_count": build_stats.input_step_count,
+            "train_trace_count": build_stats.train_trace_count,
+            "heldout_trace_count": build_stats.heldout_trace_count,
+            "indexed_step_count": build_stats.indexed_step_count,
+            "gepa_budget": params.gepa_budget,
+            "rollouts_used": result.metrics.rollouts_used,
+            "frontier_size": len(result.frontier),
+            "duration_seconds": round(record.duration_seconds, 3),
+            "llm_call_count": record.total.calls,
+            "input_tokens": record.total.input_tokens,
+            "output_tokens": record.total.output_tokens,
+            "cost_usd": round(record.total.cost_usd, 6),
+        },
+        root=root,
+    )
 
     _console.print(build_summary_panel(store.info(params.name), model_dir))
     _console.print(
@@ -463,6 +551,13 @@ def eval_(  # noqa: A001 - `eval` is the user-facing command name; the builtin i
     _print_eval_report(report)
     if out:
         _write_ad_hoc_eval_report(Path(out), report)
+    _capture_eval_completed(
+        mode="ad_hoc",
+        file_count=len(args),
+        report=report,
+        options=options,
+        root=ARTIFACT_DIR,
+    )
 
 
 def _eval_list(examples_root: str) -> None:
@@ -601,6 +696,13 @@ def _eval_run_suite(
     }
     destination.write_text(json.dumps(payload, indent=2), encoding="utf-8")
     _console.print(f"wrote eval result -> {destination}")
+    _capture_eval_completed(
+        mode="suite",
+        file_count=len(files),
+        report=report,
+        options=options,
+        root=_settings_root_from_results_root(results_root),
+    )
 
 
 def _eval_options(
@@ -705,6 +807,38 @@ def _write_ad_hoc_eval_report(path: Path, report: EvalReport) -> None:
     _console.print(f"wrote full report -> {path}")
 
 
+def _capture_eval_completed(
+    *,
+    mode: str,
+    file_count: int,
+    report: EvalReport,
+    options: _EvalOptions,
+    root: str | Path,
+) -> None:
+    from wmh.telemetry import capture
+
+    capture(
+        "wmh eval completed",
+        {
+            "success": True,
+            "eval_mode": mode,
+            "file_count": file_count,
+            "scored_step_count": report.total_steps,
+            "rag_enabled": options.use_rag,
+            "judge_mode": options.judge,
+            "sample_turns": options.sample_turns,
+            "train_split": options.train_split,
+            "top_k": options.top_k,
+        },
+        root=root,
+    )
+
+
+def _settings_root_from_results_root(results_root: str) -> Path:
+    path = Path(results_root)
+    return path.parent if path.name == "evals" else Path(ARTIFACT_DIR)
+
+
 def _eval_report_payload(report: EvalReport) -> dict[str, object]:
     return {
         "overall_fidelity": report.overall_fidelity,
@@ -802,7 +936,9 @@ def _load_model(name: str | None, root: str):  # noqa: ANN202 - (WorldModel, nam
 
     store = WorldModelStore(root)
     resolved_name = _resolve_name(store, name)
-    world_model, provider = load_world_model(store.resolve(resolved_name))
+    world_model, provider = load_world_model(
+        store.resolve(resolved_name), telemetry_root=store.root
+    )
     return world_model, resolved_name, provider
 
 

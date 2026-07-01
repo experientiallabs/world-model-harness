@@ -38,6 +38,23 @@ uv run wmh serve                  # local HTTP backend on :8000
 
 Example-local prebuilt models live under `examples/<task>/models/`; pass `--root examples/<task>` to `wmh list`, `wmh demo`, `wmh play`, or `wmh serve` to use one without rebuilding.
 
+## Usage telemetry
+
+`wmh` sends anonymous PostHog usage telemetry so we can understand whether the harness is useful:
+build/eval metadata, generated world-model session counts, and generated world-model step counts.
+Telemetry is strictly metadata. It never includes prompts, traces, actions, observations, file paths,
+model names, provider credentials, or raw user content.
+
+Telemetry is enabled by default. To opt out for a project:
+
+```bash
+uv run wmh config telemetry disable
+```
+
+This writes `.wmh/settings.toml`. You can re-enable it with `uv run wmh config telemetry enable`,
+check the current setting with `uv run wmh config telemetry status`, or disable it for a process
+with `DO_NOT_TRACK=1` or `WMH_TELEMETRY=0`.
+
 ## Use it as an API
 
 ```python

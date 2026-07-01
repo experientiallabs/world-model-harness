@@ -7,7 +7,9 @@ session — including the env's free-text scratchpad "database" — to stay cons
 
 from __future__ import annotations
 
+import time
 import uuid
+from pathlib import Path
 
 from wmh.core.parsing import parse_observation
 from wmh.core.types import Action, EnvState, Observation, Session, Step
@@ -24,11 +26,13 @@ class WorldModel:
         retriever: Retriever,
         env_prompt: str = BASE_ENV_PROMPT,
         top_k: int = 5,
+        telemetry_root: str | Path = ".wmh",
     ) -> None:
         self._provider = provider
         self._retriever = retriever
         self._env_prompt = env_prompt
         self._top_k = top_k
+        self._telemetry_root = Path(telemetry_root)
         self._sessions: dict[str, Session] = {}
         # Per-session token/cost/time accounting (serve-time observability). One tracker per
         # session, started when the session is created; `session_usage` exposes running totals.
@@ -36,7 +40,11 @@ class WorldModel:
 
     @classmethod
     def load(
-        cls, artifact_dir: str, provider: Provider, embedder: Embedder | None = None
+        cls,
+        artifact_dir: str,
+        provider: Provider,
+        embedder: Embedder | None = None,
+        telemetry_root: str | Path | None = None,
     ) -> WorldModel:
         """Construct from a built `.wmh/` artifact (optimized prompt + indexed replay buffer).
 
@@ -59,14 +67,27 @@ class WorldModel:
         retriever = EmbeddingRetriever(embedder or get_embedder(config))
         if paths.index.exists():
             retriever.load(paths.index)
-        return cls(provider, retriever, env_prompt=env_prompt, top_k=config.top_k)
+        return cls(
+            provider,
+            retriever,
+            env_prompt=env_prompt,
+            top_k=config.top_k,
+            telemetry_root=telemetry_root or artifact_dir,
+        )
 
     def new_session(self, task: str | None = None, seed_state: EnvState | None = None) -> Session:
+        from wmh.telemetry import capture
+
         session = Session(id=uuid.uuid4().hex, task=task, state=seed_state or EnvState())
         self._sessions[session.id] = session
         tracker = RunTracker(run_id=session.id, kind="serve")
         tracker.start()
         self._trackers[session.id] = tracker
+        capture(
+            "wmh generated trace started",
+            {"generated_trace_count": 1},
+            root=getattr(self, "_telemetry_root", ".wmh"),
+        )
         return session
 
     def session_usage(self, session_id: str) -> RunRecord:
@@ -99,6 +120,9 @@ class WorldModel:
 
     def step(self, session_id: str, action: Action) -> Observation:
         """Predict the observation for `action` and advance the session. DreamGym Eq. (4)."""
+        from wmh.telemetry import capture
+
+        started = time.monotonic()
         session = self._sessions[session_id]
 
         # (1) retrieve top-k similar past steps conditioned on the latest state + action
@@ -106,13 +130,26 @@ class WorldModel:
 
         # (2) assemble the env prompt and (3) predict the observation
         system, user = build_env_prompt(self._env_prompt, session, action, demos)
-        completion = self._provider.complete(system, [_user_message(user)])
+        try:
+            completion = self._provider.complete(system, [_user_message(user)])
+        except Exception:
+            capture(
+                "wmh generated step failed",
+                {
+                    "success": False,
+                    "duration_seconds": round(time.monotonic() - started, 3),
+                },
+                root=self._telemetry_root,
+            )
+            raise
         observation = parse_observation(completion.text)
 
         # serve-time metering: attribute this call's tokens/cost to the session
+        usage_cost_usd: float | None = None
         tracker = self._trackers.get(session_id)
         if tracker is not None:
-            tracker.record(Phase.SERVE, self._provider.config.model, completion.usage)
+            usage_event = tracker.record(Phase.SERVE, self._provider.config.model, completion.usage)
+            usage_cost_usd = usage_event.cost_usd
 
         # (4) advance session: append step, update structured state + scratchpad, enrich buffer
         step = Step(
@@ -121,6 +158,19 @@ class WorldModel:
         session.history.append(step)
         self._update_state(session, step)
         self._retriever.add(step)
+        capture(
+            "wmh generated step completed",
+            {
+                "success": True,
+                "generated_step_count": 1,
+                "session_step_count": len(session.history),
+                "duration_seconds": round(time.monotonic() - started, 3),
+                "input_tokens": completion.usage.input_tokens,
+                "output_tokens": completion.usage.output_tokens,
+                "cost_usd": round(usage_cost_usd, 6) if usage_cost_usd is not None else None,
+            },
+            root=self._telemetry_root,
+        )
         return observation
 
     def _update_state(self, session: Session, step: Step) -> None:
