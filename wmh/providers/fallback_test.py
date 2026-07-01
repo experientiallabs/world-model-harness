@@ -33,7 +33,7 @@ class _StubProvider:
     def embed(self, texts: list[str]) -> list[list[float]]:
         return [[0.0] for _ in texts]
 
-    def verify(self):  # noqa: ANN201
+    def verify(self):  # noqa: ANN202
         raise NotImplementedError
 
 
