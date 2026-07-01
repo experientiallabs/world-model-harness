@@ -16,6 +16,7 @@ step's own trace.
 from __future__ import annotations
 
 import random
+from concurrent.futures import ThreadPoolExecutor
 from statistics import fmean, pstdev
 
 from pydantic import BaseModel, Field
@@ -78,6 +79,7 @@ def replay(
     top_k: int = 5,
     sample_turns: str = "all",
     seed: int = 0,
+    concurrency: int = 1,
 ) -> ReplayReport:
     """Replay held-out steps, scoring predicted vs. actual observations.
 
@@ -85,6 +87,10 @@ def replay(
       (Qwen-AgentWorld's 5-turn protocol) using `seed` for reproducible turn selection.
     - `retriever` + `train` enable leak-free RAG (demos from the train corpus, never the own trace);
       omit either for zero-shot.
+    - `concurrency`: steps are independent (each a predict + judge round trip), so `concurrency > 1`
+      scores them on a thread pool — the result is identical and order-preserving (only the wall
+      clock changes). Default 1 keeps existing callers unchanged; raise it to cut latency on large
+      held-out sets when the provider quota allows.
 
     Each step is scored once (the world model is queried deterministically). `score_std` is the
     spread of per-step scores *across steps*, not across repeated samples — sampling the world model
@@ -93,14 +99,22 @@ def replay(
     """
     demos = DemoRetriever(retriever, train or [], top_k=top_k)
     rng = random.Random(seed)
-    results: list[StepResult] = []
+    # Materialize the (step, history) work list first — selection uses `rng` and must stay
+    # sequential/deterministic; scoring each item is independent and order is restored below.
+    work: list[tuple[str, Step, list[Step]]] = []
     for trace in held_out:
         for step_index in _select_step_indices(trace, sample_turns, rng):
-            step = trace.steps[step_index]
-            history = trace.steps[:step_index]
-            results.append(
-                _score_step(prompt, trace.trace_id, step, provider, judge, demos, history)
-            )
+            work.append((trace.trace_id, trace.steps[step_index], trace.steps[:step_index]))
+
+    def _score(item: tuple[str, Step, list[Step]]) -> StepResult:
+        trace_id, step, history = item
+        return _score_step(prompt, trace_id, step, provider, judge, demos, history)
+
+    if concurrency > 1 and len(work) > 1:
+        with ThreadPoolExecutor(max_workers=concurrency) as pool:
+            results = list(pool.map(_score, work))  # map preserves input order
+    else:
+        results = [_score(item) for item in work]
     return _aggregate(results)
 
 
