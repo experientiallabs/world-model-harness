@@ -36,6 +36,12 @@ def ingest(
     raise ValueError("ingest needs either a file path or a vendor pull")
 
 
+def _trace_fraction(trace: Trace) -> float:
+    """Stable hash of `trace_id` mapped to [0, 1). Order-independent, reproducible across runs."""
+    digest = hashlib.blake2b(trace.trace_id.encode("utf-8"), digest_size=8).digest()
+    return int.from_bytes(digest, "big") / 2**64
+
+
 def split_traces(traces: list[Trace], train_split: float) -> tuple[list[Trace], list[Trace]]:
     """Deterministic train/held-out split for GEPA (held-out is never seen during evolution).
 
@@ -45,11 +51,43 @@ def split_traces(traces: list[Trace], train_split: float) -> tuple[list[Trace], 
     train: list[Trace] = []
     test: list[Trace] = []
     for trace in traces:
-        digest = hashlib.blake2b(trace.trace_id.encode("utf-8"), digest_size=8).digest()
-        # Map the hash to [0, 1); below the threshold -> train.
-        fraction = int.from_bytes(digest, "big") / 2**64
-        (train if fraction < train_split else test).append(trace)
+        (train if _trace_fraction(trace) < train_split else test).append(trace)
     return train, test
+
+
+def split_traces_3way(
+    traces: list[Trace], train_frac: float, val_frac: float
+) -> tuple[list[Trace], list[Trace], list[Trace]]:
+    """Deterministic train / validation / test split by the same stable `trace_id` hash.
+
+    GEPA needs THREE disjoint sets, not two: `train` seeds reflection minibatches, `val` selects
+    among candidate prompts, and `test` is the truly-held-out set we report on — never seen by GEPA.
+    Using the val set as the reported held-out number (the old 2-way behaviour) lets GEPA select a
+    candidate on the very examples we then grade it on, so any "lift" can be selection overfitting.
+
+    Cut points are on the SAME [0,1) hash line as `split_traces`, so `train` is prefix-compatible:
+    `[0, train_frac)` = train, `[train_frac, train_frac+val_frac)` = val, rest = test.
+    Requires `train_frac + val_frac < 1` so test is non-empty.
+    """
+    valid = train_frac > 0 and val_frac > 0 and train_frac + val_frac < 1
+    if not valid:
+        raise ValueError(
+            f"need train_frac>0, val_frac>0, train_frac+val_frac<1; "
+            f"got train_frac={train_frac}, val_frac={val_frac}"
+        )
+    train: list[Trace] = []
+    val: list[Trace] = []
+    test: list[Trace] = []
+    val_cut = train_frac + val_frac
+    for trace in traces:
+        f = _trace_fraction(trace)
+        if f < train_frac:
+            train.append(trace)
+        elif f < val_cut:
+            val.append(trace)
+        else:
+            test.append(trace)
+    return train, val, test
 
 
 def build(

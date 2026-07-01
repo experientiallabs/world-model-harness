@@ -237,11 +237,50 @@ class WorldModelGEPAAdapter(GEPAAdapter[_EvalStep, _StepTrajectory, Observation]
 # --- reflection LM adapter -----------------------------------------------------------------------
 
 _REFLECTION_SYSTEM = (
-    "You improve the system prompt for an LLM that simulates an environment for an AI agent. "
-    "Given the current prompt and feedback on where its predicted observations diverged from the "
-    "real environment, propose an improved prompt. Keep it general across actions; do not overfit "
-    "to a single example."
+    "You improve the system prompt for an LLM that simulates an environment for an AI agent.\n\n"
+    "You will see the current prompt and feedback on where its predicted observations diverged "
+    "from the real environment. Propose an improved prompt by making a MINIMAL, SURGICAL edit — "
+    "NOT a rewrite.\n\n"
+    "Rules for the edit:\n"
+    "- PRESERVE the current prompt's existing wording, structure, and rules verbatim. The current "
+    "prompt already works well on most cases; a full rewrite reliably REGRESSES those cases, which "
+    "is worse than not editing at all.\n"
+    "- Change only what the feedback shows is broken: ADD a short, targeted rule (a bullet or a "
+    "clause) that fixes the observed failure mode, or minimally reword the one line responsible. "
+    "Do not touch anything the feedback does not implicate.\n"
+    "- Keep any added rule GENERAL across actions — describe the class of situation, not one "
+    "example's specific ids/values.\n"
+    "- Prefer the shortest edit that addresses the failure. If nothing is clearly broken, return "
+    "the current prompt unchanged.\n\n"
+    "Output the FULL edited prompt (current prompt + your minimal change), and nothing else."
 )
+
+# GEPA's reflection prompt template (replaces its default full-rewrite framing). `<curr_param>` is
+# the current prompt; `<side_info>` is the per-example inputs/outputs/feedback. We frame the task as
+# a MINIMAL SURGICAL EDIT — the default template ("Provide the new instructions") invites a rewrite,
+# which reliably regresses the many cases the current prompt already handles (empirically: a rewrite
+# broke 35 of 84 previously-perfect steps to fix a handful). Placeholders are required by GEPA.
+_REFLECTION_PROMPT_TEMPLATE = """You wrote the following prompt for an LLM that role-plays an \
+environment (it reads an agent's action and must output exactly what the real system would return):
+
+```
+<curr_param>
+```
+
+Below are examples where this prompt was used, with the model's output, the REAL expected output, \
+and feedback. Study only the cases that scored poorly — those reveal the failure mode to fix:
+
+<side_info>
+
+Now propose an improved prompt by making a MINIMAL, SURGICAL edit:
+- Keep the existing prompt's wording and structure VERBATIM. It already handles most cases well; a \
+rewrite reliably regresses them. Change only what the poorly-scored examples show is broken.
+- Typically this means ADDING one short, general rule (a bullet/clause) that fixes the observed \
+failure, or minimally rewording the single line responsible — nothing else.
+- Keep any added rule general across actions (describe the class of situation, not one example's \
+specific ids or values). If nothing is clearly broken, return the prompt unchanged.
+
+Provide the full edited prompt (original + your minimal change) within ``` blocks."""
 
 
 def _reflection_lm(provider: Provider):  # noqa: ANN202 - returns gepa's LanguageModel callable
@@ -342,6 +381,7 @@ class GEPAOptimizer:
             valset=valset,
             adapter=adapter,
             reflection_lm=_reflection_lm(self._provider),
+            reflection_prompt_template=_REFLECTION_PROMPT_TEMPLATE,
             candidate_selection_strategy="pareto",
             max_metric_calls=_metric_call_budget(budget, len(valset), minibatch),
             reflection_minibatch_size=minibatch,

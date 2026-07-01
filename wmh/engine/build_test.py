@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from wmh.config import ArtifactPaths, HarnessConfig
 from wmh.core.types import Trace
-from wmh.engine.build import build, split_traces
+from wmh.engine.build import build, split_traces, split_traces_3way
 from wmh.providers.base import Completion, Message, ProviderConfig, ProviderKind
 from wmh.retrieval import HashingEmbedder
 
@@ -46,6 +48,42 @@ def test_split_traces_is_deterministic_and_partitions() -> None:
     assert {t.trace_id for t in a_train} == {t.trace_id for t in b_train}
     assert len(a_train) + len(a_test) == 50
     assert 0 < len(a_train) < 50  # roughly an 80/20 split, both sides non-empty
+
+
+def test_split_traces_3way_partitions_disjointly_and_is_stable() -> None:
+    traces = [Trace(trace_id=f"t{i}") for i in range(60)]
+    train, val, test = split_traces_3way(traces, 0.6, 0.2)
+    ids = lambda ts: {t.trace_id for t in ts}  # noqa: E731
+    # Disjoint and exhaustive.
+    assert ids(train) | ids(val) | ids(test) == ids(traces)
+    assert (
+        not (ids(train) & ids(val)) and not (ids(val) & ids(test)) and not (ids(train) & ids(test))
+    )
+    assert len(train) + len(val) + len(test) == 60
+    assert all(len(s) > 0 for s in (train, val, test))
+    # Order-independent (same stable hash).
+    r_train, r_val, r_test = split_traces_3way(list(reversed(traces)), 0.6, 0.2)
+    assert ids(train) == ids(r_train) and ids(val) == ids(r_val) and ids(test) == ids(r_test)
+
+
+def test_split_traces_3way_train_is_prefix_compatible_with_2way() -> None:
+    # The 3-way train set is exactly the 2-way train set at the same cut, so switching to a 3-way
+    # split never reshuffles which traces GEPA trains on — it only carves val out of the old test.
+    traces = [Trace(trace_id=f"t{i}") for i in range(60)]
+    two_train, two_test = split_traces(traces, 0.6)
+    three_train, three_val, three_test = split_traces_3way(traces, 0.6, 0.2)
+    assert {t.trace_id for t in two_train} == {t.trace_id for t in three_train}
+    assert {t.trace_id for t in two_test} == {t.trace_id for t in three_val} | {
+        t.trace_id for t in three_test
+    }
+
+
+def test_split_traces_3way_rejects_degenerate_fractions() -> None:
+    traces = [Trace(trace_id=f"t{i}") for i in range(10)]
+    with pytest.raises(ValueError, match="train_frac"):
+        split_traces_3way(traces, 0.7, 0.4)  # sums to > 1 -> empty test
+    with pytest.raises(ValueError, match="train_frac"):
+        split_traces_3way(traces, 0.0, 0.5)
 
 
 def test_build_writes_a_loadable_artifact(tmp_path) -> None:  # noqa: ANN001 - pytest fixture
