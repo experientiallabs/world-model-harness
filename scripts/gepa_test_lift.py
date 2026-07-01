@@ -75,6 +75,19 @@ def main() -> None:
         help="Restrict GEPA's reflection trainset to steps with prompt-addressable headroom "
         "(searches/lists + error observations), skipping easy cold lookups.",
     )
+    ap.add_argument(
+        "--select-on-hard",
+        action="store_true",
+        help="Also select candidates on hard-step val fidelity (needs --hard-only). Prevents a "
+        "near-saturated overall val score from rejecting a candidate that fixes the hard cases.",
+    )
+    ap.add_argument(
+        "--test-cap",
+        type=int,
+        default=0,
+        help="Cap the number of test traces scored (0 = all). Deterministic prefix; keeps final "
+        "base-vs-evolved scoring tractable on a large corpus.",
+    )
     ap.add_argument("--out", type=Path, required=True)
     args = ap.parse_args()
 
@@ -86,6 +99,9 @@ def main() -> None:
 
     traces = get_adapter("otel-genai").from_file(args.file)
     train, val, test = split_traces_3way(traces, args.train, args.val)
+    if args.test_cap and len(test) > args.test_cap:
+        # Deterministic subset (sorted by trace_id) so the reported test set is reproducible.
+        test = sorted(test, key=lambda t: t.trace_id)[: args.test_cap]
     print(
         f"corpus={len(traces)} traces -> train={len(train)} val={len(val)} test={len(test)} | "
         f"test steps={sum(len(t.steps) for t in test)}"
@@ -98,6 +114,7 @@ def main() -> None:
     optimizer = GEPAOptimizer(
         provider, RubricJudge(provider), retriever=EmbeddingRetriever(embedder)
     )
+
     # Optional: focus reflection on steps with prompt-addressable headroom. Searches/lists can
     # over-populate empty results (fixable); error observations test success/error prediction
     # (fixable). Pure record lookups from empty state are data-bound (the model can't know the
@@ -115,7 +132,12 @@ def main() -> None:
 
     print(f"running GEPA: {args.iterations} iterations on train+val (test held out)...")
     result = optimizer.optimize(
-        train, val, BASE_ENV_PROMPT, args.iterations, hard_step_filter=hard_filter
+        train,
+        val,
+        BASE_ENV_PROMPT,
+        args.iterations,
+        hard_step_filter=hard_filter,
+        select_on_hard=args.select_on_hard,
     )
     evolved = result.prompt
     changed = evolved.strip() != BASE_ENV_PROMPT.strip()
@@ -128,6 +150,24 @@ def main() -> None:
     print("scoring EVOLVED on test...")
     eff_rep = score_prompt(evolved, test, train, provider, embedder, args.max_tokens)
     print(f"  evolved test fidelity = {eff_rep.mean_score:.3f} +/- {eff_rep.score_std:.3f}")
+
+    # Hard-subset fidelity: the sensitive metric. Overall test lift is diluted by the many easy
+    # steps both prompts already ace; the hard steps (searches/errors) are where GEPA can move.
+    def _hard_mean(rep) -> tuple[float, int]:  # noqa: ANN001
+        hs = [
+            r.score
+            for r in rep.results
+            if any(k in (r.action or "").lower() for k in ("search", "list", "find"))
+            or r.is_error_actual
+        ]
+        return (sum(hs) / len(hs) if hs else float("nan"), len(hs))
+
+    base_hard, n_hard_test = _hard_mean(base_rep)
+    eff_hard, _ = _hard_mean(eff_rep)
+    print(
+        f"  HARD-subset test fidelity ({n_hard_test} steps): "
+        f"base {base_hard:.3f} -> evolved {eff_hard:.3f} ({eff_hard - base_hard:+.3f})"
+    )
 
     lift = eff_rep.mean_score - base_rep.mean_score
     print(
@@ -142,6 +182,10 @@ def main() -> None:
                 "base": base_rep.model_dump(),
                 "evolved": eff_rep.model_dump(),
                 "lift": lift,
+                "hard_lift": eff_hard - base_hard,
+                "base_hard": base_hard,
+                "evolved_hard": eff_hard,
+                "n_hard_test": n_hard_test,
                 "evolved_prompt": evolved,
                 "n_train": len(train),
                 "n_val": len(val),

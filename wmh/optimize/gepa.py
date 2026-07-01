@@ -341,6 +341,7 @@ class GEPAOptimizer:
         *,
         rag_corpus: list[Trace] | None = None,
         hard_step_filter: Callable[[Step], bool] | None = None,
+        select_on_hard: bool = False,
     ) -> OptimizeResult:
         """Run GEPA over optimization splits, optionally retrieving demos from another corpus.
 
@@ -349,8 +350,11 @@ class GEPAOptimizer:
         draws from) to steps it accepts. Most steps are easy and score perfectly, so a random
         reflection minibatch usually contains no failure to learn from ("all subsample scores
         perfect. skipping" — a wasted iteration). Filtering the trainset to the informative/hard
-        steps concentrates reflection on the failure modes that actually have headroom. The valset
-        (candidate selection) is left unfiltered so selection still reflects real overall fidelity.
+        steps concentrates reflection on the failure modes that actually have headroom.
+        `select_on_hard` (only meaningful with `hard_step_filter`) additionally filters the VALSET
+        that GEPA selects candidates on: when overall val fidelity is near-saturated, a candidate
+        that fixes the few hard cases barely moves the mean and loses to base on noise, so pareto
+        keeps base. Selecting on hard-step fidelity lets the real improvement win.
         `budget` is the number of optimization ITERATIONS (candidate prompts to propose and fully
         evaluate) — NOT a raw metric-call count. It is translated to GEPA's `max_metric_calls`
         budget by `_metric_call_budget`, which adds the one-time seed valset evaluation so the
@@ -384,6 +388,14 @@ class GEPAOptimizer:
             if hard:  # keep the full trainset if the filter would empty it (never starve GEPA)
                 trainset = hard
         valset = _eval_steps(val_src, demos)
+        if select_on_hard and hard_step_filter is not None:
+            # Select candidates on hard-step val fidelity, not the full (near-saturated) val set.
+            # When most steps score ~perfectly, a candidate that genuinely fixes the few hard cases
+            # barely moves the overall mean and loses to base on noise; pareto then keeps base. Same
+            # filter as the trainset, so selection optimizes exactly the failures we target.
+            hard_val = [es for es in valset if hard_step_filter(es.step)]
+            if hard_val:
+                valset = hard_val
         adapter = WorldModelGEPAAdapter(self._provider, self._judge, self._on_rollout)
         minibatch = min(3, len(trainset))
         result = gepa.optimize(
