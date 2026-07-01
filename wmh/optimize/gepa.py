@@ -340,10 +340,17 @@ class GEPAOptimizer:
         budget: int,
         *,
         rag_corpus: list[Trace] | None = None,
+        hard_step_filter: Callable[[Step], bool] | None = None,
     ) -> OptimizeResult:
         """Run GEPA over optimization splits, optionally retrieving demos from another corpus.
 
         `train`/`test` are GEPA's optimization data: minibatch examples and validation examples.
+        `hard_step_filter`, when given, restricts the GEPA TRAINSET (the minibatch pool reflection
+        draws from) to steps it accepts. Most steps are easy and score perfectly, so a random
+        reflection minibatch usually contains no failure to learn from ("all subsample scores
+        perfect. skipping" — a wasted iteration). Filtering the trainset to the informative/hard
+        steps concentrates reflection on the failure modes that actually have headroom. The valset
+        (candidate selection) is left unfiltered so selection still reflects real overall fidelity.
         `budget` is the number of optimization ITERATIONS (candidate prompts to propose and fully
         evaluate) — NOT a raw metric-call count. It is translated to GEPA's `max_metric_calls`
         budget by `_metric_call_budget`, which adds the one-time seed valset evaluation so the
@@ -372,6 +379,10 @@ class GEPAOptimizer:
         demo_src = train_src if rag_corpus is None else rag_corpus
         demos = DemoRetriever(self._retriever, demo_src)
         trainset = _eval_steps(train_src, demos)
+        if hard_step_filter is not None:
+            hard = [es for es in trainset if hard_step_filter(es.step)]
+            if hard:  # keep the full trainset if the filter would empty it (never starve GEPA)
+                trainset = hard
         valset = _eval_steps(val_src, demos)
         adapter = WorldModelGEPAAdapter(self._provider, self._judge, self._on_rollout)
         minibatch = min(3, len(trainset))

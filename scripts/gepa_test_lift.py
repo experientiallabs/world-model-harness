@@ -69,6 +69,12 @@ def main() -> None:
     ap.add_argument("--iterations", type=int, default=8)
     ap.add_argument("--region", default="us-west-1")
     ap.add_argument("--max-tokens", type=int, default=4096)
+    ap.add_argument(
+        "--hard-only",
+        action="store_true",
+        help="Restrict GEPA's reflection trainset to steps with prompt-addressable headroom "
+        "(searches/lists + error observations), skipping easy cold lookups.",
+    )
     ap.add_argument("--out", type=Path, required=True)
     args = ap.parse_args()
 
@@ -92,8 +98,25 @@ def main() -> None:
     optimizer = GEPAOptimizer(
         provider, RubricJudge(provider), retriever=EmbeddingRetriever(embedder)
     )
+    # Optional: focus reflection on steps with prompt-addressable headroom. Searches/lists can
+    # over-populate empty results (fixable); error observations test success/error prediction
+    # (fixable). Pure record lookups from empty state are data-bound (the model can't know the
+    # values), so reflecting on them wastes iterations. The valset stays unfiltered.
+    def _is_hard(step) -> bool:  # noqa: ANN001
+        name = (step.action.name or "").lower()
+        if any(k in name for k in ("search", "list", "find")):
+            return True
+        return step.observation.is_error
+
+    hard_filter = _is_hard if args.hard_only else None
+    if args.hard_only:
+        n_hard = sum(_is_hard(s) for t in train for s in t.steps)
+        print(f"hard-only: {n_hard} of {sum(len(t.steps) for t in train)} train steps kept")
+
     print(f"running GEPA: {args.iterations} iterations on train+val (test held out)...")
-    result = optimizer.optimize(train, val, BASE_ENV_PROMPT, args.iterations)
+    result = optimizer.optimize(
+        train, val, BASE_ENV_PROMPT, args.iterations, hard_step_filter=hard_filter
+    )
     evolved = result.prompt
     changed = evolved.strip() != BASE_ENV_PROMPT.strip()
     print(f"GEPA done: prompt changed from base? {changed} | frontier={len(result.frontier)}")
