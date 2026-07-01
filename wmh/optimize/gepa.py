@@ -237,50 +237,63 @@ class WorldModelGEPAAdapter(GEPAAdapter[_EvalStep, _StepTrajectory, Observation]
 # --- reflection LM adapter -----------------------------------------------------------------------
 
 _REFLECTION_SYSTEM = (
-    "You improve the system prompt for an LLM that simulates an environment for an AI agent.\n\n"
-    "You will see the current prompt and feedback on where its predicted observations diverged "
-    "from the real environment. Propose an improved prompt by making a MINIMAL, SURGICAL edit — "
-    "NOT a rewrite.\n\n"
-    "Rules for the edit:\n"
-    "- PRESERVE the current prompt's existing wording, structure, and rules verbatim. The current "
-    "prompt already works well on most cases; a full rewrite reliably REGRESSES those cases, which "
-    "is worse than not editing at all.\n"
-    "- Change only what the feedback shows is broken: ADD a short, targeted rule (a bullet or a "
-    "clause) that fixes the observed failure mode, or minimally reword the one line responsible. "
-    "Do not touch anything the feedback does not implicate.\n"
-    "- Keep any added rule GENERAL across actions — describe the class of situation, not one "
-    "example's specific ids/values.\n"
-    "- Prefer the shortest edit that addresses the failure. If nothing is clearly broken, return "
-    "the current prompt unchanged.\n\n"
-    "Output the FULL edited prompt (current prompt + your minimal change), and nothing else."
+    "You improve the system prompt for an LLM that simulates an environment for an AI agent. You "
+    "distill reusable knowledge about the environment (output conventions, domain facts, id/value "
+    "patterns, error and empty-result behaviors) from feedback on the model's mispredictions, and "
+    "ADD it to the prompt so future observations are more faithful. Preserve the existing rules, "
+    "add to a growing notes section rather than rewriting — full rewrites regress cases that "
+    "already pass. Keep additions general across actions, not tied to one example's literal values."
 )
 
-# GEPA's reflection prompt template (replaces its default full-rewrite framing). `<curr_param>` is
-# the current prompt; `<side_info>` is the per-example inputs/outputs/feedback. We frame the task as
-# a MINIMAL SURGICAL EDIT — the default template ("Provide the new instructions") invites a rewrite,
-# which reliably regresses the many cases the current prompt already handles (empirically: a rewrite
-# broke 35 of 84 previously-perfect steps to fix a handful). Placeholders are required by GEPA.
-_REFLECTION_PROMPT_TEMPLATE = """You wrote the following prompt for an LLM that role-plays an \
-environment (it reads an agent's action and must output exactly what the real system would return):
+# GEPA's reflection prompt template (replaces the library default). `<curr_param>` is the current
+# prompt; `<side_info>` is the per-example inputs/outputs/feedback.
+#
+# Design (from the GEPA paper + gepa-ai/gepa): GEPA's edge over plain RAG is that it distills
+# reusable, domain-specific KNOWLEDGE from training traces into the prompt — the library's own
+# default asks the reflector to capture "niche and domain-specific factual information" and any
+# "generalizable strategy". Retrieval only surfaces similar examples at serve time; a prompt that
+# already encodes the environment's output conventions, id/value patterns, and error behaviors
+# helps even when retrieval misses. So we ENCOURAGE additive knowledge accumulation — into a
+# dedicated growing section, leaving the hand-tuned rules intact (a full rewrite empirically
+# regressed 35 of 84 previously-perfect steps). Placeholders required by GEPA.
+_REFLECTION_PROMPT_TEMPLATE = """You are improving the prompt for an LLM that role-plays an \
+ENVIRONMENT: it reads an agent's action (a tool call or command) and must output exactly what the \
+real system would return — the same JSON shape, field names, error format, and success/empty \
+behavior the real environment produces.
+
+Current prompt:
 
 ```
 <curr_param>
 ```
 
-Below are examples where this prompt was used, with the model's output, the REAL expected output, \
-and feedback. Study only the cases that scored poorly — those reveal the failure mode to fix:
+Below are examples where the current prompt was used, each with the action, the model's predicted \
+observation, the REAL observation, and feedback/score. Study the low-scoring ones closely — they \
+reveal what the model doesn't yet know about this environment:
 
 <side_info>
 
-Now propose an improved prompt by making a MINIMAL, SURGICAL edit:
-- Keep the existing prompt's wording and structure VERBATIM. It already handles most cases well; a \
-rewrite reliably regresses them. Change only what the poorly-scored examples show is broken.
-- Typically this means ADDING one short, general rule (a bullet/clause) that fixes the observed \
-failure, or minimally rewording the single line responsible — nothing else.
-- Keep any added rule general across actions (describe the class of situation, not one example's \
-specific ids or values). If nothing is clearly broken, return the prompt unchanged.
+Write an improved prompt. Your goal is to teach the model the environment's behavior so it \
+predicts future observations more faithfully. Concretely:
 
-Provide the full edited prompt (original + your minimal change) within ``` blocks."""
+- PRESERVE the existing prompt's rules and structure. Do not delete or reword working guidance — a \
+rewrite reliably regresses the many cases that already pass. Improve by ADDING, not replacing.
+- ACCUMULATE concrete, reusable knowledge distilled from the traces. Add specifics that will \
+generalize to unseen actions of the same kind, for example:
+  * Output conventions: exact JSON schema / field names / ordering, whether results are raw vs. \
+wrapped, how empty results and errors are formatted, what a success with no output looks like.
+  * Domain facts and patterns: id/code formats, value ranges, units, status enums, how a tool's \
+result relates to its arguments.
+  * Behavioral rules: which actions return deterministic vs. unknowable content, when a lookup \
+should be found vs. not-found, when a search legitimately returns an empty list.
+- Prefer a dedicated, growing section (e.g. "Environment-specific notes:") of short POINTERS so \
+knowledge compounds across rounds without disturbing the core rules.
+- Keep additions GENERAL: describe the class of situation and the rule, not one example's literal \
+ids/values (those change per episode). If a low score is caused by a value the model simply cannot \
+know, say so (predict plausible/consistent values, get the shape and outcome right) rather than \
+memorizing that example.
+
+Provide the full improved prompt (existing prompt + your additions) within ``` blocks."""
 
 
 def _reflection_lm(provider: Provider):  # noqa: ANN202 - returns gepa's LanguageModel callable
@@ -406,6 +419,11 @@ class GEPAOptimizer:
             reflection_lm=_reflection_lm(self._provider),
             reflection_prompt_template=_REFLECTION_PROMPT_TEMPLATE,
             candidate_selection_strategy="pareto",
+            # Merge is a headline GEPA feature: combine complementary lessons from two Pareto-front
+            # candidates (each having learned different environment facts) into one. Off by default
+            # in the library; we enable it so knowledge accumulated on different failure modes
+            # composes instead of competing.
+            use_merge=True,
             max_metric_calls=_metric_call_budget(budget, len(valset), minibatch),
             reflection_minibatch_size=minibatch,
             display_progress_bar=False,
