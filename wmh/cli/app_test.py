@@ -200,6 +200,95 @@ def test_build_without_source_errors(tmp_path) -> None:  # noqa: ANN001 - fixtur
     assert result.exit_code != 0
 
 
+def test_build_file_and_pull_are_mutually_exclusive(tmp_path) -> None:  # noqa: ANN001 - fixture
+    result = runner.invoke(
+        app,
+        [
+            "build",
+            "--name", "x",
+            "--source", "braintrust",
+            "--file", "f.json",
+            "--pull",
+            "--root", str(tmp_path / ".wmh"),
+            "--no-interactive",
+        ],
+    )
+    assert result.exit_code != 0
+    assert "not both" in result.output
+
+
+def test_build_vendor_alias_selects_source_and_pulls(patched_provider, tmp_path, monkeypatch) -> None:  # noqa: ANN001, E501 - fixture
+    """`--vendor <name>` must select that adapter AND pull (not default to otel-genai)."""
+    import wmh.ingest.braintrust as bt
+
+    def fake_get(url, headers=None, params=None, timeout=None):  # noqa: ANN001, ANN202 - stub
+        class _Resp:
+            def raise_for_status(self) -> None: ...
+
+            def json(self) -> dict:
+                if url.endswith("/v1/project"):
+                    return {"objects": [{"id": "pid", "name": "P"}]}
+                return {
+                    "events": [
+                        {
+                            "root_span_id": "r1",
+                            "span_id": "s1",
+                            "span_attributes": {"type": "tool", "name": "f"},
+                            "output": "ok",
+                            "created": "2026-01-01T00:00:00Z",
+                        }
+                    ]
+                }
+
+        return _Resp()
+
+    monkeypatch.setattr(bt.httpx, "get", fake_get)
+    root = tmp_path / ".wmh"
+    result = runner.invoke(
+        app,
+        [
+            "build",
+            "--name", "via-vendor",
+            "--vendor", "braintrust",
+            "--project", "P",
+            "--api-key", "k",
+            "--root", str(root),
+            "--gepa-budget", "4",
+            "--no-interactive",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    import tomllib
+
+    cfg = tomllib.loads((root / "models" / "via-vendor" / "config.toml").read_text())
+    assert cfg["trace_adapter"] == "braintrust"  # --vendor selected the adapter, not otel-genai
+
+
+def test_build_pull_error_is_clean_not_traceback(tmp_path, monkeypatch) -> None:  # noqa: ANN001
+    """A vendor-pull failure surfaces as a usage error, not an uncaught traceback."""
+    import wmh.ingest.braintrust as bt
+
+    def boom(url, headers=None, params=None, timeout=None):  # noqa: ANN001, ANN202 - stub
+        raise bt.httpx.ConnectError("network down")
+
+    monkeypatch.setattr(bt.httpx, "get", boom)
+    result = runner.invoke(
+        app,
+        [
+            "build",
+            "--name", "x",
+            "--source", "braintrust",
+            "--pull",
+            "--project", "P",
+            "--api-key", "k",
+            "--root", str(tmp_path / ".wmh"),
+            "--no-interactive",
+        ],
+    )
+    assert result.exit_code != 0
+    assert not isinstance(result.exception, bt.httpx.ConnectError)  # caught, not propagated raw
+
+
 def test_build_then_list_shows_named_model(patched_provider, tmp_path) -> None:  # noqa: ANN001
     root = tmp_path / ".wmh"
     _build(root, "tau2-airline", tmp_path)

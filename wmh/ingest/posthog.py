@@ -38,7 +38,6 @@ from __future__ import annotations
 
 import json
 import os
-from datetime import datetime
 
 import httpx
 from pydantic import JsonValue
@@ -46,7 +45,7 @@ from pydantic import JsonValue
 from wmh.core.types import JsonObject
 from wmh.ingest.adapter import VendorPull, register_adapter
 from wmh.ingest.base import BaseTraceAdapter
-from wmh.ingest.normalize import SpanRecord, as_text
+from wmh.ingest.normalize import SpanRecord, as_text, iso_to_ordinal
 
 # PostHog API. `$AI_*` events are queried via HogQL over the `events` table. Host is region-specific
 # (US: us.posthog.com, EU: eu.posthog.com), so it is configurable.
@@ -65,14 +64,8 @@ def _props(event: JsonObject) -> JsonObject:
 
 
 def _start_ordinal(event: JsonObject, fallback: int) -> int:
-    """Map an ISO-8601 `timestamp` to a monotonic int; fall back to the list index when absent."""
-    raw = event.get("timestamp")
-    if isinstance(raw, str) and raw:
-        try:
-            return int(datetime.fromisoformat(raw.replace("Z", "+00:00")).timestamp() * 1_000_000)
-        except ValueError:
-            return fallback
-    return fallback
+    """Monotonic ordering key from the event `timestamp` (shared helper; UTC-safe)."""
+    return iso_to_ordinal(event.get("timestamp"), fallback)
 
 
 def _event_name(event: JsonObject) -> str:

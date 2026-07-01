@@ -55,14 +55,12 @@ config gate stays SDK-free.
 
 from __future__ import annotations
 
-from datetime import datetime
-
 from pydantic import JsonValue
 
 from wmh.core.types import JsonObject
 from wmh.ingest.adapter import register_adapter
 from wmh.ingest.base import BaseTraceAdapter
-from wmh.ingest.normalize import SpanRecord, as_text
+from wmh.ingest.normalize import SpanRecord, as_text, iso_to_ordinal
 
 
 def _as_str(value: JsonValue) -> str:
@@ -84,19 +82,8 @@ def _is_error(run: JsonObject) -> bool:
 
 
 def _start_ordinal(run: JsonObject, fallback: int) -> int:
-    """Map an ISO-8601 `start_time` to a monotonic int; fall back to the list index when absent.
-
-    Only monotonicity within a trace matters (the normalizer sorts by start_nano), so we use epoch
-    microseconds; an unparseable/absent timestamp degrades to the list index.
-    """
-    raw = run.get("start_time")
-    if isinstance(raw, str) and raw:
-        text = raw.replace("Z", "+00:00")
-        try:
-            return int(datetime.fromisoformat(text).timestamp() * 1_000_000)
-        except ValueError:
-            return fallback
-    return fallback
+    """Monotonic ordering key from the run's `start_time` (shared helper; UTC-safe)."""
+    return iso_to_ordinal(run.get("start_time"), fallback)
 
 
 def _generations(outputs: JsonObject) -> list[JsonObject]:

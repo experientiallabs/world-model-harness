@@ -80,7 +80,6 @@ class BuildParams(BaseModel):
     pull: bool = False
     project: str | None = None
     api_key: str | None = None
-    vendor: str | None = None  # deprecated alias retained for back-compat with older flags
     provider: str = "bedrock"
     model: str = "us.anthropic.claude-opus-4-8"
     region: str | None = None
@@ -187,10 +186,10 @@ def _collect_source(
     are read from a `file` export or pulled live (`pull`, with `project`/`api_key`). A source/file
     passed via flags is honored without re-prompting.
     """
-    # A trace source supplied entirely via flags (a file, or a non-default --source) is accepted
-    # as-is; otherwise prompt for the source adapter.
+    # A trace source supplied entirely via flags (a file, a pull, or a non-default --source) is
+    # accepted as-is; otherwise prompt for the source adapter.
     source = defaults.source
-    if source == "otel-genai" and not defaults.file and not defaults.vendor:
+    if source == "otel-genai" and not defaults.file and not defaults.pull:
         names = list(_SOURCES)
         labels = [_SOURCES[n][0] for n in names]
         chosen_label = _select(console, ask, "Trace source", labels, _SOURCES[source][0])

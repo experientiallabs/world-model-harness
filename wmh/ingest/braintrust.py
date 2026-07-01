@@ -42,7 +42,6 @@ from __future__ import annotations
 
 import json
 import os
-from datetime import datetime
 
 import httpx
 from pydantic import JsonValue
@@ -50,7 +49,7 @@ from pydantic import JsonValue
 from wmh.core.types import JsonObject
 from wmh.ingest.adapter import VendorPull, register_adapter
 from wmh.ingest.base import BaseTraceAdapter
-from wmh.ingest.normalize import SpanRecord, as_text
+from wmh.ingest.normalize import SpanRecord, as_text, iso_to_ordinal
 
 # Braintrust REST API. The fetch endpoint returns `{"events": [span rows]}`; the project list
 # resolves a human project name to its id. Overridable for self-hosted deployments.
@@ -69,19 +68,20 @@ def _as_str(value: JsonValue) -> str:
     return value if isinstance(value, str) else ""
 
 
-def _start_ordinal(row: JsonObject, fallback: int) -> int:
-    """Map a `created` ISO-8601 timestamp to a monotonic int; list index when absent/unparseable.
+def _looks_like_uuid(value: str) -> bool:
+    """True if `value` is a canonical UUID (Braintrust project ids), so we skip the name lookup."""
+    import uuid
 
-    Only monotonicity within a trace matters (the normalizer sorts by start_nano), so epoch
-    microseconds is plenty; an unparseable/absent timestamp degrades to the list index.
-    """
-    raw = row.get("created")
-    if isinstance(raw, str) and raw:
-        try:
-            return int(datetime.fromisoformat(raw.replace("Z", "+00:00")).timestamp() * 1_000_000)
-        except ValueError:
-            return fallback
-    return fallback
+    try:
+        uuid.UUID(value)
+    except ValueError:
+        return False
+    return True
+
+
+def _start_ordinal(row: JsonObject, fallback: int) -> int:
+    """Monotonic ordering key from the row's `created` timestamp (shared helper; UTC-safe)."""
+    return iso_to_ordinal(row.get("created"), fallback)
 
 
 def _row_type(row: JsonObject) -> str:
@@ -205,15 +205,24 @@ class BraintrustAdapter(BaseTraceAdapter):
         return [resp.json()]
 
     def _resolve_project_id(self, project: str, headers: dict[str, str]) -> str:
-        """Return `project` unchanged if it looks like an id, else look the name up via the API."""
+        """Resolve a project name to its id (a UUID-shaped `project` is used as the id directly).
+
+        Filters by `project_name` server-side rather than listing+scanning, so it does not miss
+        projects past an arbitrary page limit.
+        """
+        if _looks_like_uuid(project):
+            return project
         resp = httpx.get(
-            f"{_API_BASE}/v1/project", headers=headers, params={"limit": "100"}, timeout=30.0
+            f"{_API_BASE}/v1/project",
+            headers=headers,
+            params={"project_name": project, "limit": "100"},
+            timeout=30.0,
         )
         resp.raise_for_status()
         body = resp.json()
         objects = body.get("objects", []) if isinstance(body, dict) else []
         for obj in objects:
-            if isinstance(obj, dict) and (obj.get("id") == project or obj.get("name") == project):
+            if isinstance(obj, dict) and obj.get("name") == project:
                 pid = obj.get("id")
                 if isinstance(pid, str):
                     return pid

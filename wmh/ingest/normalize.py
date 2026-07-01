@@ -22,6 +22,7 @@ span, so a faithfully captured trace round-trips for open-loop replay.
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 
 from pydantic import BaseModel, Field, JsonValue
 
@@ -95,6 +96,26 @@ class SpanRecord(BaseModel):
 
 
 # --- value coercion ---------------------------------------------------------------------------
+
+
+def iso_to_ordinal(value: JsonValue, fallback: int) -> int:
+    """Map an ISO-8601 timestamp to epoch microseconds; `fallback` when absent/unparseable.
+
+    A naive timestamp (no tz offset — e.g. LangSmith's `2026-01-01T00:00:00`) is treated as **UTC**,
+    not the machine's local time, so ordering is reproducible across machines. Only monotonicity
+    within a trace matters (spans_to_traces sorts by start_nano), so microseconds and a list-index
+    fallback are plenty. Shared by every row-based adapter's timestamp ordering.
+    """
+    if not isinstance(value, str) or not value:
+        return fallback
+    text = value[:-1] + "+00:00" if value.endswith("Z") else value
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        return fallback
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return int(parsed.timestamp() * 1_000_000)
 
 
 def to_int(value: JsonValue) -> int:

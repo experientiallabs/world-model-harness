@@ -43,34 +43,16 @@ Export from Phoenix to a file and use `from_file` / `wmh ingest run --source pho
 
 from __future__ import annotations
 
-from datetime import datetime
-
 from pydantic import JsonValue
 
 from wmh.core.types import JsonObject
 from wmh.ingest.adapter import register_adapter
 from wmh.ingest.base import BaseTraceAdapter
-from wmh.ingest.normalize import SpanRecord, attrs_to_dict, collect_spans
+from wmh.ingest.normalize import SpanRecord, attrs_to_dict, collect_spans, iso_to_ordinal
 
 
 def _as_str(value: JsonValue) -> str:
     return value if isinstance(value, str) else ""
-
-
-def _iso_to_nano(value: JsonValue, fallback: int) -> int:
-    """Parse a Phoenix ISO-8601 timestamp to epoch nanoseconds; fall back to a monotonic ordinal.
-
-    Ordering only needs to be monotonic within a trace, so any unparseable/missing timestamp safely
-    falls back to the span's array index.
-    """
-    if not isinstance(value, str) or not value:
-        return fallback
-    text = value[:-1] + "+00:00" if value.endswith("Z") else value
-    try:
-        parsed = datetime.fromisoformat(text)
-    except ValueError:
-        return fallback
-    return int(parsed.timestamp() * 1_000_000_000)
 
 
 def _trace_id(span: JsonObject) -> str:
@@ -107,8 +89,8 @@ def _phoenix_span(raw: JsonValue, ordinal: int) -> SpanRecord | None:
         span_id=_span_id(raw),
         parent_span_id=_as_str(raw.get("parent_id")),
         name=_as_str(raw.get("name")),
-        start_nano=_iso_to_nano(raw.get("start_time"), ordinal),
-        end_nano=_iso_to_nano(raw.get("end_time"), ordinal),
+        start_nano=iso_to_ordinal(raw.get("start_time"), ordinal),
+        end_nano=iso_to_ordinal(raw.get("end_time"), ordinal),
         attributes=attrs_to_dict(raw.get("attributes")),
         status_error=status in ("ERROR", "STATUS_CODE_ERROR"),
     )

@@ -127,7 +127,9 @@ def build(
     ),
     project: str = typer.Option(None, "--project", help="Vendor project/workspace to pull from."),
     api_key: str = typer.Option(None, "--api-key", help="Vendor API key (else env var)."),
-    vendor: str = typer.Option(None, "--vendor", help="[deprecated] alias for --pull."),
+    since: str = typer.Option(None, "--since", help="ISO-8601 lower bound on trace start (pull)."),
+    limit: int = typer.Option(None, "--limit", help="Max traces to pull."),
+    vendor: str = typer.Option(None, "--vendor", help="[deprecated] = --source <name> --pull."),
     root: str = typer.Option(ARTIFACT_DIR, help="Project dir holding all world models."),
     provider: str = typer.Option("bedrock", "--provider", help="Provider that serves the model."),
     model: str = typer.Option("us.anthropic.claude-opus-4-8", help="Serve provider model id."),
@@ -169,8 +171,11 @@ def build(
     from wmh.retrieval import get_embedder
     from wmh.tracking import MeteredProvider, Phase, RunTracker, classify_build_call, save_run
 
-    # `--vendor` is the deprecated alias for `--pull`.
-    pull = pull or vendor is not None
+    # `--vendor <name>` is the deprecated alias for `--source <name> --pull`: it names the source
+    # AND implies a live pull. Honor the name (not just a boolean) so it selects the right adapter.
+    if vendor is not None:
+        source = vendor
+        pull = True
     # Decide whether to run the wizard: explicit flag wins; otherwise auto at a TTY when no trace
     # source (a file or a pull) was supplied.
     has_source = file is not None or pull
@@ -209,6 +214,8 @@ def build(
         ) from None
     if params.file is None and not params.pull:
         raise typer.BadParameter("provide --file <export> or --pull")
+    if params.file is not None and params.pull:
+        raise typer.BadParameter("pass either --file or --pull, not both")
 
     validate_name(params.name)
     try:
@@ -261,18 +268,27 @@ def build(
         classify=classify_build_call,
     )
     vendor_pull = (
-        VendorPull(api_key=params.api_key, project=params.project) if params.pull else None
+        VendorPull(api_key=params.api_key, project=params.project, since=since, limit=limit)
+        if params.pull
+        else None
     )
-    with tracker.timed(), RichBuildReporter(_console, params.name) as reporter:
-        run_build(
-            config,
-            file=params.file,
-            vendor=vendor_pull,
-            root=model_dir,
-            serve_provider=metered,
-            embedder=get_embedder(config),
-            reporter=reporter,
-        )
+    import httpx
+
+    try:
+        with tracker.timed(), RichBuildReporter(_console, params.name) as reporter:
+            run_build(
+                config,
+                file=params.file,
+                vendor=vendor_pull,
+                root=model_dir,
+                serve_provider=metered,
+                embedder=get_embedder(config),
+                reporter=reporter,
+            )
+    except (ValueError, OSError, httpx.HTTPError) as exc:
+        # Trace ingestion (a bad --file, a vendor pull with bad creds/project, a network/HTTP
+        # error) fails here; surface it as a clean usage error, not a traceback.
+        raise typer.BadParameter(f"ingest failed: {exc}") from exc
     record = tracker.record_summary()
     save_run(record, ArtifactPaths(model_dir).runs)
 
