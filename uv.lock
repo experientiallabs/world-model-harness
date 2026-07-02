@@ -666,7 +666,7 @@ wheels = [
 [[package]]
 name = "llm-waterfall"
 version = "0.1.1"
-source = { git = "https://github.com/experientiallabs/llm-waterfall?rev=v0.1.1#8becf523d13faac4dfd0c996f40f15998e736096" }
+source = { git = "https://github.com/experientiallabs/llm-waterfall?rev=v0.1.1#400736899d4906a4e60840a6d5e4a5cf94053762" }
 dependencies = [
     { name = "pydantic" },
 ]
