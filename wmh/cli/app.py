@@ -70,10 +70,15 @@ from wmh.telemetry import (
 )
 from wmh.tracking import MeteredProvider, Phase, RunTracker, classify_build_call, save_run
 
-app = typer.Typer(help="World Model Harness: a frontier LLM acts as your agent's environment.")
-providers_app = typer.Typer(help="Manage and verify LLM providers.")
-examples_app = typer.Typer(help="List and launch self-contained task examples.")
-config_app = typer.Typer(help="Manage local harness config.")
+app = typer.Typer(
+    help="World Model Harness: a frontier LLM acts as your agent's environment.",
+    no_args_is_help=True,
+)
+providers_app = typer.Typer(help="Manage and verify LLM providers.", no_args_is_help=True)
+examples_app = typer.Typer(
+    help="List and launch self-contained task examples.", no_args_is_help=True
+)
+config_app = typer.Typer(help="Manage local harness config.", no_args_is_help=True)
 app.add_typer(providers_app, name="providers")
 app.add_typer(examples_app, name="examples")
 app.add_typer(config_app, name="config")
