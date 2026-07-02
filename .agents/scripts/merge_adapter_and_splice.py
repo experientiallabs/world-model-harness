@@ -14,9 +14,6 @@ Runs in the claas-verl venv (torch/peft/transformers). GPU not required (CPU mer
 from __future__ import annotations
 
 import argparse
-import subprocess
-import sys
-import tempfile
 from pathlib import Path
 
 
@@ -65,20 +62,54 @@ def main() -> None:
     model = PeftModel.from_pretrained(model, args.adapter_dir)
     merged = model.merge_and_unload()
 
-    with tempfile.TemporaryDirectory(prefix="wm_tau_merge_") as tmp:
-        merged.save_pretrained(tmp)
-        del merged, model
+    snapshot_dir = args.base_snapshot
+    if snapshot_dir is None:
+        from huggingface_hub import snapshot_download
 
-        snapshot = args.base_snapshot
-        if snapshot is None:
-            from huggingface_hub import snapshot_download
+        snapshot_dir = snapshot_download(args.base)
+    snapshot = Path(snapshot_dir)
 
-            snapshot = snapshot_download(args.base)
-        print(f"splicing over base snapshot {snapshot} -> {args.out_dir}")
-        splice = Path(__file__).with_name("splice_sft_into_base.py")
-        subprocess.run(
-            [sys.executable, str(splice), snapshot, tmp, args.out_dir], check=True
-        )
+    # Splice IN-PROCESS from the merged model's tensors (no /tmp text-merged copy:
+    # the two-copy pipeline needs ~36G transient and filled the disk).
+    import shutil
+
+    from safetensors import safe_open
+    from safetensors.torch import save_file
+
+    state = {k: v for k, v in merged.state_dict().items()}
+    del merged, model
+    print(f"merged state tensors: {len(state)}")
+
+    index = json.loads((snapshot / "model.safetensors.index.json").read_text())
+    weight_map: dict[str, str] = index["weight_map"]
+    hits = sum(1 for k in state if k in weight_map)
+    print(f"merged keys matching base: {hits}/{len(state)}")
+
+    out = Path(args.out_dir)
+    out.mkdir(parents=True, exist_ok=True)
+    shards: dict[str, list[str]] = {}
+    for key, shard in weight_map.items():
+        shards.setdefault(shard, []).append(key)
+    substituted = 0
+    for shard, keys in sorted(shards.items()):
+        tensors = {}
+        with safe_open(str(snapshot / shard), framework="pt") as f:
+            for key in keys:
+                if key in state:
+                    tensors[key] = state[key].to(f.get_tensor(key).dtype)
+                    substituted += 1
+                else:
+                    tensors[key] = f.get_tensor(key)
+        save_file(tensors, str(out / shard), metadata={"format": "pt"})
+        print(f"wrote {shard}")
+    for extra in snapshot.iterdir():
+        if extra.suffix != ".safetensors" and extra.is_file():
+            shutil.copy(extra, out / extra.name)
+    print(f"substituted {substituted} tensors")
+    if substituted != len(state):
+        missing = [k for k in state if k not in weight_map][:5]
+        print("WARNING: unplaced merged tensors, sample:", missing)
+        raise SystemExit(1)
     print("done")
 
 
