@@ -99,7 +99,12 @@ uv run pytest -q
     migrate every caller in the same change and keep exactly one way to do each thing. The
     cleanest codebase is the one with the least code.
 
-14. **All visuals follow the brand system.** Research figures, README/docs images, frontends, and
+14. **Run `/ready-for-merge` before every PR merge.** No PR is merged until the
+    `ready-for-merge` skill (`.claude/skills/ready-for-merge/SKILL.md`) has been run and passes:
+    `/code-review xhigh --fix`, every review comment (Cursor, Greptile, humans) resolved, and a
+    full AGENTS.md compliance audit of the diff.
+
+15. **All visuals follow the brand system.** Research figures, README/docs images, frontends, and
     any UI must look clean and minimal — Vercel/Notion/Apple-like: white background, generous
     whitespace, no chartjunk, left-aligned titles, hairline grids. All accents come from the brand
     palette; do not introduce ad-hoc colors:
