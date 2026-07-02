@@ -40,10 +40,12 @@ DEFAULT_COUNTS = "10,20,50,100,200,400,800"
 
 
 def _parse_ints(text: str) -> list[int]:
+    """Parse a comma-separated list of integers."""
     return [int(x) for x in text.split(",") if x.strip()]
 
 
 def _parse_strs(text: str) -> list[str]:
+    """Parse a comma-separated list of strings."""
     return [x.strip() for x in text.split(",") if x.strip()]
 
 
@@ -72,6 +74,7 @@ def _make_backends(
     embedder: Embedder | None = None if no_rag else HashingEmbedder(dim=embed_dim)
 
     def factory() -> tuple[Provider, Judge, Embedder | None]:
+        """Return the shared provider, judge, and embedder for one ablation run."""
         return serve, scorer, embedder
 
     return factory
@@ -91,6 +94,17 @@ def _load_corpus(args: argparse.Namespace) -> tuple[list, str]:  # noqa: ANN201 
 
 
 def _run(args: argparse.Namespace) -> AblationReport:
+    """Run the configured trace-scaling ablation.
+
+    Args:
+        args: Parsed command-line arguments.
+
+    Returns:
+        Aggregated ablation report for all requested modes, counts, and seeds.
+
+    Raises:
+        SystemExit: If the selected corpus has no traces.
+    """
     traces, label = _load_corpus(args)
     if not traces:
         raise SystemExit("no traces ingested")
@@ -127,12 +141,14 @@ def _run(args: argparse.Namespace) -> AblationReport:
     )
 
     def _progress(condition: Condition, seed: int, score: float) -> None:
+        """Report progress."""
         print(f"  {condition.label:14} seed={seed}  fidelity={score:.3f}", flush=True)
 
     return run_ablation(ablation, seeds, on_run=_progress)
 
 
 def main() -> None:
+    """Run the command-line entry point."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("suite", nargs="?", help="Eval-suite name (e.g. tau-bench).")
     parser.add_argument("--file", default=None, help="Raw OTel trace file (instead of a suite).")

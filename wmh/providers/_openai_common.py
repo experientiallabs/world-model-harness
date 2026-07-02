@@ -16,19 +16,27 @@ if TYPE_CHECKING:
 
 
 class _ChatCompletions(Protocol):
+    """Protocol subset for OpenAI-compatible chat completions clients."""
+
     def create(
         self,
         *,
         model: str,
         messages: list[ChatCompletionMessageParam],
         max_completion_tokens: int,
-    ) -> ChatCompletion: ...
+    ) -> ChatCompletion:
+        """Create a chat completion through an OpenAI-compatible SDK client."""
+        ...
 
 
 class _Embeddings(Protocol):
+    """Protocol subset for OpenAI-compatible embeddings clients."""
+
     def create(
         self, *, model: str, input: list[str], dimensions: int = ...
-    ) -> CreateEmbeddingResponse: ...
+    ) -> CreateEmbeddingResponse:
+        """Create embeddings through an OpenAI-compatible SDK client."""
+        ...
 
 
 def to_messages(system: str, messages: list[Message]) -> list[ChatCompletionMessageParam]:

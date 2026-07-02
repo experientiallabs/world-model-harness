@@ -27,21 +27,29 @@ _DEFAULT_EMBED_MODEL = "amazon.titan-embed-text-v2:0"
 
 
 class _ContentBlock(TypedDict):
+    """Text block in a Bedrock Anthropic response."""
+
     type: str
     text: str
 
 
 class _Usage(TypedDict):
+    """Token usage block in a Bedrock response."""
+
     input_tokens: int
     output_tokens: int
 
 
 class _BedrockResponse(TypedDict):
+    """Parsed Bedrock Anthropic response payload."""
+
     content: list[_ContentBlock]
     usage: _Usage
 
 
 class _TitanEmbedResponse(TypedDict):
+    """Parsed Titan embedding response payload."""
+
     embedding: list[float]
 
 
@@ -49,12 +57,14 @@ class BedrockProvider:
     """Claude 4.8 via the Bedrock Runtime (InvokeModel with the Anthropic Messages body)."""
 
     def __init__(self, config: ProviderConfig) -> None:
+        """Initialize the instance."""
         self.config = config
         self._client: BaseClient | None = None
 
     def _get_client(self) -> BaseClient:
         # Lazy: import boto3 and open the client only on first use. region falls back to
         # AWS_REGION / the default boto3 chain when config.region is unset.
+        """Create and cache the provider SDK client."""
         if self._client is None:
             import boto3
 
@@ -70,6 +80,7 @@ class BedrockProvider:
         max_tokens: int = DEFAULT_MAX_TOKENS,
     ) -> Completion:
         # Claude 4.8 rejects sampling params, so temperature is intentionally not forwarded.
+        """Generate a completion through the provider backend."""
         body = {
             "anthropic_version": _ANTHROPIC_BEDROCK_VERSION,
             "max_tokens": max_tokens,
@@ -106,4 +117,5 @@ class BedrockProvider:
         return vectors
 
     def verify(self) -> VerifyResult:
+        """Verify that the provider can make a cheap request."""
         return verify_via_ping(self)

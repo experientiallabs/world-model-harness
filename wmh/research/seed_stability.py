@@ -56,6 +56,7 @@ class SeedStabilityAblation:
         budget: int,
         top_k: int = 5,
     ) -> None:
+        """Initialize the instance."""
         self._train = train
         self._held_out = held_out
         self._base_prompt = base_prompt
@@ -64,6 +65,7 @@ class SeedStabilityAblation:
         self._top_k = top_k
 
     def conditions(self) -> list[Condition]:
+        """Return the ablation conditions to evaluate."""
         return [BASELINE]
 
     def run(self, condition: Condition, seed: int) -> float:

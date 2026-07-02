@@ -93,6 +93,7 @@ def _converse(client: Any, model: str, system: str, messages: list[dict[str, str
 
 
 def _sleep(seconds: float) -> None:
+    """Sleep briefly to let terminal output settle."""
     import time
 
     time.sleep(seconds)
@@ -142,6 +143,7 @@ def _start_container() -> str:
 
 
 def _exec(cid: str, command: str, *, workdir: str = "/root", timeout: int = 60) -> tuple[str, int]:
+    """Execute a shell command and capture its terminal trace."""
     return _docker(
         ["docker", "exec", "-w", workdir, cid, "sh", "-c", command], timeout=timeout
     )
@@ -202,6 +204,7 @@ def _shard(client: Any, model: str, tasks: list[tuple[str, str]], step_limit: in
 
 
 def main() -> None:
+    """Run the command-line entry point."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--per-category", type=int, default=60, help="Tasks per category.")
     parser.add_argument("--step-limit", type=int, default=10, help="Max agent steps per task.")

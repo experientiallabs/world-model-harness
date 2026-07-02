@@ -21,6 +21,7 @@ from wmh.retrieval import EmbeddingRetriever, HashingEmbedder
 
 
 def _count_steps(traces: list[Trace]) -> int:
+    """Count steps."""
     return sum(len(trace.steps) for trace in traces)
 
 
@@ -94,6 +95,7 @@ def build(
     budget = config.gepa_budget
 
     def _on_rollout(done: int, score: float | None) -> None:
+        """On rollout."""
         report.rollout(done, budget, score)
 
     optimizer = GEPAOptimizer(

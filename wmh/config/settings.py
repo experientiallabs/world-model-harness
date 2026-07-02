@@ -28,10 +28,12 @@ class ProjectSettings(BaseModel):
 
 
 def settings_path(root: str | Path = ARTIFACT_DIR) -> Path:
+    """Settings path."""
     return Path(root) / SETTINGS_FILENAME
 
 
 def load_settings(root: str | Path = ARTIFACT_DIR) -> ProjectSettings:
+    """Load settings."""
     path = settings_path(root)
     if not path.exists():
         return ProjectSettings()
@@ -47,6 +49,7 @@ def load_settings(root: str | Path = ARTIFACT_DIR) -> ProjectSettings:
 
 
 def save_settings(settings: ProjectSettings, root: str | Path = ARTIFACT_DIR) -> None:
+    """Save settings."""
     path = settings_path(root)
     path.parent.mkdir(parents=True, exist_ok=True)
     data = settings.model_dump(mode="json", exclude_none=True)
@@ -57,6 +60,7 @@ def save_settings(settings: ProjectSettings, root: str | Path = ARTIFACT_DIR) ->
 
 
 def set_telemetry_enabled(enabled: bool, root: str | Path = ARTIFACT_DIR) -> ProjectSettings:
+    """Set telemetry enabled."""
     settings = load_settings(root)
     settings.telemetry.enabled = enabled
     save_settings(settings, root)
@@ -64,6 +68,7 @@ def set_telemetry_enabled(enabled: bool, root: str | Path = ARTIFACT_DIR) -> Pro
 
 
 def ensure_telemetry_anonymous_id(root: str | Path = ARTIFACT_DIR) -> str:
+    """Ensure telemetry anonymous id."""
     settings = load_settings(root)
     if settings.telemetry.anonymous_id is None:
         settings.telemetry.anonymous_id = uuid.uuid4().hex

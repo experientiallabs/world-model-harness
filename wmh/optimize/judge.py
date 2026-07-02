@@ -40,6 +40,8 @@ Where 1.0 = functionally identical and 0.0 = contradictory or unusable."""
 
 
 class JudgeResult(BaseModel):
+    """Judge score, critique, and optional rubric dimensions."""
+
     score: float  # 0..1 semantic match of predicted vs. actual observation
     critique: str  # natural-language feedback; feeds GEPA reflection
     # Per-dimension scores (0..1), populated by RubricJudge; empty for the plain LLMJudge. `score`
@@ -49,7 +51,11 @@ class JudgeResult(BaseModel):
 
 @runtime_checkable
 class Judge(Protocol):
-    def score(self, predicted: Observation, actual: Observation, context: Step) -> JudgeResult: ...
+    """Protocol for world-model fidelity judges."""
+
+    def score(self, predicted: Observation, actual: Observation, context: Step) -> JudgeResult:
+        """Score a predicted observation against the recorded observation."""
+        ...
 
 
 class _RawJudgement(BaseModel):
@@ -63,9 +69,11 @@ class LLMJudge:
     """Opus-based semantic-match judge (default fitness signal)."""
 
     def __init__(self, provider: Provider) -> None:
+        """Initialize the instance."""
         self._provider = provider
 
     def score(self, predicted: Observation, actual: Observation, context: Step) -> JudgeResult:
+        """Score a predicted observation against the recorded observation."""
         user = _build_judge_prompt(predicted, actual, context)
         completion = self._provider.complete(
             JUDGE_SYSTEM,
@@ -77,6 +85,7 @@ class LLMJudge:
 
 
 def _build_judge_prompt(predicted: Observation, actual: Observation, context: Step) -> str:
+    """Build the user prompt sent to the LLM judge."""
     action = context.action
     action_desc = action.name or action.content or "(none)"
     actual_payload = _observation_payload(actual, empty_sentinel="<EMPTY_ACTUAL_OBSERVATION>")
@@ -92,6 +101,7 @@ def _build_judge_prompt(predicted: Observation, actual: Observation, context: St
 
 
 def _observation_payload(observation: Observation, *, empty_sentinel: str) -> dict[str, object]:
+    """Serialize an observation for judge comparison."""
     return {
         "is_error": observation.is_error,
         "content_length": len(observation.content),
@@ -122,6 +132,7 @@ def _parse_judgement(text: str) -> JudgeResult:
 
 
 def _clamp(score: float) -> float:
+    """Clamp a judge score into the valid 0 to 1 range."""
     return max(0.0, min(1.0, score))
 
 
@@ -178,9 +189,11 @@ class RubricJudge:
     """
 
     def __init__(self, provider: Provider) -> None:
+        """Initialize the instance."""
         self._provider = provider
 
     def score(self, predicted: Observation, actual: Observation, context: Step) -> JudgeResult:
+        """Score a predicted observation against the recorded observation."""
         user = _build_judge_prompt(predicted, actual, context)
         completion = self._provider.complete(
             RUBRIC_JUDGE_SYSTEM,

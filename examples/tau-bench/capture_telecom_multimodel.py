@@ -54,6 +54,7 @@ def _model_tag(model: str) -> str:
 def _run_shard(
     model: str, tasks: list, concurrency: int, retries: int, delay: float, suffix: str = ""
 ) -> None:
+    """Run one tau-bench capture shard."""
     save_path = _SIM_DIR / f"capture_telecom_{_model_tag(model)}{suffix}" / "results.json"
     print(f"[{model}] {len(tasks)} tasks -> {save_path}", flush=True)
     run_tasks(
@@ -77,6 +78,7 @@ def _run_shard(
 
 
 def main() -> None:
+    """Run the command-line entry point."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--total", type=int, default=980, help="Total telecom tasks across shards.")
     parser.add_argument(

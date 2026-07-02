@@ -55,6 +55,7 @@ class MeteredProvider:
         base_phase: Phase = Phase.OTHER,
         classify: Callable[[str], Phase] | None = None,
     ) -> None:
+        """Initialize the instance."""
         self._provider = provider
         self._tracker = tracker
         self._base_phase = base_phase
@@ -62,6 +63,7 @@ class MeteredProvider:
 
     @property
     def config(self) -> ProviderConfig:
+        """Return the artifact config path."""
         return self._provider.config
 
     def complete(
@@ -72,6 +74,7 @@ class MeteredProvider:
         temperature: float = 0.7,
         max_tokens: int = DEFAULT_MAX_TOKENS,
     ) -> Completion:
+        """Generate a completion through the provider backend."""
         completion = self._provider.complete(
             system, messages, temperature=temperature, max_tokens=max_tokens
         )
@@ -83,10 +86,12 @@ class MeteredProvider:
         # Embeddings carry no token usage from our providers; record a zero-usage event for the
         # call count so EMBED shows up in the breakdown. Attribute it to the embeddings model
         # (`embed_model`), not the completion model, so any future embed pricing is keyed right.
+        """Embed text strings through the configured embedding backend."""
         vectors = self._provider.embed(texts)
         embed_model = self._provider.config.embed_model or self._provider.config.model
         self._tracker.record(Phase.EMBED, embed_model, TokenUsage())
         return vectors
 
     def verify(self) -> VerifyResult:
+        """Verify that the provider can make a cheap request."""
         return self._provider.verify()

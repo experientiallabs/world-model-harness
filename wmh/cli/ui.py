@@ -243,6 +243,7 @@ def _prompt_text(
     # Escape interpolated values: "default" or anything with [...] is valid rich markup and would
     # otherwise be swallowed (rendered invisibly) instead of shown. A prompt with no default can
     # carry a grey `example` hint so the user sees the expected shape of the answer.
+    """Prompt for a non-empty text value."""
     if default:
         suffix = f" [dim]\\[{escape(default)}][/dim]"
     elif example:
@@ -254,6 +255,7 @@ def _prompt_text(
 
 
 def _prompt_int(console: Console, ask: PromptReader, label: str, default: int) -> int:
+    """Prompt for an integer with validation."""
     while True:
         raw = ask(f"[bold]{label}[/bold] [dim]\\[{default}][/dim]: ").strip()
         if not raw:
@@ -282,6 +284,7 @@ class RichBuildReporter:
     """
 
     def __init__(self, console: Console, model_name: str) -> None:
+        """Initialize the instance."""
         self._console = console
         self._name = model_name
         self._tty = console.is_terminal
@@ -289,15 +292,19 @@ class RichBuildReporter:
         self._task_id: TaskID | None = None
 
     def ingest_done(self, traces: int, steps: int) -> None:
+        """Render the completed-ingest stage."""
         self._stage(f"ingested {traces} traces → normalized {steps} steps")
 
     def split_done(self, train: int, test: int) -> None:
+        """Render the completed-split stage."""
         self._stage(f"split {train} train / {test} held-out traces")
 
     def index_done(self, steps: int) -> None:
+        """Render the completed-index stage."""
         self._stage(f"indexed {steps} steps into the replay buffer")
 
     def optimize_start(self, budget: int) -> None:
+        """Render the optimize-start stage and create the progress bar."""
         self._stage(f"optimizing env prompt with GEPA (budget {budget} metric calls)")
         if self._tty and budget > 0:
             self._progress = Progress(
@@ -316,6 +323,7 @@ class RichBuildReporter:
             )
 
     def rollout(self, done: int, budget: int, score: float | None) -> None:
+        """Update GEPA rollout progress."""
         label = f"best held-out {score:.3f}" if score is not None else "score n/a"
         if self._progress is not None and self._task_id is not None:
             self._progress.update(self._task_id, completed=min(done, budget), score=label)
@@ -328,6 +336,7 @@ class RichBuildReporter:
                 self._console.print(f"  GEPA metric call {progress} ({label})")
 
     def optimize_done(self, held_out_accuracy: float, frontier_size: int, rollouts: int) -> None:
+        """Render the optimize-done stage and clear progress state."""
         if self._progress is not None:
             self._progress.stop()
             self._progress = None
@@ -338,6 +347,7 @@ class RichBuildReporter:
         )
 
     def _stage(self, message: str) -> None:
+        """Stage."""
         self._console.print(f"{_CHECK} {message}")
 
     def close(self) -> None:
@@ -348,11 +358,13 @@ class RichBuildReporter:
             self._task_id = None
 
     def __enter__(self) -> RichBuildReporter:
+        """Enter the context manager."""
         return self
 
     def __exit__(self, *exc: object) -> None:
         # Always tear down the live Progress so an exception during the build doesn't leave a
         # spinning bar that corrupts the terminal.
+        """Exit the context manager."""
         self.close()
 
 
@@ -477,6 +489,7 @@ def _handle_action(console: Console, world_model: WorldModel, session_id: str, l
 
 
 def _render_turn(console: Console, turn: PlayTurn) -> None:
+    """Render one interactive play turn."""
     console.print(f"[bold cyan]→ you[/bold cyan]: {_action_text(turn.action)}")
     style = "red" if turn.observation.is_error else "green"
     label = "error" if turn.observation.is_error else "observation"
@@ -490,6 +503,7 @@ def _render_turn(console: Console, turn: PlayTurn) -> None:
 
 
 def _render_state(console: Console, session: Session) -> None:
+    """Render session state for the play UI."""
     scratchpad = session.state.scratchpad or "[dim](empty)[/dim]"
     body = f"[bold]task[/bold]: {session.task or '(none)'}\n"
     body += f"[bold]turns[/bold]: {len(session.history)}\n\n"
@@ -498,6 +512,7 @@ def _render_state(console: Console, session: Session) -> None:
 
 
 def _action_text(action: Action) -> str:
+    """Render an action for display in the play UI."""
     if action.kind == ActionKind.TOOL_CALL:
         return f"{action.name}({action.arguments})"
     return f'message: "{action.content}"'

@@ -22,11 +22,13 @@ class OpenAIProvider:
     """GPT 5.5 via the OpenAI API."""
 
     def __init__(self, config: ProviderConfig) -> None:
+        """Initialize the instance."""
         self.config = config
         self._client: OpenAI | None = None
 
     def _get_client(self) -> OpenAI:
         # Lazy: don't import the SDK or read OPENAI_API_KEY until first use.
+        """Create and cache the provider SDK client."""
         if self._client is None:
             from openai import OpenAI
 
@@ -41,11 +43,13 @@ class OpenAIProvider:
         temperature: float = 0.7,
         max_tokens: int = DEFAULT_MAX_TOKENS,
     ) -> Completion:
+        """Generate a completion through the provider backend."""
         return _openai_common.complete(
             self._get_client().chat.completions, self.config.model, system, messages, max_tokens
         )
 
     def embed(self, texts: list[str]) -> list[list[float]]:
+        """Embed text strings through the configured embedding backend."""
         if self.config.embed_model is None:
             raise ValueError("OpenAIProvider.embed requires config.embed_model to be set.")
         return _openai_common.embed(
@@ -53,4 +57,5 @@ class OpenAIProvider:
         )
 
     def verify(self) -> VerifyResult:
+        """Verify that the provider can make a cheap request."""
         return verify_via_ping(self)

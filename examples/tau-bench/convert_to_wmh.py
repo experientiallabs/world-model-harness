@@ -77,6 +77,7 @@ def _task_text(task: dict[str, Any]) -> str:
 
 
 def _attr(key: str, value: str) -> dict[str, Any]:
+    """Build one OTLP string attribute."""
     return {"key": key, "value": {"stringValue": value}}
 
 
@@ -155,6 +156,7 @@ def _spans_for_simulation(
 
 
 def _trace_id(benchmark: str, domain: str, sim_id: str) -> str:
+    """Return trace id."""
     return hashlib.sha256(f"{benchmark}|{domain}|{sim_id}".encode()).hexdigest()[:32]
 
 
@@ -173,6 +175,7 @@ def _infer_domain(data: dict[str, Any]) -> str:
 
 
 def main() -> None:
+    """Run the command-line entry point."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("results", help="Path to a tau2 results.json")
     parser.add_argument("--out", required=True, help="Output OTel JSONL path")

@@ -17,12 +17,16 @@ from wmh.providers.base import Message, Provider
 
 
 class DemoResult(BaseModel):
+    """Outputs captured from one demo-agent run."""
+
     agent_action: Action  # what the demo agent chose to do
     env_prompt: str  # the exact prompt the world model received
     observation: Observation  # what the environment returned
 
 
 class _AgentToolCall(BaseModel):
+    """Parsed tool call emitted by the demo agent."""
+
     name: str
     arguments: JsonObject = {}
 

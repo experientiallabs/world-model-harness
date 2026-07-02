@@ -29,6 +29,8 @@ _CLIENTS: dict[tuple[str, str], Posthog] = {}
 
 @dataclass
 class BuildTelemetryStats:
+    """Counters accumulated during a build for telemetry reporting."""
+
     input_trace_count: int = 0
     input_step_count: int = 0
     train_trace_count: int = 0
@@ -37,31 +39,40 @@ class BuildTelemetryStats:
 
 
 class TelemetryBuildReporter:
+    """Build reporter that forwards aggregate events to telemetry."""
+
     def __init__(self, inner: BuildReporter, stats: BuildTelemetryStats) -> None:
+        """Initialize the instance."""
         self._inner = inner
         self._stats = stats
 
     def ingest_done(self, traces: int, steps: int) -> None:
+        """Record ingest counts and forward the progress event."""
         self._stats.input_trace_count = traces
         self._stats.input_step_count = steps
         self._inner.ingest_done(traces, steps)
 
     def split_done(self, train: int, test: int) -> None:
+        """Record split counts and forward the progress event."""
         self._stats.train_trace_count = train
         self._stats.heldout_trace_count = test
         self._inner.split_done(train, test)
 
     def index_done(self, steps: int) -> None:
+        """Record indexed-step count and forward the progress event."""
         self._stats.indexed_step_count = steps
         self._inner.index_done(steps)
 
     def optimize_start(self, budget: int) -> None:
+        """Forward optimize-start progress."""
         self._inner.optimize_start(budget)
 
     def rollout(self, done: int, budget: int, score: float | None) -> None:
+        """Forward GEPA rollout progress."""
         self._inner.rollout(done, budget, score)
 
     def optimize_done(self, held_out_accuracy: float, frontier_size: int, rollouts: int) -> None:
+        """Forward optimize-done progress."""
         self._inner.optimize_done(held_out_accuracy, frontier_size, rollouts)
 
 
@@ -106,6 +117,7 @@ def capture_build_completed(
     record: RunRecord,
     root: str | Path,
 ) -> None:
+    """Capture the completed-build telemetry event."""
     capture(
         "wmh build completed",
         {
@@ -140,6 +152,7 @@ def capture_eval_completed(
     top_k: int,
     root: str | Path,
 ) -> None:
+    """Capture the completed-eval telemetry event."""
     capture(
         "wmh eval completed",
         {
@@ -158,11 +171,13 @@ def capture_eval_completed(
 
 
 def settings_root_from_results_root(results_root: str) -> Path:
+    """Resolve the project settings root from an eval results root."""
     path = Path(results_root)
     return path.parent if path.name == "evals" else Path(ARTIFACT_DIR)
 
 
 def _enabled(root: str | Path) -> bool:
+    """Return whether telemetry is enabled for a project root."""
     if _env_truthy("DO_NOT_TRACK"):
         return False
     env = os.getenv("WMH_TELEMETRY")
@@ -177,6 +192,7 @@ def _enabled(root: str | Path) -> bool:
 
 
 def _env_truthy(name: str) -> bool:
+    """Return whether an environment variable is set to a truthy value."""
     value = os.getenv(name)
     if value is None:
         return False
@@ -187,6 +203,7 @@ def _env_truthy(name: str) -> bool:
 
 
 def _wmh_version() -> str:
+    """Return the installed package version for telemetry."""
     try:
         return version("world-model-harness")
     except PackageNotFoundError:
@@ -194,6 +211,7 @@ def _wmh_version() -> str:
 
 
 def _posthog_client(api_key: str, host: str) -> Posthog:
+    """Create or reuse a PostHog client."""
     key = (api_key, host)
     client = _CLIENTS.get(key)
     if client is None:

@@ -53,6 +53,7 @@ class ConditionReport(BaseModel):
     std: float = 0.0
 
     def summary(self) -> str:
+        """Return a concise human-readable summary."""
         n = len(self.per_seed)
         return f"{self.condition.label:24} mean={self.mean:.3f} std={self.std:.3f} n={n}"
 
@@ -74,9 +75,13 @@ class Ablation(Protocol):
     """An experiment: a set of conditions and a way to run one of them at one seed."""
 
     @property
-    def name(self) -> str: ...
+    def name(self) -> str:
+        """Return the ablation name."""
+        ...
 
-    def conditions(self) -> Sequence[Condition]: ...
+    def conditions(self) -> Sequence[Condition]:
+        """Return the ablation conditions to evaluate."""
+        ...
 
     def run(self, condition: Condition, seed: int) -> float:
         """Run `condition` at `seed` and return a scalar metric (higher is better)."""

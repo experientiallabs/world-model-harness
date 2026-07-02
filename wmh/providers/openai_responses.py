@@ -25,6 +25,7 @@ class OpenAIResponsesProvider:
     """GPT 5.x via OpenAI's Responses API."""
 
     def __init__(self, config: ProviderConfig) -> None:
+        """Initialize the instance."""
         self.config = config
         self._client: OpenAI | None = None
 

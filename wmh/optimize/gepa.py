@@ -52,6 +52,8 @@ class OptimizeMetrics(BaseModel):
 
 
 class OptimizeResult(BaseModel):
+    """Prompt optimization result and selected frontier metadata."""
+
     prompt: str  # winning specialized env prompt
     frontier: list[str] = Field(default_factory=list)  # Pareto candidates
     metrics: OptimizeMetrics = Field(default_factory=OptimizeMetrics)
@@ -59,6 +61,8 @@ class OptimizeResult(BaseModel):
 
 @runtime_checkable
 class Optimizer(Protocol):
+    """Protocol for prompt optimizers used by the build pipeline."""
+
     def optimize(
         self,
         train: list[Trace],
@@ -67,7 +71,9 @@ class Optimizer(Protocol):
         budget: int,
         *,
         rag_corpus: list[Trace] | None = None,
-    ) -> OptimizeResult: ...
+    ) -> OptimizeResult:
+        """Optimize a base prompt against train/test traces."""
+        ...
 
 
 # --- prediction helper (provider-only; no engine import, to avoid an engine<->optimize cycle) ----
@@ -146,6 +152,7 @@ class WorldModelGEPAAdapter(GEPAAdapter[_EvalStep, _StepTrajectory, Observation]
     def __init__(
         self, provider: Provider, judge: Judge, on_rollout: RolloutCallback | None = None
     ) -> None:
+        """Initialize the instance."""
         self._provider = provider
         self._judge = judge
         self._on_rollout = on_rollout
@@ -158,6 +165,16 @@ class WorldModelGEPAAdapter(GEPAAdapter[_EvalStep, _StepTrajectory, Observation]
         candidate: dict[str, str],
         capture_traces: bool = False,
     ) -> EvaluationBatch[_StepTrajectory, Observation]:
+        """Evaluate a candidate prompt on a batch of held-out steps.
+
+        Args:
+            batch: Held-out examples with their retrieval demos and teacher-forced history.
+            candidate: GEPA candidate component mapping containing the environment prompt.
+            capture_traces: Whether to retain per-step trajectories for reflection.
+
+        Returns:
+            GEPA evaluation batch with predictions, scores, and optional trajectories.
+        """
         prompt = candidate[ENV_PROMPT_COMPONENT]
         outputs: list[Observation] = []
         scores: list[float] = []
@@ -194,6 +211,16 @@ class WorldModelGEPAAdapter(GEPAAdapter[_EvalStep, _StepTrajectory, Observation]
         eval_batch: EvaluationBatch[_StepTrajectory, Observation],
         components_to_update: list[str],
     ) -> Mapping[str, Sequence[Mapping[str, JsonValue]]]:
+        """Build the reflective examples GEPA uses to propose prompt edits.
+
+        Args:
+            candidate: Candidate prompt component mapping being reflected on.
+            eval_batch: Evaluated trajectories from the candidate prompt.
+            components_to_update: GEPA component names requested for update.
+
+        Returns:
+            Mapping from prompt component name to reflection records.
+        """
         records: list[Mapping[str, JsonValue]] = []
         for traj in eval_batch.trajectories or []:
             # The same canonical (state, action) text the model saw at prediction time.
@@ -237,6 +264,7 @@ def _reflection_lm(provider: Provider):  # noqa: ANN202 - returns gepa's Languag
     """Wrap a Provider as GEPA's reflection LM: `(str | list[dict]) -> str`."""
 
     def call(prompt: str | list[dict[str, JsonValue]]) -> str:
+        """Call the reflection provider for one GEPA prompt proposal."""
         text = prompt if isinstance(prompt, str) else _flatten_chat(prompt)
         completion = provider.complete(
             _REFLECTION_SYSTEM,
@@ -250,6 +278,7 @@ def _reflection_lm(provider: Provider):  # noqa: ANN202 - returns gepa's Languag
 
 
 def _flatten_chat(messages: list[dict[str, JsonValue]]) -> str:
+    """Flatten chat messages into readable text for reflection."""
     parts: list[str] = []
     for msg in messages:
         role = msg.get("role", "user")
@@ -273,6 +302,7 @@ class GEPAOptimizer:
         *,
         seed: int = 0,
     ) -> None:
+        """Initialize the instance."""
         self._provider = provider
         self._judge = judge
         # Optional retriever for RAG-aware evaluation. When None, GEPA evaluates zero-shot.
@@ -358,6 +388,7 @@ def _eval_steps(traces: list[Trace], demos: DemoRetriever) -> list[_EvalStep]:
 
 
 def _candidate_text(candidate: dict[str, str]) -> str:
+    """Return candidate text."""
     return candidate[ENV_PROMPT_COMPONENT]
 
 

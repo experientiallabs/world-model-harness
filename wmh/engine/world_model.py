@@ -23,6 +23,8 @@ from wmh.tracking import Phase, RunRecord, RunTracker
 
 
 class WorldModel:
+    """LLM-backed environment model with session state, retrieval, and metering."""
+
     def __init__(
         self,
         provider: Provider,
@@ -31,6 +33,7 @@ class WorldModel:
         top_k: int = 5,
         telemetry_root: str | Path = ".wmh",
     ) -> None:
+        """Initialize the instance."""
         self._provider = provider
         self._retriever = retriever
         self._env_prompt = env_prompt
@@ -76,6 +79,7 @@ class WorldModel:
         )
 
     def new_session(self, task: str | None = None, seed_state: EnvState | None = None) -> Session:
+        """Create a new session for a world model."""
         session = Session(id=uuid.uuid4().hex, task=task, state=seed_state or EnvState())
         self._sessions[session.id] = session
         tracker = RunTracker(run_id=session.id, kind="serve")
@@ -100,6 +104,7 @@ class WorldModel:
         return self._trackers[session_id].record_summary()
 
     def get_session(self, session_id: str) -> Session:
+        """Return session."""
         return self._sessions[session_id]
 
     def sample_steps(self, n: int) -> list[Step]:
@@ -183,10 +188,12 @@ class WorldModel:
 
 
 def _user_message(text: str) -> Message:
+    """Build user message."""
     return Message(role="user", content=text)
 
 
 def _default_telemetry_root(artifact_dir: str | Path) -> Path:
+    """Resolve default telemetry root."""
     path = Path(artifact_dir)
     if path.parent.name == "models":
         return path.parent.parent

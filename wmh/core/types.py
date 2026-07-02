@@ -16,6 +16,8 @@ JsonObject = dict[str, JsonValue]
 
 
 class ActionKind(StrEnum):
+    """Kinds of actions an agent can take in the environment."""
+
     TOOL_CALL = "tool_call"
     MESSAGE = "message"
 

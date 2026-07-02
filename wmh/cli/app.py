@@ -89,6 +89,8 @@ _EVAL_TOKENS = typer.Argument(
 
 @dataclass(frozen=True)
 class _EvalOptions:
+    """Resolved options for one eval invocation."""
+
     prompt_file: str | None
     train_split: float
     embed_dim: int
@@ -529,6 +531,7 @@ def eval_(  # noqa: A001 - `eval` is the user-facing command name; the builtin i
 
 
 def _eval_list(examples_root: str) -> None:
+    """Print the available eval suites."""
     suites = discover_eval_suites(examples_root)
     if not suites:
         _console.print("[yellow]no eval suites found[/yellow]")
@@ -557,6 +560,7 @@ def _eval_results(
     *,
     limit: int,
 ) -> None:
+    """Print stored eval result summaries."""
     resolved_suite = suite_filter
     if suite_filter is not None:
         try:
@@ -606,6 +610,7 @@ def _eval_run_suite(
     top_k: int | None,
     out: str | None,
 ) -> None:
+    """Run one named eval suite and persist its result."""
     suite = resolve_eval_suite(selector, examples_root)
     suite_prompt = suite.resolve_prompt()
     options = _eval_options(
@@ -674,6 +679,7 @@ def _eval_options(
     seed: int | None,
     top_k: int | None,
 ) -> _EvalOptions:
+    """Resolve CLI option overrides against suite defaults."""
     split = 0.7 if train_split is None else train_split
     dim = 512 if embed_dim is None else embed_dim
     retrieval = True if rag is None else rag
@@ -711,6 +717,21 @@ def _run_eval_files(
     model: str,
     region: str | None,
 ) -> EvalReport:
+    """Evaluate one or more trace files with the selected model and judge.
+
+    Args:
+        files: Trace corpus files to evaluate.
+        options: Resolved eval options, including split, RAG, scorer, and concurrency settings.
+        provider: Provider backend used for the target world model.
+        model: Provider model identifier.
+        region: Optional provider region, used by Bedrock.
+
+    Returns:
+        Per-file and aggregate replay-evaluation report.
+
+    Raises:
+        typer.BadParameter: If a trace file is missing or the provider name is invalid.
+    """
     for path in files:
         if not path.exists():
             raise typer.BadParameter(f"trace file not found: {path}")
@@ -741,6 +762,7 @@ def _run_eval_files(
 
 
 def _print_eval_report(report: EvalReport) -> None:
+    """Render an eval report to the console."""
     for name, rep in report.per_file.items():
         _console.print(f"  {name:28} {rep.summary()}")
     _console.print(
@@ -750,6 +772,7 @@ def _print_eval_report(report: EvalReport) -> None:
 
 
 def _write_ad_hoc_eval_report(path: Path, report: EvalReport) -> None:
+    """Write an ad hoc eval report JSON file."""
     path.write_text(
         json.dumps({n: r.model_dump(mode="json") for n, r in report.per_file.items()}, indent=2),
         encoding="utf-8",
@@ -758,6 +781,7 @@ def _write_ad_hoc_eval_report(path: Path, report: EvalReport) -> None:
 
 
 def _eval_report_payload(report: EvalReport) -> dict[str, object]:
+    """Serialize an eval report for persisted suite results."""
     return {
         "overall_fidelity": report.overall_fidelity,
         "overall_std": report.overall_std,
@@ -819,6 +843,7 @@ def _examples_root() -> Path:
 
 
 def _discover_examples() -> list[Path]:
+    """Discover example task directories."""
     root = _examples_root()
     if not root.exists():
         return []
@@ -830,6 +855,7 @@ def _discover_examples() -> list[Path]:
 
 
 def _resolve_example(name: str) -> Path:
+    """Resolve an example name to its task directory."""
     example_dir = _examples_root() / validate_name(name)
     if example_dir.is_dir():
         return example_dir

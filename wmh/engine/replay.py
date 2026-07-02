@@ -62,6 +62,7 @@ class ReplayReport(BaseModel):
     results: list[StepResult] = Field(default_factory=list)
 
     def summary(self) -> str:
+        """Return a concise human-readable summary."""
         return (
             f"fidelity={self.mean_score:.3f}±{self.score_std:.3f} "
             f"error_flag_acc={self.error_flag_accuracy:.3f} n={self.n_steps}"
@@ -107,6 +108,7 @@ def replay(
             work.append((trace.trace_id, trace.steps[step_index], trace.steps[:step_index]))
 
     def _score(item: tuple[str, Step, list[Step]]) -> StepResult:
+        """Score."""
         trace_id, step, history = item
         return _score_step(prompt, trace_id, step, provider, judge, demos, history)
 
@@ -163,6 +165,7 @@ def _score_step(
 
 
 def _aggregate(results: list[StepResult]) -> ReplayReport:
+    """Aggregate."""
     if not results:
         return ReplayReport()
     step_scores = [r.score for r in results]

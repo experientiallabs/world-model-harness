@@ -45,11 +45,13 @@ MODES: tuple[Mode, ...] = (BASE, GEPA)
 def _as_int(value: JsonValue) -> int:
     # Condition.params is JsonValue; the keys this ablation owns are written as ints below, so this
     # narrowing only ever sees ints — but assert to fail loudly if a malformed condition slips in.
+    """Coerce a JSON value to an integer when it is numeric."""
     assert isinstance(value, int)
     return value
 
 
 def _as_mode(value: JsonValue) -> Mode:
+    """As mode."""
     assert isinstance(value, str)
     return value
 
@@ -82,6 +84,7 @@ class TraceScalingAblation:
         test_cap: int | None = None,
         concurrency: int = 1,
     ) -> None:
+        """Initialize the instance."""
         self._base_prompt = base_prompt
         self._make_backends = make_backends
         self._budget = budget
@@ -119,6 +122,7 @@ class TraceScalingAblation:
         return self._test
 
     def conditions(self) -> list[Condition]:
+        """Return the ablation conditions to evaluate."""
         return [
             Condition(label=f"{mode}@{n}", params={"mode": mode, "n_train": n})
             for mode in self._modes

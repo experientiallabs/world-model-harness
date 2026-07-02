@@ -27,6 +27,8 @@ _EMPTY_OBS = Observation(content="")
 
 @runtime_checkable
 class Retriever(Protocol):
+    """Protocol for retrieving similar prior steps."""
+
     def index(self, traces: list[Trace]) -> None:
         """Build phase: embed every step's (state, action) and store it in the buffer."""
         ...
@@ -54,6 +56,7 @@ class EmbeddingRetriever:
     """
 
     def __init__(self, provider: Embedder) -> None:
+        """Initialize the instance."""
         self._provider = provider
         # Parallel structures: row i of `_matrix` is the embedding of `_steps[i]`.
         self._steps: list[Step] = []
@@ -62,6 +65,7 @@ class EmbeddingRetriever:
     def _embed_steps(self, steps: list[Step]) -> NDArray[np.float64]:
         # phi(s, a) embeds the canonical (state, action) summary from wmh.core.render — the same
         # text the engine and GEPA render, so an embedded step and a shown demo match.
+        """Embed every step into the retrieval index representation."""
         texts = [encode_state_action(s.state_before, s.action) for s in steps]
         vectors = self._provider.embed(texts)
         return np.asarray(vectors, dtype=np.float64)

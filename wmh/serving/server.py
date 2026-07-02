@@ -16,23 +16,33 @@ from wmh.tracking import RunRecord
 
 
 class NewSessionRequest(BaseModel):
+    """Request body for creating a new session."""
+
     task: str | None = None
     seed_state: EnvState | None = None
 
 
 class NewSessionResponse(BaseModel):
+    """Response body containing a new session id."""
+
     session_id: str
 
 
 class StepRequest(BaseModel):
+    """Request body for stepping a session."""
+
     action: Action
 
 
 class StepResponse(BaseModel):
+    """Response body containing the predicted observation."""
+
     observation: Observation
 
 
 class ModelsResponse(BaseModel):
+    """Response body listing available world models."""
+
     world_models: list[str]
 
 
@@ -68,6 +78,7 @@ def create_app(
     models = world_models if world_models is not None else _load_named_models(artifact_dir, names)
 
     def _model_or_404(name: str) -> WorldModel:
+        """Return a world model or raise an HTTP 404."""
         try:
             return models[name]
         except KeyError:
@@ -77,6 +88,7 @@ def create_app(
             ) from None
 
     def _session_or_404(wm: WorldModel, session_id: str) -> Session:
+        """Return a session or raise an HTTP 404."""
         try:
             return wm.get_session(session_id)
         except KeyError:
@@ -84,20 +96,24 @@ def create_app(
 
     @app.get("/healthz")
     def healthz() -> dict[str, str]:
+        """Return service health."""
         return {"status": "ok"}
 
     @app.get("/world_models", response_model=ModelsResponse)
     def list_world_models() -> ModelsResponse:
+        """List world models."""
         return ModelsResponse(world_models=sorted(models))
 
     @app.post("/world_models/{world_model_name}/sessions", response_model=NewSessionResponse)
     def new_session(world_model_name: str, req: NewSessionRequest) -> NewSessionResponse:
+        """Create a new session for a world model."""
         wm = _model_or_404(world_model_name)
         session = wm.new_session(task=req.task, seed_state=req.seed_state)
         return NewSessionResponse(session_id=session.id)
 
     @app.get("/world_models/{world_model_name}/sessions/{session_id}", response_model=Session)
     def get_session(world_model_name: str, session_id: str) -> Session:
+        """Return session."""
         wm = _model_or_404(world_model_name)
         return _session_or_404(wm, session_id)
 
@@ -114,6 +130,7 @@ def create_app(
         "/world_models/{world_model_name}/sessions/{session_id}/step", response_model=StepResponse
     )
     def step(world_model_name: str, session_id: str, req: StepRequest) -> StepResponse:
+        """Predict one session step and return the observation."""
         wm = _model_or_404(world_model_name)
         _session_or_404(wm, session_id)
         observation = wm.step(session_id, req.action)

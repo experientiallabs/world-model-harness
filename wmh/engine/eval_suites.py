@@ -48,14 +48,17 @@ class EvalSuite:
 
     @property
     def aliases(self) -> tuple[str, ...]:
+        """Aliases."""
         if self.name == "default":
             return (self.id, self.example)
         return (self.id,)
 
     def resolve_files(self) -> list[Path]:
+        """Resolve files."""
         return [_resolve_relative(self.path.parent, value) for value in self.config.files]
 
     def resolve_prompt(self) -> Path | None:
+        """Resolve prompt."""
         if self.config.prompt is None:
             return None
         return _resolve_relative(self.path.parent, self.config.prompt)
@@ -161,11 +164,13 @@ def list_eval_results(
 
 
 def _resolve_relative(base: Path, value: str) -> Path:
+    """Resolve relative."""
     path = Path(value)
     return path.resolve(strict=False) if path.is_absolute() else (base / path).resolve(strict=False)
 
 
 def _read_result_summary(path: Path) -> EvalResultSummary | None:
+    """Read result summary."""
     try:
         raw: JsonValue = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
@@ -190,12 +195,15 @@ def _read_result_summary(path: Path) -> EvalResultSummary | None:
 
 
 def _as_str(value: JsonValue | None, *, default: str) -> str:
+    """Coerce a JSON value to a string when it is already text."""
     return value if isinstance(value, str) else default
 
 
 def _as_float(value: JsonValue | None) -> float:
+    """Coerce a JSON value to a float when it is numeric."""
     return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else 0.0
 
 
 def _as_int(value: JsonValue | None) -> int:
+    """Coerce a JSON value to an integer when it is numeric."""
     return int(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else 0

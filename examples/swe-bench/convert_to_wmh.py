@@ -50,6 +50,7 @@ _OUTPUT_RE = re.compile(r"<output>\n?(.*?)\n?</output>", re.DOTALL)
 
 
 def _attr(key: str, value: str) -> dict[str, Any]:
+    """Build one OTLP string attribute."""
     return {"key": key, "value": {"stringValue": value}}
 
 
@@ -65,6 +66,7 @@ def _messages_of(traj: Any) -> list[dict[str, Any]]:  # noqa: ANN401 - loosely-t
 
 
 def _info_of(traj: Any) -> dict[str, Any]:  # noqa: ANN401 - loosely-typed source JSON
+    """Return trajectory metadata from a source object."""
     return traj.get("info", {}) if isinstance(traj, dict) else {}
 
 
@@ -136,6 +138,7 @@ def _task_of(messages: list[dict[str, Any]], info: dict[str, Any]) -> str:
 
 
 def _metadata(info: dict[str, Any], instance_id: str, benchmark: str) -> dict[str, Any]:
+    """Build metadata."""
     meta: dict[str, Any] = {"benchmark": benchmark, "instance_id": instance_id}
     for key in ("repo", "submission", "model_patch", "exit_status"):
         if key in info:
@@ -228,6 +231,7 @@ def _iter_traj_files(source: Path) -> list[Path]:
 
 
 def main() -> None:
+    """Run the command-line entry point."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("source", help="A run dir (searched for *.traj.json) or a single traj.json")
     parser.add_argument("--out", required=True, help="Output OTel JSONL path")

@@ -41,10 +41,12 @@ _ADAPTERS: dict[str, TraceAdapter] = {}
 
 
 def register_adapter(adapter: TraceAdapter) -> None:
+    """Register a trace adapter by name."""
     _ADAPTERS[adapter.name] = adapter
 
 
 def get_adapter(name: str) -> TraceAdapter:
+    """Return the registered adapter for a source name."""
     if name not in _ADAPTERS:
         raise ValueError(f"no trace adapter registered for {name!r}; have {list(_ADAPTERS)}")
     return _ADAPTERS[name]

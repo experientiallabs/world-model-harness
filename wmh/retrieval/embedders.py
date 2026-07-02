@@ -38,14 +38,17 @@ class HashingEmbedder:
     """
 
     def __init__(self, dim: int = DEFAULT_DIM) -> None:
+        """Initialize the instance."""
         if dim <= 0:
             raise ValueError(f"embedding dim must be positive, got {dim}")
         self._dim = dim
 
     def embed(self, texts: list[str]) -> list[list[float]]:
+        """Embed text strings through the configured embedding backend."""
         return [self._embed_one(text) for text in texts]
 
     def _embed_one(self, text: str) -> list[float]:
+        """Embed one retrieval query string with hashing."""
         vec = np.zeros(self._dim, dtype=np.float64)
         normalized = text.lower()
         if len(normalized) < _NGRAM:

@@ -33,6 +33,7 @@ class DemoRetriever:
     """
 
     def __init__(self, retriever: Retriever | None, corpus: list[Trace], *, top_k: int = 5) -> None:
+        """Initialize the instance."""
         self._retriever = retriever
         self._top_k = top_k
         self._enabled = retriever is not None and any(t.steps for t in corpus)

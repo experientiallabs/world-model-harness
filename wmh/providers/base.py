@@ -9,6 +9,8 @@ from pydantic import BaseModel, Field
 
 
 class ProviderKind(StrEnum):
+    """Supported LLM provider backends."""
+
     ANTHROPIC = "anthropic"  # Opus 4.8 direct
     BEDROCK = "bedrock"  # Claude 4.8 via AWS
     AZURE_OPENAI = "azure_openai"  # GPT 5.5 via Azure
@@ -40,16 +42,22 @@ Role = Literal["user", "assistant"]
 
 
 class Message(BaseModel):
+    """Provider-neutral chat message."""
+
     role: Role
     content: str
 
 
 class TokenUsage(BaseModel):
+    """Input and output token counts for a provider call."""
+
     input_tokens: int = 0
     output_tokens: int = 0
 
 
 class Completion(BaseModel):
+    """Provider completion text plus token usage."""
+
     text: str
     usage: TokenUsage = Field(default_factory=TokenUsage)
 
@@ -58,6 +66,8 @@ DEFAULT_MAX_TOKENS = 8192
 
 
 class VerifyResult(BaseModel):
+    """Result of a cheap provider availability check."""
+
     ok: bool
     kind: ProviderKind
     model: str
@@ -91,7 +101,9 @@ class Embedder(Protocol):
     standalone local embedder (`wmh.retrieval.embedders.HashingEmbedder`) without requiring creds.
     """
 
-    def embed(self, texts: list[str]) -> list[list[float]]: ...
+    def embed(self, texts: list[str]) -> list[list[float]]:
+        """Embed text strings through the configured embedding backend."""
+        ...
 
 
 @runtime_checkable

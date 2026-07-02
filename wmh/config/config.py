@@ -115,18 +115,22 @@ class ArtifactPaths:
     """Resolves the files under `.wmh/`."""
 
     def __init__(self, root: str | Path = ARTIFACT_DIR) -> None:
+        """Initialize the instance."""
         self.root = Path(root)
 
     @property
     def config(self) -> Path:
+        """Return the artifact config path."""
         return self.root / "config.toml"
 
     @property
     def traces(self) -> Path:
+        """Return the normalized trace file path."""
         return self.root / "traces"
 
     @property
     def index(self) -> Path:
+        """Return the retrieval index directory."""
         return self.root / "index"
 
     @property
@@ -136,18 +140,22 @@ class ArtifactPaths:
 
     @property
     def base_prompt(self) -> Path:
+        """Return the base prompt path."""
         return self.root / "prompts" / "base.txt"
 
     @property
     def optimized_prompt(self) -> Path:
+        """Return the optimized prompt path."""
         return self.root / "prompts" / "optimized.txt"
 
     @property
     def frontier(self) -> Path:
+        """Return the GEPA frontier path."""
         return self.root / "prompts" / "frontier.json"
 
     @property
     def metrics(self) -> Path:
+        """Return the build metrics path."""
         return self.root / "metrics.json"
 
 
@@ -165,6 +173,7 @@ def _strip_none(value: JsonValue) -> JsonValue:
 
 
 def _strip_none_object(obj: dict[str, JsonValue]) -> JsonObject:
+    """Remove keys whose values are None before writing TOML."""
     return {k: _strip_none(v) for k, v in obj.items() if v is not None}
 
 

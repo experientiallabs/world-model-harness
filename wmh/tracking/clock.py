@@ -12,6 +12,8 @@ from typing import Protocol, runtime_checkable
 
 @runtime_checkable
 class Clock(Protocol):
+    """Protocol for monotonic clock sources."""
+
     def monotonic(self) -> float:
         """Seconds from an arbitrary epoch; only differences are meaningful (for durations)."""
         ...
@@ -21,4 +23,5 @@ class SystemClock:
     """Default clock backed by `time.monotonic` (monotonic, unaffected by wall-clock changes)."""
 
     def monotonic(self) -> float:
+        """Return the current monotonic timestamp."""
         return time.monotonic()

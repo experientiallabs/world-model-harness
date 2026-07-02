@@ -26,12 +26,14 @@ class AzureOpenAIProvider:
     """GPT 5.5 via an Azure OpenAI deployment."""
 
     def __init__(self, config: ProviderConfig) -> None:
+        """Initialize the instance."""
         self.config = config
         self._client: AzureOpenAI | None = None
 
     def _get_client(self) -> AzureOpenAI:
         # Lazy: construct on first use. api_key + endpoint default to AZURE_OPENAI_API_KEY /
         # AZURE_OPENAI_ENDPOINT from the environment; api_version must be supplied by config.
+        """Create and cache the provider SDK client."""
         if self._client is None:
             # Validate config before reaching for the SDK, so a config error doesn't depend on the
             # optional `openai` extra being installed.
@@ -49,6 +51,7 @@ class AzureOpenAIProvider:
 
     def _deployment(self) -> str:
         # On Azure, the `model` arg to the API is the deployment name, not the base model id.
+        """Return the Azure deployment name for completions."""
         if self.config.deployment is None:
             raise ValueError("AzureOpenAIProvider requires config.deployment to be set.")
         return self.config.deployment
@@ -61,6 +64,7 @@ class AzureOpenAIProvider:
         temperature: float = 0.7,
         max_tokens: int = DEFAULT_MAX_TOKENS,
     ) -> Completion:
+        """Generate a completion through the provider backend."""
         return _openai_common.complete(
             self._get_client().chat.completions, self._deployment(), system, messages, max_tokens
         )
@@ -68,6 +72,7 @@ class AzureOpenAIProvider:
     def embed(self, texts: list[str]) -> list[list[float]]:
         # As with `model` in complete(), `embed_model` must be the Azure *deployment* name of an
         # embedding model, not a base OpenAI model id, or the call 404s.
+        """Embed text strings through the configured embedding backend."""
         if self.config.embed_model is None:
             raise ValueError("AzureOpenAIProvider.embed requires config.embed_model (deployment).")
         return _openai_common.embed(
@@ -75,10 +80,12 @@ class AzureOpenAIProvider:
         )
 
     def verify(self) -> VerifyResult:
+        """Verify that the provider can make a cheap request."""
         return verify_via_ping(self)
 
 
 def _require_endpoint() -> str:
+    """Return the Azure endpoint or raise a configuration error."""
     import os
 
     endpoint = os.environ.get("AZURE_OPENAI_ENDPOINT")

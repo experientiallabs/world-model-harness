@@ -47,6 +47,7 @@ _DEFAULT_CORPUS = Path(__file__).resolve().parent / "traces.otel.jsonl"
 
 
 def _attr_map(span: dict[str, Any]) -> dict[str, str]:
+    """Build a key/value attribute map from an OTLP span."""
     return {a["key"]: a.get("value", {}).get("stringValue", "") for a in span.get("attributes", [])}
 
 
@@ -64,6 +65,7 @@ def _load_traces(corpus: Path) -> "list[dict[str, Any]]":
         by_trace.setdefault(span["traceId"], []).append(span)
 
     def _span_key(span: dict[str, Any]) -> tuple[int, str]:
+        """Return the stable sort key for a span."""
         return (int(span.get("startTimeUnixNano") or 0), str(span.get("spanId") or ""))
 
     # Earliest span per trace = its sort key; matches otel_genai's group[0] inter-trace ordering.
@@ -121,6 +123,7 @@ def _docker_build(
 
 
 def _exists(image: str) -> bool:
+    """Return whether the requested object exists."""
     return subprocess.run(
         ["docker", "image", "inspect", image], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
     ).returncode == 0
@@ -254,6 +257,7 @@ def _run_many(
         )
 
     def child_cmd(trace_i: int) -> list[str]:
+        """Build the subprocess command for one child scenario run."""
         cmd = [
             sys.executable,
             str(Path(__file__).resolve()),
@@ -283,6 +287,7 @@ def _run_many(
     print_lock = threading.Lock()
 
     def stream(pipe, prefix: str) -> None:  # noqa: ANN001 - subprocess pipe object
+        """Stream one child process pipe with a prefix."""
         try:
             for line in pipe:
                 with print_lock:
@@ -291,6 +296,7 @@ def _run_many(
             pipe.close()
 
     def run_child(item: tuple[int, dict[str, Any]]) -> dict[str, Any]:
+        """Run one child scenario and return its timing summary."""
         trace_i, trace = item
         start = time.monotonic()
         proc = subprocess.Popen(
@@ -374,6 +380,7 @@ def _run_many(
 
 
 def main() -> None:
+    """Run the command-line entry point."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--corpus", default=str(_DEFAULT_CORPUS), help="swe-bench OTel JSONL corpus.")
     parser.add_argument(

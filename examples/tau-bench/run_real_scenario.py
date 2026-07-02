@@ -32,6 +32,7 @@ _DEFAULT_CORPUS = Path(__file__).resolve().parent / "traces.otel.jsonl"
 
 
 def _attr_map(span: dict[str, Any]) -> dict[str, str]:
+    """Build a key/value attribute map from an OTLP span."""
     return {a["key"]: a.get("value", {}).get("stringValue", "") for a in span.get("attributes", [])}
 
 
@@ -75,6 +76,7 @@ def _holdout(traces: list[dict[str, Any]], train_split: float) -> list[dict[str,
 
 
 def main() -> None:
+    """Run the command-line entry point."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--corpus", default=str(_DEFAULT_CORPUS), help="tau2-bench OTel corpus.")
     parser.add_argument(

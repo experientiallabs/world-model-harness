@@ -54,9 +54,11 @@ class UsageTotals(BaseModel):
 
     @property
     def total_tokens(self) -> int:
+        """Return the sum of input and output tokens."""
         return self.input_tokens + self.output_tokens
 
     def _add(self, event: UsageEvent) -> None:
+        """Add token usage and cost from another totals object."""
         self.calls += 1
         self.input_tokens += event.usage.input_tokens
         self.output_tokens += event.usage.output_tokens
@@ -81,6 +83,7 @@ class RunTracker:
     """
 
     def __init__(self, run_id: str, kind: str, clock: Clock | None = None) -> None:
+        """Initialize the instance."""
         self._run_id = run_id
         self._kind = kind
         self._clock = clock or SystemClock()
@@ -89,9 +92,11 @@ class RunTracker:
         self._elapsed: float = 0.0
 
     def start(self) -> None:
+        """Mark the run as started."""
         self._started_at = self._clock.monotonic()
 
     def stop(self) -> None:
+        """Mark the run as stopped."""
         if self._started_at is not None:
             self._elapsed = self._clock.monotonic() - self._started_at
             self._started_at = None
@@ -113,15 +118,18 @@ class RunTracker:
 
     @property
     def events(self) -> list[UsageEvent]:
+        """Return recorded usage events."""
         return list(self._events)
 
     def totals(self) -> UsageTotals:
+        """Return aggregate usage totals for the run."""
         total = UsageTotals()
         for event in self._events:
             total._add(event)
         return total
 
     def by_phase(self) -> dict[Phase, UsageTotals]:
+        """Return usage totals grouped by phase."""
         buckets: dict[Phase, UsageTotals] = defaultdict(UsageTotals)
         for event in self._events:
             buckets[event.phase]._add(event)
@@ -134,6 +142,7 @@ class RunTracker:
         return self._elapsed
 
     def record_summary(self) -> RunRecord:
+        """Return the current run record summary."""
         return RunRecord(
             run_id=self._run_id,
             kind=self._kind,

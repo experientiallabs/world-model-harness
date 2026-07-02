@@ -38,10 +38,12 @@ from typing import Any
 
 
 def _attr(key: str, value: str) -> dict[str, Any]:
+    """Build one OTLP string attribute."""
     return {"key": key, "value": {"stringValue": value}}
 
 
 def _as_text(value: Any) -> str:  # noqa: ANN401 - tool output is loosely-typed JSON
+    """Render a JSON value as user-facing text."""
     if value is None:
         return ""
     if isinstance(value, str):
@@ -50,10 +52,12 @@ def _as_text(value: Any) -> str:  # noqa: ANN401 - tool output is loosely-typed 
 
 
 def _trace_id(benchmark: str, index: int) -> str:
+    """Return trace id."""
     return hashlib.sha256(f"{benchmark}|{index}".encode()).hexdigest()[:32]
 
 
 def _metadata(traj: dict[str, Any], benchmark: str) -> dict[str, Any]:
+    """Build metadata."""
     return {
         "benchmark": benchmark,
         "task_category": traj.get("task_category", ""),
@@ -114,6 +118,7 @@ def _spans_for_trajectory(
 
 
 def main() -> None:
+    """Run the command-line entry point."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("source", help="Path to a terminal-task trajectories JSONL (read in place)")
     parser.add_argument("--out", required=True, help="Output OTel JSONL path")

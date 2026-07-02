@@ -45,6 +45,7 @@ WORKDIR /work
 
 
 def _attr_map(span: dict[str, Any]) -> dict[str, str]:
+    """Build a key/value attribute map from an OTLP span."""
     return {a["key"]: a.get("value", {}).get("stringValue", "") for a in span.get("attributes", [])}
 
 
@@ -88,6 +89,7 @@ def _holdout(traces: list[dict[str, Any]], train_split: float) -> list[dict[str,
 
 
 def _exists(image: str) -> bool:
+    """Return whether the requested object exists."""
     return subprocess.run(
         ["docker", "image", "inspect", image], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
     ).returncode == 0
@@ -108,6 +110,7 @@ def _build_tools_image(*, no_cache: bool) -> None:
 
 
 def main() -> None:
+    """Run the command-line entry point."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--corpus", default=str(_DEFAULT_CORPUS), help="terminal-tasks OTel corpus.")
     parser.add_argument(

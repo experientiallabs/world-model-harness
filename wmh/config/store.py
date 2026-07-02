@@ -58,6 +58,7 @@ class WorldModelStore:
     """Resolves and enumerates named world models under a selected project root."""
 
     def __init__(self, root: str | Path = ARTIFACT_DIR) -> None:
+        """Initialize the instance."""
         self.root = Path(root)
 
     @property
@@ -77,6 +78,7 @@ class WorldModelStore:
         return None
 
     def exists(self, name: str) -> bool:
+        """Return whether the requested object exists."""
         return self.dir_for(name) is not None
 
     def _names_in(self, models_dir: Path) -> set[str]:
@@ -150,13 +152,16 @@ class WorldModelStore:
         )
 
     def list_info(self) -> list[ModelInfo]:
+        """List metadata for all locally built world models."""
         return [self.info(name) for name in self.list_names()]
 
 
 def _as_float(value: JsonValue) -> float | None:
     # bool is an int subclass; exclude it so a stray `true` doesn't read as 1.0.
+    """Coerce a JSON value to a float when it is numeric."""
     return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else None
 
 
 def _as_int(value: JsonValue) -> int | None:
+    """Coerce a JSON value to an integer when it is numeric."""
     return int(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else None

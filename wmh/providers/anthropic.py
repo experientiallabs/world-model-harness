@@ -23,12 +23,14 @@ class AnthropicProvider:
     """Primary backend: Opus 4.8 for env simulation, GEPA reflection, and the judge."""
 
     def __init__(self, config: ProviderConfig) -> None:
+        """Initialize the instance."""
         self.config = config
         self._client: Anthropic | None = None
 
     def _get_client(self) -> Anthropic:
         # Lazy: don't import the SDK or read creds until first use, so the registry can
         # construct every backend without the optional `anthropic` extra installed.
+        """Create and cache the provider SDK client."""
         if self._client is None:
             from anthropic import Anthropic
 
@@ -45,6 +47,7 @@ class AnthropicProvider:
     ) -> Completion:
         # Opus 4.8 takes `system` as a top-level arg and rejects sampling params, so temperature
         # is intentionally not forwarded; adaptive thinking is the default.
+        """Generate a completion through the provider backend."""
         api_messages = [
             cast("MessageParam", {"role": m.role, "content": m.content}) for m in messages
         ]
@@ -64,10 +67,12 @@ class AnthropicProvider:
     def embed(self, texts: list[str]) -> list[list[float]]:
         # Anthropic has no embeddings API; retrieval (phi) must use a separate embed provider
         # (OpenAI/Bedrock) selected via HarnessConfig.embed_provider.
+        """Embed text strings through the configured embedding backend."""
         raise NotImplementedError(
             "AnthropicProvider has no embeddings API; use an OpenAI or Bedrock embed provider "
             "for retrieval (phi)."
         )
 
     def verify(self) -> VerifyResult:
+        """Verify that the provider can make a cheap request."""
         return verify_via_ping(self)

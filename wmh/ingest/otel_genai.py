@@ -136,6 +136,7 @@ def _attrs_to_dict(attrs: JsonValue) -> JsonObject:
 
 
 def _to_int(value: JsonValue) -> int:
+    """Convert a JSON value to an integer when possible."""
     if isinstance(value, bool):  # bool is an int subclass; treat as non-numeric here.
         return 0
     if isinstance(value, int):
@@ -151,6 +152,7 @@ def _to_int(value: JsonValue) -> int:
 
 
 def _as_text(value: JsonValue) -> str:
+    """Render a JSON value as user-facing text."""
     if value is None:
         return ""
     if isinstance(value, str):
@@ -159,6 +161,7 @@ def _as_text(value: JsonValue) -> str:
 
 
 def _as_str(value: JsonValue) -> str:
+    """Coerce a JSON value to a string when it is already text."""
     return value if isinstance(value, str) else ""
 
 
@@ -166,6 +169,7 @@ def _as_str(value: JsonValue) -> str:
 
 
 def _parse_span(raw: JsonValue) -> _ParsedSpan | None:
+    """Parse one raw OTLP span into the internal flattened form."""
     if not isinstance(raw, dict):
         return None
     trace_id = raw.get("traceId")
@@ -210,6 +214,7 @@ def _collect_spans(obj: JsonValue) -> list[_ParsedSpan]:
 
 
 def _spans_in_resource(resource_span: JsonValue) -> list[_ParsedSpan]:
+    """Extract parsed spans from one OTLP resource span block."""
     spans: list[_ParsedSpan] = []
     if not isinstance(resource_span, dict):
         return spans
@@ -233,11 +238,13 @@ def _spans_in_resource(resource_span: JsonValue) -> list[_ParsedSpan]:
 
 
 def _operation(span: _ParsedSpan) -> str:
+    """Return the normalized GenAI operation name for a span."""
     op = span.attributes.get("gen_ai.operation.name")
     return op if isinstance(op, str) else ""
 
 
 def _is_tool_span(span: _ParsedSpan) -> bool:
+    """Return whether a span represents a tool execution."""
     op = _operation(span)
     if op in _TOOL_OPS:
         return True
@@ -247,6 +254,7 @@ def _is_tool_span(span: _ParsedSpan) -> bool:
 
 
 def _is_llm_span(span: _ParsedSpan) -> bool:
+    """Return whether a span represents an LLM call."""
     op = _operation(span)
     if op in _LLM_OPS:
         return True
@@ -260,6 +268,7 @@ def _is_llm_span(span: _ParsedSpan) -> bool:
 
 
 def _tool_args(attrs: JsonObject) -> JsonObject:
+    """Extract tool-call arguments from span attributes."""
     for key in _TOOL_ARG_KEYS:
         raw = attrs.get(key)
         if raw is None:
@@ -277,6 +286,7 @@ def _tool_args(attrs: JsonObject) -> JsonObject:
 
 
 def _action_from_llm_span(span: _ParsedSpan) -> Action:
+    """Build an action from an LLM span."""
     attrs = span.attributes
     tool_name = attrs.get("gen_ai.tool.name")
     if isinstance(tool_name, str) and tool_name:
@@ -287,6 +297,7 @@ def _action_from_llm_span(span: _ParsedSpan) -> Action:
 
 
 def _tool_call_action_from_tool_span(span: _ParsedSpan) -> Action:
+    """Build a tool-call action from a tool span."""
     name = span.attributes.get("gen_ai.tool.name")
     return Action(
         kind=ActionKind.TOOL_CALL,
@@ -296,6 +307,7 @@ def _tool_call_action_from_tool_span(span: _ParsedSpan) -> Action:
 
 
 def _observation_from_tool_span(span: _ParsedSpan) -> Observation:
+    """Build an observation from a tool execution span."""
     content = ""
     for key in _TOOL_OUTPUT_KEYS:
         value = span.attributes.get(key)
@@ -306,6 +318,7 @@ def _observation_from_tool_span(span: _ParsedSpan) -> Observation:
 
 
 def _trace_task(spans: list[_ParsedSpan]) -> str | None:
+    """Return the task prompt attached to a trace, if present."""
     for span in spans:
         prompt = span.attributes.get("gen_ai.prompt")
         if prompt is not None:
@@ -361,6 +374,7 @@ def _build_steps(spans: list[_ParsedSpan]) -> list[Step]:
     def flush(
         action: Action, observation: Observation, span_ids: list[str], state: EnvState
     ) -> None:
+        """Append one completed action/observation pair to the step list."""
         steps.append(
             Step(
                 action=action,
@@ -403,6 +417,15 @@ def _build_steps(spans: list[_ParsedSpan]) -> list[Step]:
 
 
 def _spans_to_traces(spans: list[_ParsedSpan], source: str) -> list[Trace]:
+    """Group parsed spans by trace and convert them into traces.
+
+    Args:
+        spans: Parsed spans from one OTel export or JSONL stream.
+        source: Human-readable source label stored on each trace.
+
+    Returns:
+        Traces ordered by their earliest span timestamp.
+    """
     by_trace: dict[str, list[_ParsedSpan]] = {}
     for span in spans:
         by_trace.setdefault(span.trace_id, []).append(span)
@@ -424,9 +447,19 @@ def _spans_to_traces(spans: list[_ParsedSpan], source: str) -> list[Trace]:
 
 
 class OtelGenAIAdapter:
+    """Adapter for OTel GenAI JSON and JSONL trace files."""
+
     name = "otel-genai"
 
     def from_file(self, path: str) -> list[Trace]:
+        """Load traces from an OTel GenAI file.
+
+        Args:
+            path: JSON OTLP export or JSONL span file to ingest.
+
+        Returns:
+            Normalized traces with empty traces removed.
+        """
         text = Path(path).read_text(encoding="utf-8")
         spans: list[_ParsedSpan] = []
         try:
