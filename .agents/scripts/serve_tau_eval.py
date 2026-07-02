@@ -43,10 +43,12 @@ def main() -> None:
     _load_dotenv()
     if not os.environ.get("OPENAI_API_KEY"):
         raise SystemExit("OPENAI_API_KEY missing: put it in the gitignored .env at the repo root")
+    from wmh.providers.fallback import FallbackProvider
+
     serve_provider = get_provider(ProviderConfig(kind=ProviderKind.OPENAI, model=EVAL_ENV_MODEL))
-    judge_provider = get_provider(
-        ProviderConfig(kind=ProviderKind.BEDROCK, model=JUDGE_MODEL, region="us-east-1")
-    )
+    judge_cfg = ProviderConfig(kind=ProviderKind.BEDROCK, model=JUDGE_MODEL, region="us-east-1")
+    # Same-model failover for the judge (throttles fail over instantly, hung reads at 600s).
+    judge_provider = FallbackProvider([get_provider(judge_cfg), get_provider(judge_cfg)])
     wm = WorldModel.load(str(MODEL_DIR), serve_provider, reward_provider=judge_provider)
     app = create_app(world_models={"tau-bench": wm})
     uvicorn.run(app, host="127.0.0.1", port=port, log_level="warning")
