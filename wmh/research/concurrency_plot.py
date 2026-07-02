@@ -1,6 +1,6 @@
 """Render a concurrency scaling-law report to a brand-styled matplotlib figure.
 
-Reads the JSON `ConcurrencyScalingReport`(s) written by `wmh research concurrency --out` and draws
+Reads one JSON `ConcurrencyScalingReport` written by `wmh research concurrency --out` and draws
 three panels that all compare the world model against the real sandbox: batch wall-clock per side,
 each side's speedup vs. ideal-linear, and the time differential T_real(W)/T_world(W). Styling
 follows the brand system (AGENTS.md rule 15): white background, near-black ink, hairline grid,
@@ -27,9 +27,8 @@ import pandas as pd  # noqa: E402
 
 
 class _PlotRow(BaseModel):
-    """One tidy row for seaborn: a (report, level, side) timing point."""
+    """One tidy row for seaborn: a (level, side) timing point of a single report."""
 
-    report: str
     level: int
     side: str
     wall: float
@@ -39,50 +38,46 @@ class _PlotRow(BaseModel):
     differential: float
 
 
-def _load_points(paths: list[str]) -> pd.DataFrame:
-    """Flatten report JSON(s) into a tidy long DataFrame (one row per report×level×side).
+def _load_points(path: str) -> pd.DataFrame:
+    """Flatten one report JSON into a tidy long DataFrame (one row per level×side).
 
-    Parses each file through `ConcurrencyScalingReport`, so a malformed or truncated report raises a
+    Parses the file through `ConcurrencyScalingReport`, so a malformed or truncated report raises a
     clean `ValueError` (the CLI maps it to a friendly error) rather than a raw KeyError, and missing
     optional fields fall back to their model defaults.
     """
+    text = Path(path).read_text(encoding="utf-8")
+    try:
+        report = ConcurrencyScalingReport.model_validate_json(text)
+    except ValidationError as exc:
+        raise ValueError(f"{path} is not a valid concurrency-scaling report: {exc}") from exc
     rows: list[_PlotRow] = []
-    for path in paths:
-        text = Path(path).read_text(encoding="utf-8")
-        try:
-            report = ConcurrencyScalingReport.model_validate_json(text)
-        except ValidationError as exc:
-            raise ValueError(f"{path} is not a valid concurrency-scaling report: {exc}") from exc
-        label = report.benchmark or Path(path).stem
-        for point in report.points:
-            if point.world_wall_mean:
-                rows.append(
-                    _PlotRow(
-                        report=label,
-                        level=point.level,
-                        side="world model",
-                        wall=point.world_wall_mean,
-                        wall_std=point.world_wall_std,
-                        speedup=point.speedup,
-                        efficiency=point.efficiency,
-                        differential=point.differential,
-                    )
+    for point in report.points:
+        if point.world_wall_mean:
+            rows.append(
+                _PlotRow(
+                    level=point.level,
+                    side="world model",
+                    wall=point.world_wall_mean,
+                    wall_std=point.world_wall_std,
+                    speedup=point.speedup,
+                    efficiency=point.efficiency,
+                    differential=point.differential,
                 )
-            if point.real_wall_mean:
-                rows.append(
-                    _PlotRow(
-                        report=label,
-                        level=point.level,
-                        side="real sandbox",
-                        wall=point.real_wall_mean,
-                        wall_std=point.real_wall_std,
-                        speedup=0.0,
-                        efficiency=0.0,
-                        differential=point.differential,
-                    )
+            )
+        if point.real_wall_mean:
+            rows.append(
+                _PlotRow(
+                    level=point.level,
+                    side="real sandbox",
+                    wall=point.real_wall_mean,
+                    wall_std=point.real_wall_std,
+                    speedup=0.0,
+                    efficiency=0.0,
+                    differential=point.differential,
                 )
+            )
     if not rows:
-        raise ValueError("no timed points found in the report(s)")
+        raise ValueError(f"no timed points in {path}")
     return pd.DataFrame([r.model_dump() for r in rows])
 
 
@@ -127,8 +122,8 @@ def _style_level_axis(ax: plt.Axes, levels: list[int]) -> None:
     ax.margins(y=0.12)
 
 
-def render_report(paths: list[str], out: str, *, title: str = "Concurrency scaling law") -> str:
-    """Render the report JSON(s) at `paths` to an image at `out`; return `out`.
+def render_report(path: str, out: str, *, title: str = "Concurrency scaling law") -> str:
+    """Render the report JSON at `path` to an image at `out`; return `out`.
 
     Three panels, all comparing the SAME two sides so the world-model-vs-real-sandbox story threads
     through every one:
@@ -138,7 +133,7 @@ def render_report(paths: list[str], out: str, *, title: str = "Concurrency scali
     Fixed benchmark-agnostic styling so all benchmarks line up. When only the world side was timed
     (`--side world`), the real-sandbox series are simply absent and panel 3 says so.
     """
-    df = _load_points(paths)
+    df = _load_points(path)
     has_real = bool((df["side"] == "real sandbox").any())
     has_diff = bool((df["differential"] > 0).any())
     levels = sorted(df["level"].unique())

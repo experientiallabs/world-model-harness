@@ -103,9 +103,7 @@ _EVAL_TOKENS = typer.Argument(
 _RESEARCH_REAL_ARG = typer.Option(
     None, "--real-arg", help="Extra arg forwarded to the real sandbox run.sh; repeat for several."
 )
-_RESEARCH_PLOT_REPORTS = typer.Argument(
-    ..., help="ConcurrencyScalingReport JSON file(s) to plot (overlay several as hues)."
-)
+_RESEARCH_PLOT_REPORT = typer.Argument(..., help="ConcurrencyScalingReport JSON file to plot.")
 # Flags each real runner needs so concurrent scenarios stay COLD/FRESH (as if on separate machines)
 # and measure the TRUE standup cost. swe-bench: `--mode build` forces the honest from-source standup
 # (base image + conda/pip env install + repo clone/checkout/install, minutes/env) instead of pulling
@@ -1032,15 +1030,14 @@ def research_concurrency(
 
 @research_app.command("plot-concurrency")
 def research_plot_concurrency(
-    reports: list[str] = _RESEARCH_PLOT_REPORTS,
+    report: str = _RESEARCH_PLOT_REPORT,
     out: str = typer.Option("concurrency_scaling.png", "--out", help="Output image path."),
     title: str = typer.Option("Concurrency scaling law", "--title", help="Figure title."),
 ) -> None:
-    """Render concurrency scaling-law report JSON(s) to a figure (needs the `viz` extra).
+    """Render a concurrency scaling-law report JSON to a figure (needs the `viz` extra).
 
     Draws batch wall-clock vs. concurrency (log-log, mean±std), the world-model speedup vs.
-    ideal-linear, and the T_real/T_world differential when a report has both sides. Pass several
-    report JSONs to overlay them.
+    ideal-linear, and the T_real/T_world differential when the report has both sides.
 
     `concurrency_plot` is imported here (not at module scope) because it pulls in matplotlib/pandas
     from the optional `viz` extra — the harness runtime must not require them. A missing extra
@@ -1049,7 +1046,7 @@ def research_plot_concurrency(
     from wmh.research.concurrency_plot import render_report
 
     try:
-        written = render_report(reports, out, title=title)
+        written = render_report(report, out, title=title)
     except (ValueError, FileNotFoundError) as exc:
         raise typer.BadParameter(str(exc)) from exc
     _console.print(f"wrote figure -> {written}")
