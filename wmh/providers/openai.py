@@ -28,9 +28,19 @@ class OpenAIProvider:
     def _get_client(self) -> OpenAI:
         # Lazy: don't import the SDK or read OPENAI_API_KEY until first use.
         if self._client is None:
+            import os
+
             from openai import OpenAI
 
-            self._client = OpenAI()  # picks up OPENAI_API_KEY from the environment
+            if self.config.endpoint:
+                # OpenAI-compatible server (vLLM, llama.cpp, a proxy). Such servers usually
+                # ignore auth, but the SDK insists on *a* key — fall back to a placeholder.
+                self._client = OpenAI(
+                    base_url=self.config.endpoint,
+                    api_key=os.environ.get("OPENAI_API_KEY") or "not-needed",
+                )
+            else:
+                self._client = OpenAI()  # picks up OPENAI_API_KEY from the environment
         return self._client
 
     def complete(

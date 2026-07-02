@@ -167,3 +167,33 @@ def test_verify_reports_failure_without_raising(monkeypatch: pytest.MonkeyPatch)
 def test_live_verify() -> None:  # pragma: no cover - network
     provider = OpenAIProvider(_config())
     assert provider.verify().ok is True
+
+
+def test_custom_endpoint_reaches_the_client(monkeypatch) -> None:  # noqa: ANN001
+    """ProviderConfig.endpoint must become the client's base_url (vLLM / OpenAI-compatible)."""
+    from wmh.providers.base import ProviderKind
+    from wmh.providers.openai import OpenAIProvider
+
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    provider = OpenAIProvider(
+        ProviderConfig(
+            kind=ProviderKind.OPENAI, model="qwen3.5-9b", endpoint="http://localhost:8001/v1"
+        )
+    )
+    client = provider._get_client()
+    assert str(client.base_url).rstrip("/") == "http://localhost:8001/v1"
+
+
+def test_custom_endpoint_needs_no_openai_key(monkeypatch) -> None:  # noqa: ANN001
+    """A self-hosted OpenAI-compatible server (vLLM) has no real key; loading must not raise."""
+    from wmh.providers.base import ProviderKind
+    from wmh.providers.openai import OpenAIProvider
+
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    provider = OpenAIProvider(
+        ProviderConfig(
+            kind=ProviderKind.OPENAI, model="qwen3.5-9b", endpoint="http://localhost:8001/v1"
+        )
+    )
+    client = provider._get_client()
+    assert client.api_key  # placeholder key, not an exception
