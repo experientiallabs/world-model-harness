@@ -106,3 +106,60 @@ def test_sessions_are_isolated_between_named_models() -> None:
     # A session created on `airline` is not visible under `retail`.
     miss = client.get(f"/world_models/retail/sessions/{session_id}")
     assert miss.status_code == 404
+
+
+class RewardJudgeProvider(FakeProvider):
+    """Replies like the reward judge (JSON episode score) instead of an env observation."""
+
+    def complete(
+        self,
+        system: str,
+        messages: list[Message],
+        *,
+        temperature: float = 0.7,
+        max_tokens: int = 8192,
+    ) -> Completion:
+        return Completion(
+            text='{"success": true, "reward": 0.8, "step_rewards": [0.6], "critique": "solid"}'
+        )
+
+
+def _rewarded_world_model() -> WorldModel:
+    retriever = EmbeddingRetriever(HashingEmbedder(dim=32))
+    return WorldModel(FakeProvider(), retriever, top_k=3, reward_provider=RewardJudgeProvider())
+
+
+def test_score_session_returns_episode_score_and_stamps_final_reward() -> None:
+    wm = _rewarded_world_model()
+    client = TestClient(create_app(world_models={"airline": wm}))
+    session_id = client.post(
+        "/world_models/airline/sessions", json={"task": "find user u1"}
+    ).json()["session_id"]
+    client.post(
+        f"/world_models/airline/sessions/{session_id}/step",
+        json={"action": {"kind": "tool_call", "name": "get_user", "arguments": {"id": "u1"}}},
+    )
+    response = client.post(f"/world_models/airline/sessions/{session_id}/score")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["success"] is True
+    assert body["reward"] == 0.8
+    assert body["step_rewards"] == [0.6]
+    assert body["critique"] == "solid"
+    # the scalar also lands on the final step's observation (replay-buffer visibility)
+    session = client.get(f"/world_models/airline/sessions/{session_id}").json()
+    assert session["history"][-1]["observation"]["reward"] == 0.8
+
+
+def test_score_unknown_session_is_404() -> None:
+    client = _client()
+    assert client.post("/world_models/airline/sessions/nope/score").status_code == 404
+
+
+def test_end_session_returns_usage_and_frees_the_session() -> None:
+    client = _client()
+    session_id = client.post("/world_models/airline/sessions", json={}).json()["session_id"]
+    response = client.delete(f"/world_models/airline/sessions/{session_id}")
+    assert response.status_code == 200
+    assert "events" in response.json() or "run_id" in response.json()
+    assert client.get(f"/world_models/airline/sessions/{session_id}").status_code == 404
