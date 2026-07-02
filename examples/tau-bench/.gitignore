@@ -4,3 +4,5 @@ tau2-bench/
 .venv/
 data/
 *.json
+# ...but the committed model artifacts are not capture scratch — keep them trackable.
+!models/**/*.json
