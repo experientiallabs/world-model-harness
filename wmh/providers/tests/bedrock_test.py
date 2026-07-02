@@ -149,7 +149,9 @@ def test_live_verify() -> None:  # pragma: no cover - network
     provider = BedrockProvider(
         ProviderConfig(
             kind=ProviderKind.BEDROCK,
-            model="anthropic.claude-opus-4-8",
+            # Bedrock only serves Opus 4.8 through the cross-region inference profile; the bare
+            # model id fails with "on-demand throughput isn't supported".
+            model="us.anthropic.claude-opus-4-8",
             region=os.environ["AWS_REGION"],
         )
     )
