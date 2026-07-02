@@ -128,6 +128,9 @@ def test_bare_invocation_shows_help(args: list[str]) -> None:
     assert "Missing command" not in result.output
     assert "Usage:" in result.output
     assert "--help" in result.output
+    # Bare invocation keeps the usage-error exit code (click >=8.2), unlike explicit --help
+    # which exits 0 — scripts can still tell "asked for help" from "forgot the command".
+    assert result.exit_code == 2
 
 
 def test_providers_subcommand_is_registered() -> None:

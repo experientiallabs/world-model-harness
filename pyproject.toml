@@ -6,6 +6,7 @@ readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
     "typer>=0.12",
+    "click>=8.2",  # pins no_args_is_help semantics: help + usage-error exit 2 (<8.2 exited 0)
     "fastapi>=0.110",
     "uvicorn>=0.29",
     "pydantic>=2.6",
