@@ -126,6 +126,24 @@ def test_providers_subcommand_is_registered() -> None:
     group_names = {group.name for group in app.registered_groups}
     assert "providers" in group_names
     assert "examples" in group_names
+    assert "config" in group_names
+
+
+def test_config_telemetry_command_manages_project_settings(tmp_path) -> None:  # noqa: ANN001
+    root = tmp_path / ".wmh"
+
+    disabled = runner.invoke(app, ["config", "telemetry", "disable", "--root", str(root)])
+    assert disabled.exit_code == 0, disabled.output
+    assert "telemetry disabled" in disabled.output
+    assert "enabled = false" in (root / "settings.toml").read_text(encoding="utf-8")
+
+    status = runner.invoke(app, ["config", "telemetry", "--root", str(root)])
+    assert status.exit_code == 0, status.output
+    assert "telemetry disabled" in status.output
+
+    enabled = runner.invoke(app, ["config", "telemetry", "enable", "--root", str(root)])
+    assert enabled.exit_code == 0, enabled.output
+    assert "telemetry enabled" in enabled.output
 
 
 def test_examples_list_shows_task_folders() -> None:

@@ -49,7 +49,7 @@ def _load_named_models(artifact_dir: str, names: list[str] | None) -> dict[str, 
         )
     models: dict[str, WorldModel] = {}
     for name in chosen:
-        world_model, _provider = load_world_model(store.resolve(name))
+        world_model, _provider = load_world_model(store.resolve(name), telemetry_root=store.root)
         models[name] = world_model
     return models
 

@@ -15,7 +15,9 @@ from wmh.providers import get_provider
 from wmh.providers.base import Provider
 
 
-def load_world_model(model_dir: str | Path) -> tuple[WorldModel, Provider]:
+def load_world_model(
+    model_dir: str | Path, *, telemetry_root: str | Path | None = None
+) -> tuple[WorldModel, Provider]:
     """Load the world model under `model_dir`, returning it with the serve provider it was built on.
 
     The provider is returned alongside so callers that also need it (e.g. `wmh demo`, which runs an
@@ -23,4 +25,4 @@ def load_world_model(model_dir: str | Path) -> tuple[WorldModel, Provider]:
     """
     config = load_config(str(model_dir))
     provider = get_provider(config.serve_provider_config())
-    return WorldModel.load(str(model_dir), provider), provider
+    return WorldModel.load(str(model_dir), provider, telemetry_root=telemetry_root), provider
