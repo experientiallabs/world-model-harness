@@ -6,9 +6,10 @@ byte-identical against either side.
 """
 
 from wmh.env.base import Env, WorldModelEnv
-from wmh.env.episode import Agent, EpisodeResult, StopReason, run_episode
+from wmh.env.episode import DONE_SIGNAL, Agent, EpisodeResult, StopReason, run_episode
 
 __all__ = [
+    "DONE_SIGNAL",
     "Agent",
     "Env",
     "EpisodeResult",

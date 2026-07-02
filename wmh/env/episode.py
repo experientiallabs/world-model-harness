@@ -6,6 +6,7 @@ uses this loop, so episode records are comparable across the world model and rea
 
 from __future__ import annotations
 
+import traceback
 from enum import StrEnum
 from typing import Protocol, runtime_checkable
 
@@ -34,6 +35,7 @@ class StopReason(StrEnum):
     AGENT_DONE = "agent_done"  # the agent returned DONE_SIGNAL
     MAX_STEPS = "max_steps"  # the step budget ran out
     ENV_ERROR = "env_error"  # env.step raised; episode recorded up to the failure
+    AGENT_ERROR = "agent_error"  # agent.act raised; episode recorded up to the failure
 
 
 class EpisodeResult(BaseModel):
@@ -42,7 +44,8 @@ class EpisodeResult(BaseModel):
     task: str | None = None
     steps: list[Step] = Field(default_factory=list)
     stop_reason: StopReason
-    error: str | None = None  # set when stop_reason == ENV_ERROR; names the failing action
+    error: str | None = None  # set on ENV_ERROR/AGENT_ERROR; names the failure
+    error_traceback: str | None = None  # full traceback of that failure, for debugging batches
 
 
 def run_episode(
@@ -67,7 +70,16 @@ def run_episode(
         state = env.reset(task=task, seed_state=seed_state)
         history: list[Step] = []
         for _ in range(max_steps):
-            action = agent.act(task, state, history)
+            try:
+                action = agent.act(task, state, history)
+            except Exception as exc:  # noqa: BLE001 - batch runs must survive one bad episode
+                return EpisodeResult(
+                    task=task,
+                    steps=history,
+                    stop_reason=StopReason.AGENT_ERROR,
+                    error=f"{type(exc).__name__}: {exc} (in agent.act)",
+                    error_traceback="".join(traceback.format_exception(exc)),
+                )
             if action.kind is ActionKind.MESSAGE and action.content == DONE_SIGNAL:
                 return EpisodeResult(task=task, steps=history, stop_reason=StopReason.AGENT_DONE)
             state_before = state.model_copy(deep=True)
@@ -82,6 +94,7 @@ def run_episode(
                         f"{type(exc).__name__}: {exc} "
                         f"(while executing {action.kind.value} {action.name or action.content!r})"
                     ),
+                    error_traceback="".join(traceback.format_exception(exc)),
                 )
             history.append(
                 Step(action=action, observation=observation, state_before=state_before, task=task)

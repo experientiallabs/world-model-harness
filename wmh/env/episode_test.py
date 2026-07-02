@@ -142,3 +142,22 @@ def test_env_error_names_the_failing_action() -> None:
     assert result.stop_reason == StopReason.ENV_ERROR
     assert result.error is not None
     assert "poke" in result.error  # the action that triggered the failure is recorded
+
+
+def test_agent_exception_is_recorded_not_raised() -> None:
+    class ExplodingAgent:
+        def act(self, task: str | None, state: EnvState, history: list[Step]) -> Action:
+            raise KeyError("agent bug")
+
+    env = ScriptedEnv()
+    result = run_episode(env, ExplodingAgent(), max_steps=5)
+    assert result.stop_reason == StopReason.AGENT_ERROR
+    assert result.error is not None and "agent.act" in result.error
+    assert result.error_traceback is not None and "KeyError" in result.error_traceback
+    assert env.closed
+
+
+def test_env_error_carries_traceback() -> None:
+    result = run_episode(ScriptedEnv(fail_on_step=1), ScriptedAgent(), max_steps=5)
+    assert result.error_traceback is not None
+    assert "ConnectionError" in result.error_traceback

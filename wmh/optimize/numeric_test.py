@@ -120,3 +120,19 @@ def test_fenced_json_is_parsed_like_the_llm_judges() -> None:
     plain = _obs({"latency_s": 10.0})
     result = NumericJudge().score(fenced, plain, STEP)
     assert result.score == 1.0
+
+
+def test_string_field_mismatch_is_not_a_free_pass() -> None:
+    # Numbers matching must not hide a flipped status string.
+    result = NumericJudge().score(
+        _obs({"peak_mem_gb": 12.5, "status": "ok"}),
+        _obs({"peak_mem_gb": 12.5, "status": "CRASHED"}),
+        STEP,
+    )
+    assert result.dimensions["status"] == 0.0
+    assert result.score == pytest.approx(0.5)
+
+
+def test_string_predicted_for_numeric_field_scores_zero() -> None:
+    result = NumericJudge().score(_obs({"latency_s": "10.0"}), _obs({"latency_s": 10.0}), STEP)
+    assert result.dimensions["latency_s"] == 0.0

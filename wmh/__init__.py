@@ -17,7 +17,7 @@ from wmh.core.types import (
     Trace,
 )
 from wmh.engine.world_model import WorldModel
-from wmh.env import Agent, Env, EpisodeResult, StopReason, WorldModelEnv, run_episode
+from wmh.env import DONE_SIGNAL, Agent, Env, EpisodeResult, StopReason, WorldModelEnv, run_episode
 
 __all__ = [
     "WorldModel",
@@ -29,6 +29,7 @@ __all__ = [
     "Step",
     "Trace",
     "Agent",
+    "DONE_SIGNAL",
     "Env",
     "EpisodeResult",
     "StopReason",
