@@ -23,3 +23,7 @@ demos/
 logs/
 
 .wmh-fixed/
+
+# dev-run artifacts of the RL arms (official rows are committed deliberately under results/)
+examples/tau-bench/rl/*.results.jsonl
+examples/tau-bench/rl/icl_memory.jsonl

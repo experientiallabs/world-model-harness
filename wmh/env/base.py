@@ -60,6 +60,7 @@ class WorldModelEnv:
         self._session_id: str | None = None
         self._usage: RunRecord | None = None
         self._last_score: EpisodeScore | None = None
+        self._score_error: Exception | None = None
 
     @property
     def session_id(self) -> str:
@@ -79,8 +80,13 @@ class WorldModelEnv:
         """The episode score captured by the most recent scoring `close`.
 
         Raises if no scored episode has completed yet — either the env was built without
-        `score_on_close=True`, or `close` hasn't run.
+        `score_on_close=True`, or `close` hasn't run. If the judge call itself failed during
+        `close` (throttle, network), the ORIGINAL failure is re-raised here: `run_episode`
+        deliberately swallows teardown errors, and a batch caller must see the real cause
+        instead of a misleading "no scored episode".
         """
+        if self._score_error is not None:
+            raise RuntimeError("scoring failed during close; see cause") from self._score_error
         if self._last_score is None:
             raise RuntimeError(
                 "no scored episode yet; construct WorldModelEnv(wm, score_on_close=True) "
@@ -98,8 +104,18 @@ class WorldModelEnv:
         return self._world_model.step(self.session_id, action)
 
     def close(self) -> None:
-        if self._session_id is not None:
+        if self._session_id is None:
+            return
+        try:
             if self._score_on_close:
-                self._last_score = self._world_model.score_session(self._session_id)
+                self._last_score = None
+                self._score_error = None
+                try:
+                    self._last_score = self._world_model.score_session(self._session_id)
+                except Exception as exc:  # noqa: BLE001 - preserved and re-raised by last_score
+                    # A judge failure must not leak the session or masquerade as "unscored";
+                    # the session still ends below and last_score re-raises this cause.
+                    self._score_error = exc
+        finally:
             self._usage = self._world_model.end_session(self._session_id)
             self._session_id = None

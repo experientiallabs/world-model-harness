@@ -153,3 +153,36 @@ def test_close_without_score_on_close_does_not_judge() -> None:
     env.close()
     with pytest.raises(RuntimeError):
         _ = env.last_score
+
+
+def test_judge_failure_during_scoring_close_ends_session_and_surfaces_cause() -> None:
+    """A throttled judge must not leak the session or masquerade as 'no scored episode'."""
+
+    class ExplodingJudge(FakeProvider):
+        def complete(
+            self,
+            system: str,
+            messages: list[Message],
+            *,
+            temperature: float = 0.7,
+            max_tokens: int = 8192,
+        ) -> Completion:
+            raise ConnectionError("throttled")
+
+    retriever = EmbeddingRetriever(HashingEmbedder(dim=64))
+    wm = WorldModel(
+        FakeProvider('{"output": "ok", "is_error": false}'),
+        retriever,
+        top_k=1,
+        reward_provider=ExplodingJudge("unused"),
+    )
+    env = WorldModelEnv(wm, score_on_close=True)
+    env.reset(task="t")
+    session_id = env.session_id
+    env.step(Action(kind=ActionKind.TOOL_CALL, name="get_user", arguments={}))
+    env.close()  # must not raise (run_episode swallows teardown), must still end the session
+    with pytest.raises(KeyError):
+        wm.get_session(session_id)  # session freed despite the judge failure
+    with pytest.raises(RuntimeError, match="scoring failed") as excinfo:
+        _ = env.last_score
+    assert isinstance(excinfo.value.__cause__, ConnectionError)

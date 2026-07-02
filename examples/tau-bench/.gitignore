@@ -4,3 +4,6 @@ tau2-bench/
 .venv/
 data/
 *.json
+
+# the RL arms' pinned tool inventory is committed (see rl/pin_scenarios.py)
+!rl/tools.json
