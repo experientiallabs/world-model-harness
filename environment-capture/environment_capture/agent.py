@@ -119,7 +119,13 @@ class BedrockBashAgent:
         raise RuntimeError("unreachable")
 
     def run(self, task: Task, env: CommandEnv) -> AgentRun:
-        """Drive the environment until the agent submits, answers in text, or hits max_steps."""
+        """Drive the environment until the agent submits, answers in text, or hits max_steps.
+
+        A single turn may contain several tool-use blocks (Bedrock emits parallel tool calls);
+        every one must be answered with a toolResult or the next Converse call is rejected. So all
+        bash calls in a turn are executed in order, each recorded as its own transition, and their
+        results returned together in one follow-up user message.
+        """
         messages: list[JsonValue] = [{"role": "user", "content": [{"text": task.prompt}]}]
         steps: list[StepRecord] = []
         final_answer = ""
@@ -132,54 +138,60 @@ class BedrockBashAgent:
             assert isinstance(message, dict)
             messages.append(message)
 
-            tool_use = _first_tool_use(message)
-            if tool_use is None:
+            tool_uses = _tool_uses(message)
+            if not tool_uses:
                 final_answer = _text_content(message)
                 break
 
-            tool_use_id, name, tool_input = tool_use
-            if name == "submit":
-                answer = tool_input.get("answer", "")
-                final_answer = answer if isinstance(answer, str) else str(answer)
-                break
+            tool_results: list[JsonValue] = []
+            submitted = False
+            for tool_use_id, name, tool_input in tool_uses:
+                if name == "submit":
+                    answer = tool_input.get("answer", "")
+                    final_answer = answer if isinstance(answer, str) else str(answer)
+                    submitted = True
+                    break
 
-            command = tool_input.get("command", "")
-            command_text = command if isinstance(command, str) else str(command)
-            result = env.execute(command_text)
-            steps.append(
-                StepRecord(
-                    action=ToolCall(name="bash", arguments={"command": command_text}),
-                    output=result.output,
-                    is_error=result.returncode != 0,
+                command = tool_input.get("command", "")
+                command_text = command if isinstance(command, str) else str(command)
+                result = env.execute(command_text)
+                steps.append(
+                    StepRecord(
+                        action=ToolCall(name="bash", arguments={"command": command_text}),
+                        output=result.output,
+                        is_error=result.returncode != 0,
+                    )
                 )
-            )
-            messages.append(
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "toolResult": {
-                                "toolUseId": tool_use_id,
-                                "content": [
-                                    {
-                                        "text": f"<returncode>{result.returncode}</returncode>\n"
-                                        f"{result.output}"
-                                    }
-                                ],
-                                "status": "error" if result.returncode != 0 else "success",
-                            }
+                tool_results.append(
+                    {
+                        "toolResult": {
+                            "toolUseId": tool_use_id,
+                            "content": [
+                                {
+                                    "text": f"<returncode>{result.returncode}</returncode>\n"
+                                    f"{result.output}"
+                                }
+                            ],
+                            "status": "error" if result.returncode != 0 else "success",
                         }
-                    ],
-                }
-            )
+                    }
+                )
+                if len(steps) >= self.max_steps:
+                    break
+
+            if submitted:
+                break
+            messages.append({"role": "user", "content": tool_results})
 
         return AgentRun(steps=steps, final_answer=final_answer, model=self.model_id)
 
 
-def _first_tool_use(message: dict[str, JsonValue]) -> tuple[str, str, dict[str, JsonValue]] | None:
+def _tool_uses(message: dict[str, JsonValue]) -> list[tuple[str, str, dict[str, JsonValue]]]:
+    """Every (id, name, input) tool-use block in the message, in order (Bedrock may emit many)."""
     content = message.get("content")
     if not isinstance(content, list):
-        return None
+        return []
+    uses: list[tuple[str, str, dict[str, JsonValue]]] = []
     for block in content:
         if isinstance(block, dict) and isinstance(block.get("toolUse"), dict):
             tool_use = block["toolUse"]
@@ -189,8 +201,8 @@ def _first_tool_use(message: dict[str, JsonValue]) -> tuple[str, str, dict[str, 
             tool_input = tool_use.get("input", {})
             assert isinstance(tool_use_id, str) and isinstance(name, str)
             assert isinstance(tool_input, dict)
-            return tool_use_id, name, tool_input
-    return None
+            uses.append((tool_use_id, name, tool_input))
+    return uses
 
 
 def _text_content(message: dict[str, JsonValue]) -> str:
