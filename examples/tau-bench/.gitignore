@@ -7,3 +7,5 @@ data/
 
 # the RL arms' pinned tool inventory is committed (see rl/pin_scenarios.py)
 !rl/tools.json
+# Model artifacts under models/ are intentional committed examples, not capture output.
+!models/**/*.json
