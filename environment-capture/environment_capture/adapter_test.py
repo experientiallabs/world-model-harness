@@ -59,7 +59,9 @@ class _OneShotAgent:
 def test_run_capture_grades_and_assembles_trajectories() -> None:
     adapter = _FakeAdapter()
     assert isinstance(adapter, BenchmarkAdapter)
-    trajectories = run_capture(adapter, _OneShotAgent(), split="train")
+    result = run_capture(adapter, _OneShotAgent(), split="train")
+    assert result.failures == []
+    trajectories = result.trajectories
     assert [t.task.task_id for t in trajectories] == ["train-0", "train-1", "train-2"]
     assert all(t.reward == 1.0 for t in trajectories)
     assert all(t.split == "train" for t in trajectories)
@@ -67,26 +69,50 @@ def test_run_capture_grades_and_assembles_trajectories() -> None:
     assert all(env.closed for env in adapter.envs)
 
 
-def test_run_capture_limit_and_env_closed_on_agent_error() -> None:
+def test_run_capture_isolates_task_failures() -> None:
+    """One task's crash is recorded as a failure, not raised — a multi-hour capture run must
+    never lose completed trajectories to one transient error (this bit three benchmarks)."""
     adapter = _FakeAdapter()
 
-    class _BoomAgent:
+    class _BoomOnMiddleAgent:
         def run(self, task: Task, env: CommandEnv) -> AgentRun:
-            raise RuntimeError("agent crashed")
+            if task.task_id == "train-1":
+                raise RuntimeError("transient network blip")
+            return _OneShotAgent().run(task, env)
 
-    try:
-        run_capture(adapter, _BoomAgent(), split="train", limit=1)
-    except RuntimeError:
-        pass
-    assert len(adapter.envs) == 1
-    assert adapter.envs[0].closed  # env released even when the agent dies
+    result = run_capture(adapter, _BoomOnMiddleAgent(), split="train")
+    assert [t.task.task_id for t in result.trajectories] == ["train-0", "train-2"]
+    assert [f.task_id for f in result.failures] == ["train-1"]
+    assert "transient network blip" in result.failures[0].error
+    assert all(env.closed for env in adapter.envs)  # env released even when the agent dies
 
-    trajectories = run_capture(adapter, _OneShotAgent(), split="train", limit=2)
-    assert len(trajectories) == 2
+
+def test_run_capture_retries_transient_failures() -> None:
+    adapter = _FakeAdapter()
+
+    class _FlakyAgent:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def run(self, task: Task, env: CommandEnv) -> AgentRun:
+            self.calls += 1
+            if self.calls == 1:
+                raise RuntimeError("first call blip")
+            return _OneShotAgent().run(task, env)
+
+    result = run_capture(adapter, _FlakyAgent(), split="train", limit=1, attempts=2)
+    assert result.failures == []
+    assert len(result.trajectories) == 1
+
+
+def test_run_capture_limit() -> None:
+    adapter = _FakeAdapter()
+    result = run_capture(adapter, _OneShotAgent(), split="train", limit=2)
+    assert len(result.trajectories) == 2
 
 
 def test_run_capture_explicit_task_shard() -> None:
     adapter = _FakeAdapter()
     shard = adapter.tasks("train")[1:]
-    trajectories = run_capture(adapter, _OneShotAgent(), split="train", tasks=shard)
-    assert [t.task.task_id for t in trajectories] == ["train-1", "train-2"]
+    result = run_capture(adapter, _OneShotAgent(), split="train", tasks=shard)
+    assert [t.task.task_id for t in result.trajectories] == ["train-1", "train-2"]

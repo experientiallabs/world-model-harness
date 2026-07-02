@@ -65,19 +65,12 @@ def _capture_shard(
     split: str,
     max_steps: int,
 ) -> list[Trajectory]:
-    """Capture one model's shard, task by task, so a single failure never discards the shard.
-
-    Bedrock calls can time out or exhaust retries under load; a failed task is logged and skipped
-    (its real transitions simply don't enter the corpus) while the rest of the shard proceeds.
-    """
+    """Capture one model's shard; run_capture isolates per-task failures (logged and skipped)."""
     agent = BedrockBashAgent(model_id, max_steps=max_steps, system_prompt=_SYSTEM_PROMPT)
-    trajectories: list[Trajectory] = []
-    for task in tasks:
-        try:
-            trajectories.extend(run_capture(adapter, agent, split=split, tasks=[task]))
-        except Exception as error:  # noqa: BLE001 - resilience: one bad call must not lose the run
-            print(f"[skip] {task.task_id} on {model_id}: {error}", file=sys.stderr)
-    return trajectories
+    result = run_capture(adapter, agent, split=split, tasks=tasks)
+    for failure in result.failures:
+        print(f"[skip] {failure.task_id} on {model_id}: {failure.error}", file=sys.stderr)
+    return result.trajectories
 
 
 def _suffix_task_id(trajectory: Trajectory, run_tag: str) -> Trajectory:

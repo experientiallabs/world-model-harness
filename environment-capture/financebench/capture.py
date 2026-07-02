@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict
@@ -36,7 +37,10 @@ def _capture_shard(
     max_steps: int,
 ) -> list[Trajectory]:
     agent = BedrockBashAgent(model_id, max_steps=max_steps)
-    return run_capture(adapter, agent, split=split, tasks=tasks)
+    result = run_capture(adapter, agent, split=split, tasks=tasks)
+    for failure in result.failures:
+        print(f"[skip] {failure.task_id} on {model_id}: {failure.error}", file=sys.stderr)
+    return result.trajectories
 
 
 def main() -> None:

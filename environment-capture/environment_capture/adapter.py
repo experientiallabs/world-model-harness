@@ -65,6 +65,22 @@ class CaptureAgent(Protocol):
     def run(self, task: Task, env: CommandEnv) -> AgentRun: ...
 
 
+@dataclass(frozen=True)
+class TaskFailure:
+    """A task the capture gave up on, with the last error it saw."""
+
+    task_id: str
+    error: str
+
+
+@dataclass(frozen=True)
+class CaptureResult:
+    """What a capture run produced: graded trajectories plus the tasks it had to skip."""
+
+    trajectories: list[Trajectory]
+    failures: list[TaskFailure]
+
+
 def run_capture(
     adapter: BenchmarkAdapter,
     agent: CaptureAgent,
@@ -72,27 +88,41 @@ def run_capture(
     split: str,
     limit: int | None = None,
     tasks: list[Task] | None = None,
-) -> list[Trajectory]:
+    attempts: int = 2,
+) -> CaptureResult:
     """Run the agent over the split's tasks against the real environment; return graded runs.
 
     Pass ``tasks`` to run an explicit subset (e.g. one shard of a multi-model capture); it must
     come from ``adapter.tasks(split)`` for the split label to stay truthful.
+
+    Failures are ISOLATED per task: each task gets up to ``attempts`` tries, and a task that
+    still fails is recorded in ``failures`` instead of raising — a multi-hour capture run must
+    never lose its completed trajectories to one transient provider/network error.
     """
     trajectories: list[Trajectory] = []
+    failures: list[TaskFailure] = []
     for task in (tasks if tasks is not None else adapter.tasks(split))[:limit]:
-        env = adapter.open_env(task)
-        try:
-            run = agent.run(task, env)
-        finally:
-            env.close()
-        trajectories.append(
-            Trajectory(
-                task=task,
-                steps=run.steps,
-                final_answer=run.final_answer,
-                reward=adapter.grade(task, run.final_answer),
-                model=run.model,
-                split=split,
+        last_error = ""
+        for _attempt in range(attempts):
+            env = adapter.open_env(task)
+            try:
+                run = agent.run(task, env)
+            except Exception as error:  # noqa: BLE001 - isolation is the contract; error recorded
+                last_error = f"{type(error).__name__}: {error}"
+                continue
+            finally:
+                env.close()
+            trajectories.append(
+                Trajectory(
+                    task=task,
+                    steps=run.steps,
+                    final_answer=run.final_answer,
+                    reward=adapter.grade(task, run.final_answer),
+                    model=run.model,
+                    split=split,
+                )
             )
-        )
-    return trajectories
+            break
+        else:
+            failures.append(TaskFailure(task_id=task.task_id, error=last_error))
+    return CaptureResult(trajectories=trajectories, failures=failures)

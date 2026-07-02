@@ -24,7 +24,6 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, replace
 from pathlib import Path
 
-from botocore.exceptions import BotoCoreError, ClientError
 from environment_capture import Trajectory, run_capture, trajectory_to_spans, write_spans_jsonl
 from environment_capture.agent import BedrockBashAgent
 from environment_capture.benchmarks.dabstep import DabstepAdapter
@@ -54,40 +53,20 @@ def _capture_model(
     run_start: int,
     max_steps: int,
 ) -> list[Trajectory]:
-    """Run one model over every task, isolating each task so a transient failure loses only it.
+    """Run one model over every task; run_capture isolates and retries per-task failures.
 
-    ``run_capture`` has no per-task fault isolation, and the models run concurrently under one
-    executor — so one uncaught Bedrock/network error would discard every model's completed work.
-    Each task is instead driven on its own with a few retries; a task that keeps failing is skipped
-    with a warning rather than aborting the capture. Runs are numbered from ``run_start`` so a
-    top-up capture (``--run-start 2``) never reuses an earlier run's suffix (and thus trace id).
+    Runs are numbered from ``run_start`` so a top-up capture (``--run-start 2``) never reuses an
+    earlier run's suffix (and thus trace id).
     """
     agent = BedrockBashAgent(model_id, max_steps=max_steps)
     tag = _model_tag(model_id)
     captured: list[Trajectory] = []
     for run_index in range(run_start, run_start + runs):
-        for task in tasks:
-            trajectory = _capture_task(adapter, agent, task, tag, run_index)
-            if trajectory is not None:
-                captured.append(_suffix_task_id(trajectory, f"{tag}-r{run_index}"))
+        result = run_capture(adapter, agent, split="train", tasks=tasks, attempts=_TASK_ATTEMPTS)
+        for failure in result.failures:
+            print(f"  [{tag} r{run_index}] {failure.task_id} skipped: {failure.error}")
+        captured.extend(_suffix_task_id(t, f"{tag}-r{run_index}") for t in result.trajectories)
     return captured
-
-
-def _capture_task(
-    adapter: DabstepAdapter,
-    agent: BedrockBashAgent,
-    task: Task,
-    tag: str,
-    run_index: int,
-) -> Trajectory | None:
-    """Drive one task with retries; return its graded trajectory, or None if it keeps failing."""
-    for attempt in range(1, _TASK_ATTEMPTS + 1):
-        try:
-            return run_capture(adapter, agent, split="train", tasks=[task])[0]
-        except (BotoCoreError, ClientError) as error:
-            print(f"  [{tag} r{run_index}] {task.task_id} attempt {attempt} failed: {error}")
-    print(f"  [{tag} r{run_index}] {task.task_id} giving up after {_TASK_ATTEMPTS} attempts")
-    return None
 
 
 def main() -> None:

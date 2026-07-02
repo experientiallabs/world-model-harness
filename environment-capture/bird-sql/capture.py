@@ -20,6 +20,7 @@ from __future__ import annotations
 import argparse
 import dataclasses
 import json
+import sys
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -66,9 +67,13 @@ def _capture_shard(
 ) -> list[Trajectory]:
     agent = BedrockBashAgent(model_id, max_steps=max_steps)
     framed = [_with_sql_instructions(t) for t in tasks]
-    trajectories = run_capture(adapter, agent, split=split, tasks=framed)
+    result = run_capture(adapter, agent, split=split, tasks=framed)
+    for failure in result.failures:
+        print(f"[skip] {failure.task_id} on {model_id}: {failure.error}", file=sys.stderr)
+    originals = {t.task_id: t for t in tasks}
     tagged: list[Trajectory] = []
-    for trajectory, original in zip(trajectories, tasks, strict=True):
+    for trajectory in result.trajectories:
+        original = originals[trajectory.task.task_id]
         suffixed = dataclasses.replace(original, task_id=f"{original.task_id}#{run_tag}")
         tagged.append(
             dataclasses.replace(
