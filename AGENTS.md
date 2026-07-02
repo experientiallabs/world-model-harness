@@ -15,6 +15,12 @@ uv run ty check
 uv run pytest -q
 ```
 
+## Python
+
+- Every Python file must have a module docstring.
+- Write Google-style docstrings for all classes and functions with significant logic. Use plain
+  one-line docstrings for simple/self-explanatory classes and functions.
+
 ## Rules
 
 1. **Clean tree before every commit.** Run `uv run ruff check .` and `uv run ty check` over the
