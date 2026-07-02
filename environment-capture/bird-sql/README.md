@@ -17,8 +17,10 @@ read-only copy of the database and their result rows compared as an order-insens
 - `gold/<task_id>.json` — gold SQL (`gold_sql`), never staged into the agent workspace.
 - `databases/<db>.sqlite` — the real SQLite databases (gitignored; re-materialize with
   `fetch_data.py`). The adapter and grader need these present locally.
-- `traces.otel.jsonl` — the trace corpus: fresh REAL Bedrock captures over the **train split
-  only** (the hidden test split is never captured so the world model can't absorb its dynamics).
+- `traces.otel.jsonl` — the trace corpus: **156 traces / 330 real transitions**, fresh REAL
+  Bedrock captures over the **train split only** (the hidden test split is never captured so the
+  world model can't absorb its dynamics); waves r1–r3 across opus-4-8/-4-7 with run-suffixed
+  task ids.
 - `fetch_data.py` — materializes the real upstream data into the shape above.
 - `capture.py` — fresh real-run capture against this adapter (Bedrock bash/sqlite agent).
 
