@@ -1,0 +1,205 @@
+"""A Bedrock-backed capture agent: bash tool-use loop over a CommandEnv.
+
+The agent gets two tools — ``bash`` (executed for real in the environment; the REAL output is
+returned as the tool result) and ``submit`` (ends the episode with a final answer). Every bash
+call becomes one recorded transition. Throttling is retried with linear backoff; real errors
+propagate (fail fast).
+"""
+
+from __future__ import annotations
+
+import time
+from typing import Protocol
+
+import boto3
+from botocore.config import Config
+from botocore.exceptions import ClientError
+
+from environment_capture.adapter import AgentRun, CommandEnv
+from environment_capture.trajectory import JsonValue, StepRecord, Task, ToolCall
+
+_SYSTEM_PROMPT = """You are an autonomous analyst agent working in a Unix workspace.
+Investigate before answering: list and read the files (the workspace usually has a docs/
+directory), search with grep, and compute with python3 when arithmetic is needed. Use the bash
+tool for every investigation step — one focused command per call — and check intermediate
+results rather than assuming them. When you are confident, call submit with your final answer
+(concise: the number or short phrase the question asks for, with units)."""
+
+_TOOL_CONFIG: dict[str, JsonValue] = {
+    "tools": [
+        {
+            "toolSpec": {
+                "name": "bash",
+                "description": "Run one bash command in the task workspace; returns its real "
+                "output and exit code.",
+                "inputSchema": {
+                    "json": {
+                        "type": "object",
+                        "properties": {"command": {"type": "string"}},
+                        "required": ["command"],
+                    }
+                },
+            }
+        },
+        {
+            "toolSpec": {
+                "name": "submit",
+                "description": "Submit the final answer and end the task.",
+                "inputSchema": {
+                    "json": {
+                        "type": "object",
+                        "properties": {"answer": {"type": "string"}},
+                        "required": ["answer"],
+                    }
+                },
+            }
+        },
+    ]
+}
+
+_THROTTLE_CODES = {"ThrottlingException", "TooManyRequestsException", "ServiceUnavailableException"}
+_MAX_RETRIES = 6
+
+
+class ConverseClient(Protocol):
+    """The slice of the Bedrock runtime client the agent needs (stubbed in tests)."""
+
+    def converse(
+        self,
+        *,
+        modelId: str,
+        messages: list[JsonValue],
+        system: list[JsonValue],
+        toolConfig: JsonValue,
+        inferenceConfig: JsonValue,
+    ) -> dict[str, JsonValue]: ...
+
+
+def make_bedrock_client(region: str = "us-east-1") -> ConverseClient:
+    """A real Bedrock runtime client with generous read timeouts for long completions."""
+    return boto3.client(
+        "bedrock-runtime",
+        region_name=region,
+        config=Config(read_timeout=300, retries={"max_attempts": 0}),
+    )
+
+
+class BedrockBashAgent:
+    """CaptureAgent driving a CommandEnv through Bedrock converse tool-use."""
+
+    def __init__(
+        self,
+        model_id: str,
+        *,
+        client: ConverseClient | None = None,
+        region: str = "us-east-1",
+        max_steps: int = 12,
+        max_tokens: int = 2048,
+    ) -> None:
+        self.model_id = model_id
+        self._client = client if client is not None else make_bedrock_client(region)
+        self.max_steps = max_steps
+        self.max_tokens = max_tokens
+
+    def _converse(self, messages: list[JsonValue]) -> dict[str, JsonValue]:
+        for attempt in range(_MAX_RETRIES + 1):
+            try:
+                return self._client.converse(
+                    modelId=self.model_id,
+                    messages=messages,
+                    system=[{"text": _SYSTEM_PROMPT}],
+                    toolConfig=_TOOL_CONFIG,
+                    inferenceConfig={"maxTokens": self.max_tokens},
+                )
+            except ClientError as error:
+                code = error.response.get("Error", {}).get("Code", "")
+                if code not in _THROTTLE_CODES or attempt == _MAX_RETRIES:
+                    raise
+                time.sleep(5 * (attempt + 1))
+        raise RuntimeError("unreachable")
+
+    def run(self, task: Task, env: CommandEnv) -> AgentRun:
+        """Drive the environment until the agent submits, answers in text, or hits max_steps."""
+        messages: list[JsonValue] = [{"role": "user", "content": [{"text": task.prompt}]}]
+        steps: list[StepRecord] = []
+        final_answer = ""
+
+        while len(steps) < self.max_steps:
+            response = self._converse(messages)
+            output = response.get("output")
+            assert isinstance(output, dict)
+            message = output.get("message")
+            assert isinstance(message, dict)
+            messages.append(message)
+
+            tool_use = _first_tool_use(message)
+            if tool_use is None:
+                final_answer = _text_content(message)
+                break
+
+            tool_use_id, name, tool_input = tool_use
+            if name == "submit":
+                answer = tool_input.get("answer", "")
+                final_answer = answer if isinstance(answer, str) else str(answer)
+                break
+
+            command = tool_input.get("command", "")
+            command_text = command if isinstance(command, str) else str(command)
+            result = env.execute(command_text)
+            steps.append(
+                StepRecord(
+                    action=ToolCall(name="bash", arguments={"command": command_text}),
+                    output=result.output,
+                    is_error=result.returncode != 0,
+                )
+            )
+            messages.append(
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "toolResult": {
+                                "toolUseId": tool_use_id,
+                                "content": [
+                                    {
+                                        "text": f"<returncode>{result.returncode}</returncode>\n"
+                                        f"{result.output}"
+                                    }
+                                ],
+                                "status": "error" if result.returncode != 0 else "success",
+                            }
+                        }
+                    ],
+                }
+            )
+
+        return AgentRun(steps=steps, final_answer=final_answer, model=self.model_id)
+
+
+def _first_tool_use(message: dict[str, JsonValue]) -> tuple[str, str, dict[str, JsonValue]] | None:
+    content = message.get("content")
+    if not isinstance(content, list):
+        return None
+    for block in content:
+        if isinstance(block, dict) and isinstance(block.get("toolUse"), dict):
+            tool_use = block["toolUse"]
+            assert isinstance(tool_use, dict)
+            tool_use_id = tool_use.get("toolUseId", "")
+            name = tool_use.get("name", "")
+            tool_input = tool_use.get("input", {})
+            assert isinstance(tool_use_id, str) and isinstance(name, str)
+            assert isinstance(tool_input, dict)
+            return tool_use_id, name, tool_input
+    return None
+
+
+def _text_content(message: dict[str, JsonValue]) -> str:
+    content = message.get("content")
+    if not isinstance(content, list):
+        return ""
+    parts = [
+        block["text"]
+        for block in content
+        if isinstance(block, dict) and isinstance(block.get("text"), str)
+    ]
+    return "\n".join(str(p) for p in parts).strip()
