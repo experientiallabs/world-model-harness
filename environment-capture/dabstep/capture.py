@@ -8,6 +8,11 @@ trace ids never collide across models or repeated runs. Grading uses the origina
 emitted span carries the suffixed id. Raw graded trajectories are also written to ``runs/`` as JSONL
 (gitignored) so a capture can be inspected without re-running.
 
+The agent is given a workspace-scoped system prompt so it looks for its data under ``./data/``
+instead of hunting across the host (the shared default prompt points at a ``docs/`` dir that does
+not exist here). ``LocalBashEnv`` also refuses host-targeting commands and ``partition_contained``
+drops any still-flagged trajectory at emit, so the corpus stays free of host filesystem content.
+
 Usage (from the repo root, after fetch_data.py has pulled payments.csv):
     uv run python environment-capture/dabstep/capture.py \
         --models us.anthropic.claude-opus-4-8,us.anthropic.claude-opus-4-7 --runs 1 \
@@ -38,6 +43,17 @@ from environment_capture.trajectory import Task
 _HERE = Path(__file__).parent
 _TASK_ATTEMPTS = 3  # a tiny split; retry transient Bedrock/network blips before giving up on a task
 
+# Point the agent at ./data/ so it does not go hunting across the host for "the data" (the shared
+# default prompt names a docs/ dir that does not exist for dabstep).
+_WORKSPACE_SYSTEM_PROMPT = """You are an autonomous data-analysis agent. Your task's data files are
+in the ./data/ directory of your current workspace (CSV/JSON plus a manual.md defining the business
+rules you MUST follow to interpret the columns). Start by running `ls data/`; read the manual first,
+then analyze with python3 + pandas. Work ONLY within this workspace using relative paths. Never run
+commands that target the host filesystem (no `ls ~`, `find /`, `cd ..`, or absolute paths like
+/tmp, /Users, /home): the environment BLOCKS them and a single such command invalidates the whole
+run. Use the bash tool one focused command per call and check intermediate results. When confident,
+call submit with the final answer in EXACTLY the format the question asks for (and nothing else)."""
+
 
 def _model_tag(model_id: str) -> str:
     """Short alphanumeric id for a Bedrock model, used to keep suffixed task ids unique."""
@@ -64,7 +80,7 @@ def _capture_model(
     Runs are numbered from ``run_start`` so a top-up capture (``--run-start 2``) never reuses an
     earlier run's suffix (and thus trace id).
     """
-    agent = BedrockBashAgent(model_id, max_steps=max_steps)
+    agent = BedrockBashAgent(model_id, max_steps=max_steps, system_prompt=_WORKSPACE_SYSTEM_PROMPT)
     tag = _model_tag(model_id)
     captured: list[Trajectory] = []
     for run_index in range(run_start, run_start + runs):
