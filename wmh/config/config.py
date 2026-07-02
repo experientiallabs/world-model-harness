@@ -22,6 +22,7 @@ PROVIDER_ENV_VARS: dict[ProviderKind, list[str]] = {
     ProviderKind.BEDROCK: ["AWS_REGION", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"],
     ProviderKind.AZURE_OPENAI: ["AZURE_OPENAI_API_KEY", "AZURE_OPENAI_ENDPOINT"],
     ProviderKind.OPENAI: ["OPENAI_API_KEY"],
+    ProviderKind.OPENAI_RESPONSES: ["OPENAI_API_KEY"],
 }
 
 

@@ -1,7 +1,7 @@
 """Unified LLM provider layer.
 
-One interface (`Provider`), four backends, one entry point (`get_provider`). All four can be
-verified on startup with a cheap ping. Built fresh for this repo; no external client framework.
+One interface (`Provider`), multiple backends, one entry point (`get_provider`). All can be verified
+on startup with a cheap ping. Built fresh for this repo; no external client framework.
 """
 
 from wmh.providers.base import (
