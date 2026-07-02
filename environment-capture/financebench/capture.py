@@ -15,7 +15,9 @@ Usage (from the repo root):
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import json
+import re
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -35,12 +37,26 @@ from environment_capture.benchmarks.financebench import FinanceBenchAdapter
 _HERE = Path(__file__).parent
 
 
+def _model_tag(model_id: str) -> str:
+    """`us.anthropic.claude-opus-4-8` -> `opus48` (for run-suffixed task ids)."""
+    stem = model_id.split(".")[-1].removeprefix("claude-").removesuffix("-v1")
+    return re.sub(r"[^a-z0-9]", "", stem)
+
+
+def _suffix_task_id(trajectory: Trajectory, tag: str) -> Trajectory:
+    """Give the emitted trace a unique id (real question unchanged) so trace ids never collide
+    with the converted-cache traces (unsuffixed ids) or with other capture waves."""
+    task = dataclasses.replace(trajectory.task, task_id=f"{trajectory.task.task_id}#{tag}")
+    return dataclasses.replace(trajectory, task=task)
+
+
 def _capture_shard(
     adapter: FinanceBenchAdapter,
     model_id: str,
     tasks: list,  # noqa: ANN001 - list[Task]; kept loose for ThreadPoolExecutor.map
     split: str,
     max_steps: int,
+    run_tag: str,
 ) -> list[Trajectory]:
     agent = BedrockBashAgent(model_id, max_steps=max_steps)
     result = run_capture(adapter, agent, split=split, tasks=tasks)
@@ -49,7 +65,8 @@ def _capture_shard(
     contained, flagged = partition_contained(result.trajectories)
     for trajectory in flagged:
         print(f"[drop] {trajectory.task.task_id}: host-escape content", file=sys.stderr)
-    return contained
+    tag = f"{_model_tag(model_id)}-{run_tag}"
+    return [_suffix_task_id(t, tag) for t in contained]
 
 
 def main() -> None:
@@ -63,6 +80,11 @@ def main() -> None:
         help="Comma-separated Bedrock model ids; tasks are sharded round-robin across them",
     )
     parser.add_argument("--max-steps", type=int, default=12)
+    parser.add_argument(
+        "--run-tag",
+        default="r1",
+        help="Suffix for this capture wave's task ids (bump per wave: r1, r2, ...)",
+    )
     parser.add_argument("--out", default=str(_HERE / "traces.otel.jsonl"))
     parser.add_argument("--append", action="store_true", help="Append to --out (default: refuse)")
     args = parser.parse_args()
@@ -87,7 +109,9 @@ def main() -> None:
     with ThreadPoolExecutor(max_workers=len(model_ids)) as pool:
         shard_results = list(
             pool.map(
-                lambda pair: _capture_shard(adapter, pair[0], pair[1], args.split, args.max_steps),
+                lambda pair: _capture_shard(
+                    adapter, pair[0], pair[1], args.split, args.max_steps, args.run_tag
+                ),
                 zip(model_ids, shards, strict=True),
             )
         )

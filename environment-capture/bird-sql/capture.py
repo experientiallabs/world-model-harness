@@ -100,6 +100,12 @@ def main() -> None:
         help="Comma-separated Bedrock model ids; tasks are sharded round-robin across them",
     )
     parser.add_argument("--runs", type=int, default=1, help="Passes over the split (run-suffixed)")
+    parser.add_argument(
+        "--run-start",
+        type=int,
+        default=1,
+        help="First run number for tag suffixes; bump past prior waves so ids never collide",
+    )
     parser.add_argument("--max-steps", type=int, default=12)
     parser.add_argument("--out", default=str(_HERE / "traces.otel.jsonl"))
     parser.add_argument("--append", action="store_true", help="Append to --out (default: refuse)")
@@ -125,7 +131,7 @@ def main() -> None:
     for run_index in range(args.runs):
         shards = [tasks[i :: len(model_ids)] for i in range(len(model_ids))]
         jobs = [
-            (model_id, shard, f"{_short_model(model_id)}-r{run_index + 1}")
+            (model_id, shard, f"{_short_model(model_id)}-r{args.run_start + run_index}")
             for model_id, shard in zip(model_ids, shards, strict=True)
         ]
         with ThreadPoolExecutor(max_workers=len(model_ids)) as pool:
