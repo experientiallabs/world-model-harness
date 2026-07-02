@@ -1,19 +1,26 @@
 """Turn a wake/sleep LoRA checkpoint into a vLLM-servable full Qwen3.5-9B checkpoint.
 
-Standalone vLLM can neither dynamic-LoRA Qwen3.5's hybrid-attention stack (IndexError)
-nor serve the text-only merged model (registry lacks Qwen3_5ForCausalLM), so checkpoint
-eval goes: adapter -> merge into the TEXT model (transformers CausalLM view) -> splice
-the text weights over a copy of the full base snapshot (see splice_sft_into_base.py).
+Applies the LoRA deltas DIRECTLY onto the base snapshot tensors (W += alpha/r * B @ A),
+because every indirect route fails on Qwen3.5:
+  - standalone vLLM --lora-modules IndexErrors on the hybrid-attention stack;
+  - peft-merging into the transformers TEXT model silently matches ZERO adapter keys —
+    wake/sleep adapters are keyed `base_model.model.model.language_model.layers...`
+    (the full multimodal wrapper), the text model has no `language_model.` segment,
+    and peft only WARNS about the missing keys (the "merged" model equals base).
+
+Adapter key -> base key: strip `base_model.model.` and `.lora_{A,B}.weight`, append
+`.weight`; e.g. `base_model.model.model.language_model.layers.0.mlp.down_proj.lora_A.weight`
+-> `model.language_model.layers.0.mlp.down_proj.weight` (1:1 with the snapshot index).
 
 Usage:
-    python merge_adapter_and_splice.py <adapter_dir> <out_dir> [--base Qwen/Qwen3.5-9B]
-
-Runs in the claas-verl venv (torch/peft/transformers). GPU not required (CPU merge).
+    python merge_adapter_and_splice.py <adapter_dir> <out_dir> [--base-snapshot DIR]
 """
 
 from __future__ import annotations
 
 import argparse
+import json
+import shutil
 from pathlib import Path
 
 
@@ -26,42 +33,35 @@ def main() -> None:
                         help="local HF snapshot dir of the base (auto-resolved if omitted)")
     args = parser.parse_args()
 
-    import json
-
     import torch
-    from peft import PeftModel
-    from transformers import AutoModelForCausalLM
+    from safetensors import safe_open
+    from safetensors.torch import save_file
 
-    # verl saves target_modules as its regex string (^.*\.(q_proj|...)$); this peft
-    # version iterates the string into characters. Rewrite to the explicit module list.
-    config_path = Path(args.adapter_dir) / "adapter_config.json"
-    adapter_config = json.loads(config_path.read_text())
-    modules = adapter_config.get("target_modules")
-    mangled = isinstance(modules, str) or (
-        isinstance(modules, list) and modules and all(len(str(m)) <= 1 for m in modules)
-    )
-    if mangled:
-        # Derive the true module set from the adapter weights themselves.
-        from safetensors import safe_open
+    adapter_dir = Path(args.adapter_dir)
+    config = json.loads((adapter_dir / "adapter_config.json").read_text())
+    scaling = config["lora_alpha"] / config["r"]
+    print(f"lora r={config['r']} alpha={config['lora_alpha']} scaling={scaling}")
 
-        names: set[str] = set()
-        adapter_weights = str(Path(args.adapter_dir) / "adapter_model.safetensors")
-        with safe_open(adapter_weights, framework="pt") as f:
-            for key in f.keys():
-                if ".lora_A" in key or ".lora_B" in key:
-                    prefix = key.split(".lora_")[0]
-                    names.add(prefix.rsplit(".", 1)[-1])
-        if not names:
-            raise SystemExit("no lora_A/lora_B keys found in adapter weights")
-        adapter_config["target_modules"] = sorted(names)
-        config_path.write_text(json.dumps(adapter_config, indent=2))
-        print(f"rewrote mangled target_modules -> {adapter_config['target_modules']}")
+    lora_a: dict[str, torch.Tensor] = {}
+    lora_b: dict[str, torch.Tensor] = {}
+    with safe_open(str(adapter_dir / "adapter_model.safetensors"), framework="pt") as f:
+        for key in f.keys():
+            if key.endswith(".lora_A.weight"):
+                lora_a[key[: -len(".lora_A.weight")]] = f.get_tensor(key)
+            elif key.endswith(".lora_B.weight"):
+                lora_b[key[: -len(".lora_B.weight")]] = f.get_tensor(key)
+    assert set(lora_a) == set(lora_b), "unpaired lora_A/lora_B keys"
+    print(f"adapter modules: {len(lora_a)}")
 
-    print(f"loading base text model {args.base} (cpu, bf16)...")
-    model = AutoModelForCausalLM.from_pretrained(args.base, dtype=torch.bfloat16)
-    print(f"applying adapter {args.adapter_dir}...")
-    model = PeftModel.from_pretrained(model, args.adapter_dir)
-    merged = model.merge_and_unload()
+    def to_base_key(module: str) -> str:
+        prefix = "base_model.model."
+        assert module.startswith(prefix), module
+        return module[len(prefix):] + ".weight"
+
+    deltas = {
+        to_base_key(module): (lora_b[module].float() @ lora_a[module].float()) * scaling
+        for module in lora_a
+    }
 
     snapshot_dir = args.base_snapshot
     if snapshot_dir is None:
@@ -69,48 +69,40 @@ def main() -> None:
 
         snapshot_dir = snapshot_download(args.base)
     snapshot = Path(snapshot_dir)
-
-    # Splice IN-PROCESS from the merged model's tensors (no /tmp text-merged copy:
-    # the two-copy pipeline needs ~36G transient and filled the disk).
-    import shutil
-
-    from safetensors import safe_open
-    from safetensors.torch import save_file
-
-    state = {k: v for k, v in merged.state_dict().items()}
-    del merged, model
-    print(f"merged state tensors: {len(state)}")
-
     index = json.loads((snapshot / "model.safetensors.index.json").read_text())
     weight_map: dict[str, str] = index["weight_map"]
-    hits = sum(1 for k in state if k in weight_map)
-    print(f"merged keys matching base: {hits}/{len(state)}")
+    hits = sum(1 for k in deltas if k in weight_map)
+    print(f"delta keys matching base: {hits}/{len(deltas)}")
+    if hits != len(deltas):
+        missing = [k for k in deltas if k not in weight_map][:5]
+        raise SystemExit(f"unmatched delta keys, sample: {missing}")
 
     out = Path(args.out_dir)
     out.mkdir(parents=True, exist_ok=True)
     shards: dict[str, list[str]] = {}
     for key, shard in weight_map.items():
         shards.setdefault(shard, []).append(key)
-    substituted = 0
+    applied = 0
+    max_delta = 0.0
     for shard, keys in sorted(shards.items()):
-        tensors = {}
+        tensors: dict[str, torch.Tensor] = {}
         with safe_open(str(snapshot / shard), framework="pt") as f:
             for key in keys:
-                if key in state:
-                    tensors[key] = state[key].to(f.get_tensor(key).dtype)
-                    substituted += 1
-                else:
-                    tensors[key] = f.get_tensor(key)
+                tensor = f.get_tensor(key)
+                if key in deltas:
+                    delta = deltas[key]
+                    max_delta = max(max_delta, float(delta.abs().max()))
+                    tensor = (tensor.float() + delta).to(tensor.dtype)
+                    applied += 1
+                tensors[key] = tensor
         save_file(tensors, str(out / shard), metadata={"format": "pt"})
         print(f"wrote {shard}")
     for extra in snapshot.iterdir():
         if extra.suffix != ".safetensors" and extra.is_file():
             shutil.copy(extra, out / extra.name)
-    print(f"substituted {substituted} tensors")
-    if substituted != len(state):
-        missing = [k for k in state if k not in weight_map][:5]
-        print("WARNING: unplaced merged tensors, sample:", missing)
-        raise SystemExit(1)
+    print(f"applied {applied} deltas; max |delta| = {max_delta:.6f}")
+    if applied != len(deltas) or max_delta == 0.0:
+        raise SystemExit("merge ineffective — refusing to produce a base-identical checkpoint")
     print("done")
 
 
