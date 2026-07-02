@@ -12,8 +12,10 @@ fallback) — see `environment_capture/benchmarks/financebench.py`.
 - `corpus/<doc_id>.txt` — 164 evidence excerpts (verbatim upstream `evidence_text`).
 - `gold/<task_id>.json` — gold answers (`answer` text + parsed `numeric`), never staged into the
   agent workspace.
-- `traces.otel.jsonl` — the trace corpus: **89 traces / 139 real transitions** (train split
-  only; the hidden test split is never captured so the world model can't absorb its dynamics).
+- `traces.otel.jsonl` — the trace corpus: **72 traces / 108 real transitions** (train split
+  only; the hidden test split is never captured so the world model can't absorb its dynamics;
+  17 trajectories that escaped the task workspace were dropped whole by the hygiene audit — see
+  `environment_capture/hygiene.py`).
 - `convert_cache.py` — the converter that produced the corpus (see provenance).
 - `capture.py` — fresh real-run capture against this adapter (Bedrock agent), used to top up the
   corpus with richer multi-step trajectories.
@@ -25,7 +27,8 @@ fallback) — see `environment_capture/benchmarks/financebench.py`.
 
 ## Results (2026-07-02, corpus as committed)
 
-- **Open-loop fidelity** (suite `financebench/default`, seed 0, Opus 4.8 target + rubric judge):
+- **Open-loop fidelity** (suite `financebench/default`, seed 0, Opus 4.8 target + rubric judge,
+  measured on the pre-hygiene-scrub 89-trace corpus — re-run pending on the committed corpus):
   mean fidelity **0.581**, error-flag accuracy **0.800**, n=35 held-out steps. Notably below the
   shell-like corpora (tau ~0.90, terminal ~0.86, swe ~0.82): observations here are long verbatim
   document excerpts, which are much harder to reconstruct than command output.

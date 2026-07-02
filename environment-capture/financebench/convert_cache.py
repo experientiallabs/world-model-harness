@@ -15,7 +15,12 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from environment_capture import load_baseline_cache, trajectory_to_spans, write_spans_jsonl
+from environment_capture import (
+    load_baseline_cache,
+    partition_contained,
+    trajectory_to_spans,
+    write_spans_jsonl,
+)
 
 
 def main() -> None:
@@ -26,8 +31,11 @@ def main() -> None:
     args = parser.parse_args()
 
     trajectories = load_baseline_cache(Path(args.cache))
-    kept = [t for t in trajectories if t.steps]
-    skipped = len(trajectories) - len(kept)
+    contained, flagged = partition_contained(trajectories)
+    for trajectory in flagged:
+        print(f"[drop] {trajectory.task.task_id}: host-escape content (see hygiene.py)")
+    kept = [t for t in contained if t.steps]
+    skipped = len(contained) - len(kept)
 
     n_spans = 0
     out = Path(args.out)
@@ -38,7 +46,7 @@ def main() -> None:
     n_steps = sum(len(t.steps) for t in kept)
     print(
         f"wrote {len(kept)} traces / {n_steps} steps / {n_spans} spans -> {out} "
-        f"(skipped {skipped} zero-step trajectories)"
+        f"(skipped {skipped} zero-step, dropped {len(flagged)} host-escape trajectories)"
     )
 
 

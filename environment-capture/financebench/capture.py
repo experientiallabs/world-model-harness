@@ -22,7 +22,13 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict
 from pathlib import Path
 
-from environment_capture import Trajectory, run_capture, trajectory_to_spans, write_spans_jsonl
+from environment_capture import (
+    Trajectory,
+    partition_contained,
+    run_capture,
+    trajectory_to_spans,
+    write_spans_jsonl,
+)
 from environment_capture.agent import BedrockBashAgent
 from environment_capture.benchmarks.financebench import FinanceBenchAdapter
 
@@ -40,7 +46,10 @@ def _capture_shard(
     result = run_capture(adapter, agent, split=split, tasks=tasks)
     for failure in result.failures:
         print(f"[skip] {failure.task_id} on {model_id}: {failure.error}", file=sys.stderr)
-    return result.trajectories
+    contained, flagged = partition_contained(result.trajectories)
+    for trajectory in flagged:
+        print(f"[drop] {trajectory.task.task_id}: host-escape content", file=sys.stderr)
+    return contained
 
 
 def main() -> None:

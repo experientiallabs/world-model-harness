@@ -24,7 +24,13 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, replace
 from pathlib import Path
 
-from environment_capture import Trajectory, run_capture, trajectory_to_spans, write_spans_jsonl
+from environment_capture import (
+    Trajectory,
+    partition_contained,
+    run_capture,
+    trajectory_to_spans,
+    write_spans_jsonl,
+)
 from environment_capture.agent import BedrockBashAgent
 from environment_capture.benchmarks.dabstep import DabstepAdapter
 from environment_capture.trajectory import Task
@@ -65,7 +71,10 @@ def _capture_model(
         result = run_capture(adapter, agent, split="train", tasks=tasks, attempts=_TASK_ATTEMPTS)
         for failure in result.failures:
             print(f"  [{tag} r{run_index}] {failure.task_id} skipped: {failure.error}")
-        captured.extend(_suffix_task_id(t, f"{tag}-r{run_index}") for t in result.trajectories)
+        contained, flagged = partition_contained(result.trajectories)
+        for trajectory in flagged:
+            print(f"  [{tag} r{run_index}] {trajectory.task.task_id} dropped: host escape")
+        captured.extend(_suffix_task_id(t, f"{tag}-r{run_index}") for t in contained)
     return captured
 
 

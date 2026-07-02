@@ -31,6 +31,7 @@ from pathlib import Path
 from environment_capture import (
     Task,
     Trajectory,
+    partition_contained,
     run_capture,
     trajectory_to_spans,
     write_spans_jsonl,
@@ -70,7 +71,10 @@ def _capture_shard(
     result = run_capture(adapter, agent, split=split, tasks=tasks)
     for failure in result.failures:
         print(f"[skip] {failure.task_id} on {model_id}: {failure.error}", file=sys.stderr)
-    return result.trajectories
+    contained, flagged = partition_contained(result.trajectories)
+    for trajectory in flagged:
+        print(f"[drop] {trajectory.task.task_id}: host-escape content", file=sys.stderr)
+    return contained
 
 
 def _suffix_task_id(trajectory: Trajectory, run_tag: str) -> Trajectory:
