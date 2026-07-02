@@ -3,6 +3,11 @@
 Routes are namespaced by world model name (`/world_models/{name}/...`) so one backend can serve
 several named models at once. Each route is a thin transport over an in-process `WorldModel`; the
 CLI and the API share the same code path.
+
+The backend is also the *reward* server for RL training: `POST .../sessions/{id}/score` judges the
+session's rollout (task + history) with `EpisodeRewardJudge`, returning the scalar episode reward
+(GRPO/PPO/REINFORCE++), per-step rewards, and a critique string (SDPO's teacher feedback) — so a
+training scaffold gets environment and reward behind one API.
 """
 
 from __future__ import annotations
@@ -12,6 +17,7 @@ from pydantic import BaseModel
 
 from wmh.core.types import Action, EnvState, Observation, Session
 from wmh.engine.world_model import WorldModel
+from wmh.optimize.reward import EpisodeScore
 from wmh.tracking import RunRecord
 
 
@@ -118,5 +124,22 @@ def create_app(
         _session_or_404(wm, session_id)
         observation = wm.step(session_id, req.action)
         return StepResponse(observation=observation)
+
+    @app.post(
+        "/world_models/{world_model_name}/sessions/{session_id}/score",
+        response_model=EpisodeScore,
+    )
+    def score_session(world_model_name: str, session_id: str) -> EpisodeScore:
+        """Judge the session's rollout so far: episode reward + per-step rewards + critique."""
+        wm = _model_or_404(world_model_name)
+        _session_or_404(wm, session_id)
+        return wm.score_session(session_id)
+
+    @app.delete("/world_models/{world_model_name}/sessions/{session_id}", response_model=RunRecord)
+    def end_session(world_model_name: str, session_id: str) -> RunRecord:
+        """End the session (free its memory + metering) and return its final usage record."""
+        wm = _model_or_404(world_model_name)
+        _session_or_404(wm, session_id)
+        return wm.end_session(session_id)
 
     return app

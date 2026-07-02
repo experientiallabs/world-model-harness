@@ -12,7 +12,14 @@ from wmh.config import ArtifactPaths, HarnessConfig, save_config
 from wmh.config.settings import set_telemetry_enabled
 from wmh.core.types import Action, ActionKind, EnvState, Observation, Step, Trace
 from wmh.engine.world_model import WorldModel
-from wmh.providers.base import Completion, Message, ProviderConfig, ProviderKind, TokenUsage
+from wmh.providers.base import (
+    Completion,
+    Message,
+    ProviderConfig,
+    ProviderKind,
+    TokenUsage,
+    VerifyResult,
+)
 from wmh.retrieval import EmbeddingRetriever, HashingEmbedder
 
 
@@ -232,3 +239,52 @@ def test_load_named_model_uses_project_root_for_telemetry_opt_out(
 
     assert wm._telemetry_root == project_root
     assert calls == []
+
+
+def test_score_session_meters_judge_separately_from_serve() -> None:
+    """Reward-judge tokens land under Phase.JUDGE on the session tracker, not SERVE (D12 split)."""
+    from wmh.optimize.reward import EpisodeScore
+    from wmh.tracking import Phase
+
+    class JudgeReply:
+        def __init__(self) -> None:
+            self.config = ProviderConfig(kind=ProviderKind.BEDROCK, model="judge-m")
+
+        def complete(
+            self,
+            system: str,
+            messages: list[Message],
+            *,
+            temperature: float = 0.7,
+            max_tokens: int = 8192,
+        ) -> Completion:
+            return Completion(
+                text='{"success": false, "reward": 0.2, "step_rewards": [0.2], "critique": "c"}',
+                usage=TokenUsage(input_tokens=10, output_tokens=5),
+            )
+
+        def embed(self, texts: list[str]) -> list[list[float]]:
+            return [[0.0] for _ in texts]
+
+        def verify(self) -> VerifyResult:
+            raise NotImplementedError
+
+    env_provider = FakeProvider('{"output": "found u1", "is_error": false}')
+    retriever = _retriever_with(
+        [
+            Step(
+                action=Action(kind=ActionKind.TOOL_CALL, name="get_user", arguments={}),
+                observation=Observation(content="found u1"),
+            )
+        ]
+    )
+    wm = WorldModel(env_provider, retriever, top_k=1, reward_provider=JudgeReply())
+    session = wm.new_session(task="do the thing")
+    wm.step(session.id, Action(kind=ActionKind.TOOL_CALL, name="get_user", arguments={}))
+    score = wm.score_session(session.id)
+    assert isinstance(score, EpisodeScore)
+    assert score.reward == 0.2
+    assert session.history[-1].observation.reward == 0.2
+    usage = wm.session_usage(session.id)
+    assert usage.by_phase[Phase.JUDGE].input_tokens == 10  # judge cost split out (D12)
+    assert Phase.SERVE in usage.by_phase  # the step call stays attributed to SERVE
