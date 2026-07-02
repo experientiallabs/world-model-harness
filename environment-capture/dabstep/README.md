@@ -41,8 +41,12 @@ uv run python environment-capture/dabstep/capture.py \
 
 ## Results (2026-07-02, corpus as committed)
 
-- **Open-loop fidelity** (suite `dabstep/default`, seed 0, Opus 4.8 target + rubric judge):
-  mean fidelity **0.886**, error-flag accuracy **0.976**, n=85 held-out steps.
+- **Open-loop fidelity** (suite `dabstep/default`, seed 0, Opus 4.8 target + rubric judge,
+  run via `uv run wmh eval run dabstep/default --examples-root environment-capture`): mean
+  fidelity **0.886**, error-flag accuracy **0.976**, n=85 held-out steps (an independent rerun
+  scored 0.892 — the spread is judge noise). Structured pandas/JSON tool output reconstructs on
+  par with the other structured-output corpora (bird-sql 0.864) and far above document-excerpt
+  observations (financebench 0.586).
 
 ## Provenance
 
@@ -60,6 +64,9 @@ uv run python environment-capture/dabstep/capture.py \
   every train task covered). Converted traces keep the original run's reward; fresh captures are
   graded by this adapter's grader and carry their own model id. Multi-run trace ids never collide:
   a fresh run's task id is suffixed with its model + run tag (e.g. `dab-train-3#opus48-r1`).
+  `us.anthropic.claude-opus-4-6-v1` was dropped from the capture set: it ignored the workspace
+  scoping and issued host-targeting commands on every task, so every one of its trajectories was
+  flagged and dropped by the hygiene audit.
 - **Workspace containment**: `LocalBashEnv` refuses host-targeting commands, and the shared hygiene
   audit (`environment_capture.hygiene`) drops any trajectory that reached host filesystem content —
   data-analysis agents otherwise wander the host (`ls ~`, `find /`) looking for their data. To keep
