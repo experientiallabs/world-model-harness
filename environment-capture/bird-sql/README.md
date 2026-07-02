@@ -28,6 +28,13 @@ Four databases from BIRD mini-dev, chosen for schema variety and manageable size
 `superhero`, `toxicology`, `student_club`, `california_schools`. Up to 18 questions per database,
 seeded (seed 7), split ~70/30 into train/test.
 
+## Results (2026-07-02, corpus as committed)
+
+- **Open-loop fidelity** (suite `bird-sql/default`, seed 0, Opus 4.8 target + rubric judge, run
+  via `uv run wmh eval run bird-sql/default --examples-root environment-capture`): mean fidelity
+  **0.868**, error-flag accuracy **1.000**, n=21 held-out steps. Structured sqlite output
+  reconstructs far better than document-excerpt observations (financebench: 0.581).
+
 ## Provenance
 
 - **Dataset**: BIRD **mini-dev** (v2, SQLite dialect) — 500 curated text-to-SQL instances over 11
