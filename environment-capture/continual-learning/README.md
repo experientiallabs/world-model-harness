@@ -31,6 +31,11 @@ read-only nature. It is fetched on demand into `datafiles/` (gitignored) by `fet
 never touch it: the adapter also accepts a hermetic inline `schema_sql` task that builds a tiny db
 in-process, which is all the offline suite uses.
 
+## Results (2026-07-02, corpus as committed)
+
+- **Open-loop fidelity** (suite `continual-learning/default`, seed 0, Opus 4.8 target + rubric
+  judge): mean fidelity **0.763**, error-flag accuracy **0.955**, n=67 held-out steps.
+
 ## Provenance
 
 - **Dataset**: [Continual Learning Bench](https://continual-learning-bench.com/) (UC Berkeley Sky
