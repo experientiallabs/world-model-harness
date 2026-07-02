@@ -16,6 +16,7 @@ dependencies = [
     "gepa>=0.1.1",
     "tomli-w>=1.0",  # writing .wmh/config.toml (stdlib tomllib reads); every `wmh build` needs it
     "posthog>=7.0",
+    "python-multipart>=0.0.9",  # FastAPI UploadFile for the build-your-own traces upload
 ]
 
 [project.optional-dependencies]
