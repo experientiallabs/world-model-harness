@@ -44,6 +44,7 @@ _CAPACITY_MARKERS = (
     "connect timeout",
     "connection reset",
     "connection aborted",
+    "connection was closed",  # botocore ConnectionClosedError
     "timed out",
     "service unavailable",
     "model not ready",

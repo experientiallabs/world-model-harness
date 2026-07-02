@@ -23,6 +23,7 @@ from pydantic import BaseModel, Field
 
 from wmh.core.render import render_action
 from wmh.core.types import Step, Trace
+from wmh.engine.grounding import Grounder, prefetched_knowledge
 from wmh.optimize.gepa import predict_observation
 from wmh.optimize.judge import Judge
 from wmh.providers.base import Provider
@@ -50,6 +51,9 @@ class StepResult(BaseModel):
     critique: str = ""
     is_error_actual: bool = False
     is_error_predicted: bool = False
+    # The model's deliberation in reasoning mode (empty otherwise). Never part of the scored
+    # observation — carried so humans can read WHY the env decided success vs. error.
+    reasoning: str = ""
 
 
 class ReplayReport(BaseModel):
@@ -80,6 +84,9 @@ def replay(
     sample_turns: str = "all",
     seed: int = 0,
     concurrency: int = 1,
+    knowledge: str | None = None,
+    reasoning: bool = False,
+    grounder: Grounder | None = None,
 ) -> ReplayReport:
     """Replay held-out steps, scoring predicted vs. actual observations.
 
@@ -87,6 +94,12 @@ def replay(
       (Qwen-AgentWorld's 5-turn protocol) using `seed` for reproducible turn selection.
     - `retriever` + `train` enable leak-free RAG (demos from the train corpus, never the own trace);
       omit either for zero-shot.
+    - `knowledge`/`reasoning`: the serving engine's agentic mode (rendered knowledge-base text +
+      the deliberate-then-answer contract). Callers own leak-freedom: `knowledge` must be derived
+      from TRAIN traces only (see `wmh.engine.knowledge.seed_knowledge`).
+    - `grounder`: prefetch a step's read-only `curl` GET URL live and put the real body in
+      context (mirrors the serving engine's prefetch). NON-HERMETIC — the web has moved since
+      capture — so it stays off everywhere except explicitly-labeled experiments.
     - `concurrency`: steps are independent (each a predict + judge round trip), so `concurrency > 1`
       scores them on a thread pool — the result is identical and order-preserving (only the wall
       clock changes). Default 1 keeps existing callers unchanged; raise it to cut latency on large
@@ -108,7 +121,18 @@ def replay(
 
     def _score(item: tuple[str, Step, list[Step]]) -> StepResult:
         trace_id, step, history = item
-        return _score_step(prompt, trace_id, step, provider, judge, demos, history)
+        return _score_step(
+            prompt,
+            trace_id,
+            step,
+            provider,
+            judge,
+            demos,
+            history,
+            knowledge=knowledge,
+            reasoning=reasoning,
+            grounder=grounder,
+        )
 
     if concurrency > 1 and len(work) > 1:
         with ThreadPoolExecutor(max_workers=concurrency) as pool:
@@ -136,6 +160,10 @@ def _score_step(
     judge: Judge,
     demos: DemoRetriever,
     history: list[Step],
+    *,
+    knowledge: str | None = None,
+    reasoning: bool = False,
+    grounder: Grounder | None = None,
 ) -> StepResult:
     """Predict the observation for one step and score it against the recorded observation."""
     predicted = predict_observation(
@@ -146,8 +174,11 @@ def _score_step(
         step.action,
         demos=demos.demos_for(trace_id, step),
         history=history,
+        knowledge=prefetched_knowledge(knowledge, step.action, grounder),
+        reasoning=reasoning,
     )
     verdict = judge.score(predicted, step.observation, step)
+    predicted_reasoning = predicted.metadata.get("reasoning")
     return StepResult(
         trace_id=trace_id,
         task=step.task,
@@ -159,6 +190,7 @@ def _score_step(
         critique=verdict.critique,
         is_error_actual=step.observation.is_error,
         is_error_predicted=predicted.is_error,
+        reasoning=predicted_reasoning if isinstance(predicted_reasoning, str) else "",
     )
 
 

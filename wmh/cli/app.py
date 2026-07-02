@@ -53,6 +53,8 @@ from wmh.engine.eval_suites import (
     resolve_eval_suite,
     result_path,
 )
+from wmh.engine.grounding import GROUNDER_KINDS
+from wmh.engine.knowledge import KnowledgeBase
 from wmh.engine.loader import load_world_model
 from wmh.engine.prompts import BASE_ENV_PROMPT
 from wmh.ingest import VendorPull
@@ -102,6 +104,8 @@ class _EvalOptions:
     sample_turns: str
     seed: int
     top_k: int
+    knowledge: bool
+    reasoning: bool
 
 
 @config_app.command("telemetry")
@@ -221,6 +225,20 @@ def build(
     ),
     embed_model: str = typer.Option(None, help="Embeddings model id / Azure embedding deployment."),
     embed_dim: int = typer.Option(512, help="phi dimensionality (index + query must agree)."),
+    knowledge: bool = typer.Option(
+        False,
+        "--knowledge/--no-knowledge",
+        help="Seed a knowledge base (rules/entities/schemas markdown) from the train traces.",
+    ),
+    reasoning: bool = typer.Option(
+        False,
+        "--reasoning/--no-reasoning",
+        help="Serve with the deliberate-then-answer output contract.",
+    ),
+    grounder: str = typer.Option(
+        "none",
+        help="Web grounding for unknown entities: none | brave (needs BRAVE_SEARCH_API_KEY).",
+    ),
     interactive: bool = typer.Option(
         None,
         "--interactive/--no-interactive",
@@ -293,6 +311,15 @@ def build(
         gepa_budget=params.gepa_budget,
         train_split=params.train_split,
     )
+    if grounder not in GROUNDER_KINDS:
+        raise typer.BadParameter(
+            f"unknown grounder {grounder!r}; choose one of: {', '.join(GROUNDER_KINDS)}"
+        )
+    # Agentic-mode flags (CLI-only, not in the wizard): persisted to config.toml so serve/load
+    # pick them up; knowledge additionally seeds knowledge/ during this build.
+    config.knowledge = knowledge
+    config.reasoning = reasoning
+    config.grounder = grounder
     # Fail fast: ping the serve provider (and the embed path, if provider-backed) before spending
     # any rollouts. A missing SDK or bad creds otherwise surfaces only deep inside GEPA, which
     # silently swallows it and "succeeds" with a useless held-out-0.0 model.
@@ -443,6 +470,16 @@ def eval_(  # noqa: A001 - `eval` is the user-facing command name; the builtin i
     top_k: int | None = typer.Option(
         None, help="Retrieved demos per step (default: 5, or suite config)."
     ),
+    knowledge: bool | None = typer.Option(
+        None,
+        "--knowledge/--no-knowledge",
+        help="Seed a knowledge base from the train split and render it into every prediction.",
+    ),
+    reasoning: bool | None = typer.Option(
+        None,
+        "--reasoning/--no-reasoning",
+        help="Deliberate-then-answer output contract (explicit reasoning pass).",
+    ),
     out: str | None = typer.Option(None, help="Optional path to write the full JSON report."),
     examples_root: str | None = typer.Option(
         None, help="Directory containing example eval suites. Default: repo-local examples/."
@@ -491,6 +528,8 @@ def eval_(  # noqa: A001 - `eval` is the user-facing command name; the builtin i
             sample_turns=sample_turns,
             seed=seed,
             top_k=top_k,
+            knowledge=knowledge,
+            reasoning=reasoning,
             out=out,
         )
         return
@@ -509,6 +548,8 @@ def eval_(  # noqa: A001 - `eval` is the user-facing command name; the builtin i
         sample_turns=sample_turns,
         seed=seed,
         top_k=top_k,
+        knowledge=knowledge,
+        reasoning=reasoning,
     )
     report = _run_eval_files(
         [Path(f) for f in args],
@@ -609,6 +650,8 @@ def _eval_run_suite(
     sample_turns: str | None,
     seed: int | None,
     top_k: int | None,
+    knowledge: bool | None,
+    reasoning: bool | None,
     out: str | None,
 ) -> None:
     suite = resolve_eval_suite(selector, examples_root)
@@ -622,6 +665,8 @@ def _eval_run_suite(
         sample_turns=sample_turns or suite.config.sample_turns,
         seed=seed if seed is not None else suite.config.seed,
         top_k=top_k if top_k is not None else suite.config.top_k,
+        knowledge=knowledge if knowledge is not None else suite.config.knowledge,
+        reasoning=reasoning if reasoning is not None else suite.config.reasoning,
     )
     files = suite.resolve_files()
     report = _run_eval_files(files, options, provider=provider, model=model, region=region)
@@ -650,6 +695,8 @@ def _eval_run_suite(
             "rag": options.use_rag,
             "judge": options.judge,
             "embed_dim": options.embed_dim,
+            "knowledge": options.knowledge,
+            "reasoning": options.reasoning,
         },
         "report": _eval_report_payload(report),
     }
@@ -678,6 +725,8 @@ def _eval_options(
     sample_turns: str | None,
     seed: int | None,
     top_k: int | None,
+    knowledge: bool | None = None,
+    reasoning: bool | None = None,
 ) -> _EvalOptions:
     split = 0.7 if train_split is None else train_split
     dim = 512 if embed_dim is None else embed_dim
@@ -705,6 +754,8 @@ def _eval_options(
         sample_turns=turns,
         seed=rng_seed,
         top_k=demos,
+        knowledge=bool(knowledge),
+        reasoning=bool(reasoning),
     )
 
 
@@ -742,6 +793,8 @@ def _run_eval_files(
         top_k=options.top_k,
         sample_turns=options.sample_turns,
         seed=options.seed,
+        knowledge=options.knowledge,
+        reasoning=options.reasoning,
     )
 
 
@@ -769,6 +822,32 @@ def _eval_report_payload(report: EvalReport) -> dict[str, object]:
         "total_steps": report.total_steps,
         "per_file": {name: rep.model_dump(mode="json") for name, rep in report.per_file.items()},
     }
+
+
+@app.command("knowledge")
+def knowledge_(
+    name: str = typer.Option(None, "--name", help="World model (default: the only one)."),
+    root: str = typer.Option(ARTIFACT_DIR, help="Project dir."),
+) -> None:
+    """Show a model's knowledge base: the env's canonical facts, a folder of editable markdown.
+
+    The printed directory IS the editing interface — open it in any editor. `rules.md`/
+    `entities.md`/`schemas.md` are seeded at build (with knowledge enabled); `learned.md` collects
+    the env's own cross-session notes; `grounded.md` caches web-search groundings.
+    """
+    store = WorldModelStore(root)
+    resolved = _resolve_name(store, name)
+    kb = KnowledgeBase(ArtifactPaths(store.resolve(resolved)).knowledge)
+    _console.print(f"[bold]{kb.directory}[/bold]")
+    if kb.is_empty:
+        _console.print(
+            "(empty — enable knowledge at build, drop *.md files in this folder, "
+            "or PUT files via the serving API)"
+        )
+        return
+    for file_name, content in kb.files().items():
+        _console.print(f"\n[bold]## {file_name}[/bold]")
+        _console.print(content.strip())
 
 
 @app.command("demo")

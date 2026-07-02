@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 from wmh.core.render import (
+    OUTPUT_CONTRACT,
     build_env_prompt,
     encode_state_action,
+    output_contract,
     render_action,
     render_demo,
     render_json,
@@ -70,3 +72,56 @@ def test_build_env_prompt_handles_empty_optional_blocks() -> None:
     assert "(no similar past examples)" in user
     assert "(start of session)" in user
     assert "scratchpad: (empty)" in user
+
+
+def test_build_env_prompt_defaults_are_byte_identical_to_v1() -> None:
+    """Pin the default rendering: prebuilt models must keep serving unchanged.
+
+    `knowledge`/`reasoning` are opt-in; with both off, the prompt must be byte-for-byte what it
+    was before they existed. If this test breaks, existing `examples/*/models/` artifacts (and
+    GEPA-optimized prompts evolved against this shape) silently degrade — change with care and
+    regenerate/version the shipped models.
+    """
+    system, user = build_env_prompt(
+        "BASE", "t", EnvState(), Action(kind=ActionKind.MESSAGE, content="hi")
+    )
+    assert system == "BASE"
+    assert user == (
+        "TASK:\nt\n\n"
+        "INTERACTION HISTORY:\n(start of session)\n\n"
+        "SIMILAR PAST EXAMPLES:\n(no similar past examples)\n\n"
+        "CURRENT ENV STATE:\n  structured: {}\n  scratchpad: (empty)\n\n"
+        "AGENT ACTION:\nmessage: hi\n\n" + OUTPUT_CONTRACT
+    )
+
+
+def test_build_env_prompt_knowledge_section_sits_between_task_and_history() -> None:
+    _, user = build_env_prompt(
+        "BASE",
+        "t",
+        EnvState(),
+        Action(kind=ActionKind.MESSAGE, content="hi"),
+        knowledge="- gate: modifying a booking requires auth",
+    )
+    knowledge_at = user.find("KNOWLEDGE BASE")
+    assert user.find("TASK:") < knowledge_at < user.find("INTERACTION HISTORY:")
+    assert "- gate: modifying a booking requires auth" in user
+
+
+def test_build_env_prompt_reasoning_contract_deliberates_first() -> None:
+    _, plain = build_env_prompt(
+        "BASE", "t", EnvState(), Action(kind=ActionKind.MESSAGE, content="hi")
+    )
+    _, reasoned = build_env_prompt(
+        "BASE", "t", EnvState(), Action(kind=ActionKind.MESSAGE, content="hi"), reasoning=True
+    )
+    assert '"reasoning"' not in plain and '"kb_note"' not in plain
+    assert reasoned.find('"reasoning"') < reasoned.find('"output"')  # deliberation decoded first
+    assert '"kb_note"' in reasoned
+    assert '"ground_query"' not in reasoned  # only offered when a grounder is active
+
+
+def test_output_contract_grounding_adds_ground_query() -> None:
+    assert '"ground_query"' not in output_contract(reasoning=True)
+    assert '"ground_query"' in output_contract(reasoning=True, grounding=True)
+    assert output_contract() == OUTPUT_CONTRACT  # base contract is untouched

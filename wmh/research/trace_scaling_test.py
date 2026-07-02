@@ -44,7 +44,11 @@ def test_conditions_are_mode_cross_count() -> None:
 def test_counts_capped_at_train_pool_and_deduped() -> None:
     # 20-trace corpus -> small pool; 1000/2000 collapse to the pool size and dedupe to one count.
     ab = TraceScalingAblation(
-        _corpus(20), "BASE", make_backends=_fake_backends, counts=[10, 1000, 2000], modes=[BASE],
+        _corpus(20),
+        "BASE",
+        make_backends=_fake_backends,
+        counts=[10, 1000, 2000],
+        modes=[BASE],
         budget=4,
     )
     pool = len(ab.split.train_pool)
@@ -70,7 +74,11 @@ def test_base_mode_scores_base_prompt_without_gepa(monkeypatch) -> None:  # noqa
     monkeypatch.setattr(ts, "optimize_prompt", fake_optimize)
 
     ab = TraceScalingAblation(
-        _corpus(200), "BASE_PROMPT", make_backends=_fake_backends, counts=[5], modes=[BASE],
+        _corpus(200),
+        "BASE_PROMPT",
+        make_backends=_fake_backends,
+        counts=[5],
+        modes=[BASE],
         budget=4,
     )
     score = ab.run(ab.conditions()[0], seed=0)
@@ -117,6 +125,76 @@ def test_gepa_mode_optimizes_then_scores_winner(monkeypatch) -> None:  # noqa: A
     assert set(valid_ids) == {t.trace_id for t in ab.split.valid}
 
 
+def test_reason_and_reason_kb_modes_thread_agentic_flags(monkeypatch) -> None:  # noqa: ANN001
+    seen: list[tuple[str | None, bool]] = []
+
+    def fake_score(prompt, held_out, *, knowledge=None, reasoning=False, **_):  # noqa: ANN001, ANN003, ANN202
+        seen.append((knowledge, reasoning))
+        return 0.6
+
+    def fake_seed(traces, provider, **_):  # noqa: ANN001, ANN003, ANN202
+        return "- gate: seeded from train"
+
+    monkeypatch.setattr(ts, "score_prompt", fake_score)
+    monkeypatch.setattr(ts, "seeded_knowledge_text", fake_seed)
+    ab = TraceScalingAblation(
+        _corpus(200),
+        "BASE",
+        make_backends=_fake_backends,
+        counts=[5],
+        modes=[ts.REASON, ts.REASON_KB],
+        budget=4,
+    )
+    labels = [c.label for c in ab.conditions()]
+    assert labels == ["reason@5", "reason+kb@5"]
+    assert ab.run(ab.conditions()[0], seed=0) == 0.6
+    assert ab.run(ab.conditions()[1], seed=0) == 0.6
+    assert seen[0] == (None, True)  # reason: deliberation only, no KB
+    assert seen[1] == ("- gate: seeded from train", True)  # reason+kb: seeded KB in context
+
+
+def test_reason_fetch_mode_passes_a_live_grounder(monkeypatch) -> None:  # noqa: ANN001
+    seen: list[tuple[bool, bool]] = []
+
+    def fake_score(prompt, held_out, *, reasoning=False, grounder=None, **_):  # noqa: ANN001, ANN003, ANN202
+        seen.append((reasoning, grounder is not None))
+        return 0.7
+
+    monkeypatch.setattr(ts, "score_prompt", fake_score)
+    ab = TraceScalingAblation(
+        _corpus(200),
+        "BASE",
+        make_backends=_fake_backends,
+        counts=[5],
+        modes=[ts.REASON_FETCH],
+        budget=4,
+    )
+    assert [c.label for c in ab.conditions()] == ["reason+fetch@5"]
+    assert ab.run(ab.conditions()[0], seed=0) == 0.7
+    assert seen == [(True, True)]  # deliberation on + live fetch grounder supplied
+
+
+def test_reason_kb_fetch_mode_combines_both_levers(monkeypatch) -> None:  # noqa: ANN001
+    seen: dict[str, object] = {}
+
+    def fake_score(prompt, held_out, *, knowledge=None, reasoning=False, grounder=None, **_):  # noqa: ANN001, ANN003, ANN202
+        seen.update(knowledge=knowledge, reasoning=reasoning, grounded=grounder is not None)
+        return 0.5
+
+    monkeypatch.setattr(ts, "score_prompt", fake_score)
+    monkeypatch.setattr(ts, "seeded_knowledge_text", lambda traces, provider, **_: "KB")
+    ab = TraceScalingAblation(
+        _corpus(200),
+        "BASE",
+        make_backends=_fake_backends,
+        counts=[5],
+        modes=[ts.REASON_KB_FETCH],
+        budget=4,
+    )
+    assert ab.run(ab.conditions()[0], seed=0) == 0.5
+    assert seen == {"knowledge": "KB", "reasoning": True, "grounded": True}
+
+
 def test_run_ablation_end_to_end_with_fakes(monkeypatch) -> None:  # noqa: ANN001
     # Fidelity rises with n_train so the report shape (mean/std per condition) is exercised.
     monkeypatch.setattr(ts, "optimize_prompt", lambda *a, **k: type("R", (), {"prompt": "E"})())
@@ -126,7 +204,11 @@ def test_run_ablation_end_to_end_with_fakes(monkeypatch) -> None:  # noqa: ANN00
         lambda prompt, held_out, **k: 0.3 + 0.001 * len(k["train"]),
     )
     ab = TraceScalingAblation(
-        _corpus(200), "BASE", make_backends=_fake_backends, counts=[10, 30], modes=[BASE],
+        _corpus(200),
+        "BASE",
+        make_backends=_fake_backends,
+        counts=[10, 30],
+        modes=[BASE],
         budget=4,
     )
     report = run_ablation(ab, seeds=[0, 1])

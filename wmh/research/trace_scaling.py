@@ -28,18 +28,29 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 from wmh.core.types import JsonValue, Trace
+from wmh.engine.grounding import FetchGrounder
+from wmh.engine.knowledge import seeded_knowledge_text
 from wmh.research.ablation import Condition
 from wmh.research.pipeline import optimize_prompt, score_prompt
 from wmh.research.scaling_split import CorpusSplit, partition_corpus, subsample_train
 from wmh.research.seed_stability import BackendFactory
 
-# The two prompt sources the sweep compares. `base` = the shipped prompt + RAG only (cheap);
-# `gepa` = GEPA-optimized on the train sample (expensive). Strings (not an enum) so they read
-# straight from a CLI flag and serialize into the report's `Condition.params` unchanged.
+# The prompt/agentic configurations the sweep compares. `base` = the shipped prompt + RAG only
+# (cheap); `gepa` = GEPA-optimized on the train sample (expensive); `reason` = base + the
+# deliberate-then-answer contract; `reason+kb` = reason + a knowledge base seeded from the train
+# sample (train-only, leak-free). Strings (not an enum) so they read straight from a CLI flag and
+# serialize into the report's `Condition.params` unchanged.
 Mode = str
 BASE: Mode = "base"
 GEPA: Mode = "gepa"
+REASON: Mode = "reason"
+REASON_KB: Mode = "reason+kb"
+# reason + live prefetch of read-only curl GET URLs (FetchGrounder). NON-HERMETIC: hits the real
+# web, and the web has moved since capture — label results accordingly.
+REASON_FETCH: Mode = "reason+fetch"
+REASON_KB_FETCH: Mode = "reason+kb+fetch"  # both levers together (composability cell)
 MODES: tuple[Mode, ...] = (BASE, GEPA)
+ALL_MODES: tuple[Mode, ...] = (BASE, GEPA, REASON, REASON_KB, REASON_FETCH, REASON_KB_FETCH)
 
 
 def _as_int(value: JsonValue) -> int:
@@ -147,6 +158,14 @@ class TraceScalingAblation:
         else:
             prompt = self._base_prompt
 
+        # Agentic-mode cells (roadmap f): same base prompt and RAG buffer, plus the deliberation
+        # contract; reason+kb seeds a knowledge base from THIS run's train sample only;
+        # reason+fetch adds the live curl-GET prefetch (non-hermetic by definition).
+        reasoning = mode in (REASON, REASON_KB, REASON_FETCH, REASON_KB_FETCH)
+        with_kb = mode in (REASON_KB, REASON_KB_FETCH)
+        knowledge = seeded_knowledge_text(train, provider) if with_kb else None
+        grounder = FetchGrounder() if mode in (REASON_FETCH, REASON_KB_FETCH) else None
+
         return score_prompt(
             prompt,
             self._test,
@@ -158,6 +177,9 @@ class TraceScalingAblation:
             sample_turns=self._sample_turns,
             seed=seed,
             concurrency=self._concurrency,
+            knowledge=knowledge,
+            reasoning=reasoning,
+            grounder=grounder,
         )
 
 

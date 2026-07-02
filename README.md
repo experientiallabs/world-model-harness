@@ -56,6 +56,26 @@ print(obs.content)
 
 Or over HTTP (same code path), namespaced by model name: `GET /world_models`, then `POST /world_models/{name}/sessions` and `POST /world_models/{name}/sessions/{id}/step`.
 
+## Agentic mode: knowledge base, reasoning, web grounding
+
+Beyond retrieval, a world model can act like an *agent* about its own environment (all opt-in):
+
+- **Knowledge base** — `wmh build --knowledge` extracts the environment's canonical facts
+  (business rules, state-dependent gates, entities, tool schemas) from the train traces into
+  `models/<name>/knowledge/*.md`. It's plain markdown: edit it in any editor (`wmh knowledge`
+  prints the path), read/write it over HTTP (`GET/PUT /world_models/{name}/knowledge`), and the
+  env keeps it in every prompt and appends its own cross-session notes to `learned.md`.
+- **Reasoning** — `--reasoning` switches the output contract to deliberate-then-answer: the env
+  checks the knowledge base's gates (auth, availability, preconditions) and the session history
+  before deciding success vs. error.
+- **Web grounding** — `--grounder brave` (env var `BRAVE_SEARCH_API_KEY`, free tier) lets the env
+  issue a bounded web search when an action references a real-world entity outside its traces
+  and knowledge — instead of hallucinating it. Results are cached into the knowledge base; the
+  default is `none`, so tests and evals never touch the network.
+
+Measure the effect with `wmh eval run <suite> --knowledge --reasoning` (the eval seeds its
+knowledge from the train split only — never from held-out traces).
+
 ## Providers
 
 One interface, four backends, verified on startup. Credentials are read from the environment:

@@ -31,6 +31,11 @@ class FakeProvider:
             return Completion(text="IMPROVED ENV PROMPT")
         if "grade a world model" in system:  # the judge
             return Completion(text='{"score": 0.5, "critique": "be more specific"}')
+        if "KNOWLEDGE BASE" in system:  # the knowledge-seeding extraction pass
+            return Completion(
+                text='{"rules": "- gate: lookups need a valid id", '
+                '"entities": "- user u1", "schemas": "- get_user -> text"}'
+            )
         return Completion(text='{"output": "ok", "is_error": false}')
 
     def embed(self, texts: list[str]) -> list[list[float]]:
@@ -136,8 +141,62 @@ def test_build_writes_a_loadable_artifact(tmp_path) -> None:  # noqa: ANN001 - p
     assert paths.optimized_prompt.read_text(encoding="utf-8")  # a non-empty winning prompt
     assert json.loads(paths.frontier.read_text(encoding="utf-8"))  # frontier persisted
     assert result.prompt
+    # Knowledge is opt-in: the default build writes no knowledge/ dir.
+    assert not paths.knowledge.exists()
     # The index round-trips: a freshly loaded WorldModel can retrieve the indexed step.
     from wmh.engine.world_model import WorldModel
 
     wm = WorldModel.load(str(root), FakeProvider())
     assert wm.sample_steps(5)
+
+
+def _tiny_trace_file(tmp_path) -> str:  # noqa: ANN001 - pytest fixture
+    span_llm = {
+        "traceId": "e" * 32,
+        "spanId": "s1",
+        "name": "chat",
+        "startTimeUnixNano": 1,
+        "attributes": [
+            {"key": "gen_ai.operation.name", "value": {"stringValue": "chat"}},
+            {"key": "gen_ai.tool.name", "value": {"stringValue": "get_user"}},
+            {"key": "gen_ai.tool.call.arguments", "value": {"stringValue": '{"id": "u1"}'}},
+            {"key": "gen_ai.prompt", "value": {"stringValue": "look up u1"}},
+        ],
+    }
+    span_tool = {
+        "traceId": "e" * 32,
+        "spanId": "s2",
+        "name": "execute_tool",
+        "startTimeUnixNano": 2,
+        "attributes": [
+            {"key": "gen_ai.operation.name", "value": {"stringValue": "execute_tool"}},
+            {"key": "gen_ai.tool.message", "value": {"stringValue": "found u1"}},
+        ],
+    }
+    traces_file = tmp_path / "traces.jsonl"
+    traces_file.write_text(
+        json.dumps(span_llm) + "\n" + json.dumps(span_tool) + "\n", encoding="utf-8"
+    )
+    return str(traces_file)
+
+
+def test_build_with_knowledge_seeds_the_kb_from_train(tmp_path) -> None:  # noqa: ANN001
+    root = tmp_path / ".wmh"
+    config = HarnessConfig(
+        providers=[ProviderConfig(kind=ProviderKind.BEDROCK, model="m")],
+        serve_provider=ProviderKind.BEDROCK,
+        embed_dim=64,
+        gepa_budget=4,
+        train_split=0.5,
+        knowledge=True,
+    )
+    build(
+        config,
+        file=_tiny_trace_file(tmp_path),
+        root=str(root),
+        serve_provider=FakeProvider(),
+        embedder=HashingEmbedder(dim=64),
+    )
+    paths = ArtifactPaths(root)
+    rules = (paths.knowledge / "rules.md").read_text(encoding="utf-8")
+    assert "gate: lookups need a valid id" in rules

@@ -14,6 +14,7 @@ from statistics import fmean, pstdev
 from pydantic import BaseModel, Field
 
 from wmh.engine.build import split_traces
+from wmh.engine.knowledge import seeded_knowledge_text
 from wmh.engine.replay import ReplayReport, replay
 from wmh.ingest import get_adapter
 from wmh.optimize.judge import Judge
@@ -46,12 +47,18 @@ def evaluate_files(
     sample_turns: str = "all",
     seed: int = 0,
     adapter_name: str = "otel-genai",
+    knowledge: bool = False,
+    reasoning: bool = False,
 ) -> EvalReport:
     """Replay-score each trace file's held-out split. `embedder=None` -> zero-shot (no retrieval).
 
     Each file is split deterministically; tiny corpora with no held-out trace fall back to scoring
     every trace. RAG, when enabled, retrieves from that file's own train split only (leak-free).
     `sample_turns`/`seed` are forwarded to `replay` (see its docstring).
+
+    `knowledge` seeds an ephemeral knowledge base from each file's TRAIN split (never the holdout —
+    the same leak-free discipline as RAG) and renders it into every prediction; `reasoning`
+    requests the deliberate-then-answer contract. Grounding never runs in eval (hermetic).
     """
     adapter = get_adapter(adapter_name)
     per_file: dict[str, ReplayReport] = {}
@@ -63,6 +70,9 @@ def evaluate_files(
         if not holdout:  # tiny corpus: evaluate on everything
             train, holdout = traces, traces
         retriever = EmbeddingRetriever(embedder) if embedder is not None else None
+        # Ephemeral, train-only KB (temp dir; a model artifact's shipped learned/grounded facts —
+        # which could carry arbitrary serve-session content — are never read here).
+        knowledge_text = seeded_knowledge_text(train, provider) if knowledge else None
         name = _display_name(path)
         per_file[name] = replay(
             prompt,
@@ -74,6 +84,8 @@ def evaluate_files(
             top_k=top_k,
             sample_turns=sample_turns,
             seed=seed,
+            knowledge=knowledge_text,
+            reasoning=reasoning,
         )
 
     # Step-weighted aggregate over every scored step across files.

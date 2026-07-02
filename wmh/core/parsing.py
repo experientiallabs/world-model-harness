@@ -56,20 +56,41 @@ def extract_json_object(text: str) -> str | None:
 
 
 class _RawObservation(BaseModel):
-    """Lenient view of the world-model JSON contract before normalization."""
+    """Lenient view of the world-model JSON contract before normalization.
 
+    The reasoning-mode fields (`reasoning`, `kb_note`, `ground_query` — see
+    `wmh.core.render.output_contract`) default to empty so base-contract replies parse unchanged.
+    """
+
+    reasoning: str = ""
     output: str = ""
     is_error: bool = False
     state_note: str = ""
+    kb_note: str = ""
+    ground_query: str = ""
+
+    def matches_contract(self) -> bool:
+        """True when at least one contract field is populated.
+
+        Any JSON object validates against this all-defaults model, so an unrelated object (e.g.
+        an API-shaped observation) would otherwise masquerade as an empty contract reply; callers
+        use this to fall back to plain-text parsing instead.
+        """
+        return bool(
+            self.output or self.state_note or self.reasoning or self.kb_note or self.ground_query
+        )
 
 
 def parse_observation(text: str) -> Observation:
     """Parse a world-model completion into a structured Observation.
 
-    Prefers the JSON contract ``{"output", "is_error", "state_note"}``; the ``state_note`` (a
-    one-line fact the env wants to remember) is carried in ``metadata`` for the session scratchpad.
-    Falls back to treating the whole reply as plain observation text when it is not the expected
-    JSON, so an off-contract model still yields a usable observation.
+    Prefers the JSON contract ``{"output", "is_error", "state_note"}`` and its reasoning-mode
+    superset (``reasoning``/``kb_note``/``ground_query``). ``output`` becomes the observation the
+    agent sees; every other populated field is carried in ``metadata`` (``state_note`` feeds the
+    session scratchpad, ``kb_note`` the cross-session knowledge base, ``ground_query`` the
+    grounder, ``reasoning`` is kept for inspection only). Falls back to treating the whole reply
+    as plain observation text when it is not the expected JSON, so an off-contract model still
+    yields a usable observation.
     """
     raw = extract_json_object(text)
     if raw is not None:
@@ -77,12 +98,77 @@ def parse_observation(text: str) -> Observation:
             parsed = _RawObservation.model_validate_json(raw)
         except ValidationError:
             parsed = None
-        if parsed is not None and (parsed.output or parsed.state_note):
+        if parsed is not None and parsed.matches_contract():
             metadata: JsonObject = {}
-            if parsed.state_note:
-                metadata["state_note"] = parsed.state_note
+            for key, value in (
+                ("state_note", parsed.state_note),
+                ("reasoning", parsed.reasoning),
+                ("kb_note", parsed.kb_note),
+                ("ground_query", parsed.ground_query),
+            ):
+                if value:
+                    metadata[key] = value
             return Observation(content=parsed.output, is_error=parsed.is_error, metadata=metadata)
+    salvaged = _salvage_truncated_contract(text)
+    if salvaged is not None:
+        return salvaged
     return Observation(content=text.strip())
+
+
+def _salvage_truncated_contract(text: str) -> Observation | None:
+    """Recover a contract reply whose JSON never closed (token-budget truncation).
+
+    Long deliberations plus long escaped observations can blow the completion budget mid-string;
+    without this, the ENTIRE raw contract text (reasoning included) becomes the observation the
+    agent sees — observed live as a catastrophic 0.26-fidelity step. Conservative trigger: the
+    text must look like a contract object (starts with ``{`` and names an ``"output"`` key) and
+    must NOT have parsed as complete JSON (callers try that first). Recovered string fields are
+    unescaped up to the truncation point.
+    """
+    stripped = text.strip()
+    if not stripped.startswith("{") or '"output"' not in stripped:
+        return None
+    output = _string_field_value(stripped, "output")
+    if output is None:
+        return None
+    metadata: JsonObject = {}
+    reasoning = _string_field_value(stripped, "reasoning")
+    if reasoning:
+        metadata["reasoning"] = reasoning
+    is_error = '"is_error": true' in stripped or '"is_error":true' in stripped
+    return Observation(content=output, is_error=is_error, metadata=metadata)
+
+
+def _string_field_value(text: str, key: str) -> str | None:
+    """Extract `key`'s JSON string value from possibly-truncated JSON, unescaping as we go."""
+    marker = f'"{key}"'
+    at = text.find(marker)
+    if at == -1:
+        return None
+    i = at + len(marker)
+    while i < len(text) and text[i] in ": \t\n":
+        i += 1
+    if i >= len(text) or text[i] != '"':
+        return None
+    i += 1
+    out: list[str] = []
+    escaped = False
+    while i < len(text):
+        ch = text[i]
+        if escaped:
+            out.append(_UNESCAPE.get(ch, ch))
+            escaped = False
+        elif ch == "\\":
+            escaped = True
+        elif ch == '"':
+            break  # properly terminated string
+        else:
+            out.append(ch)
+        i += 1
+    return "".join(out)
+
+
+_UNESCAPE = {"n": "\n", "t": "\t", "r": "\r", '"': '"', "\\": "\\", "/": "/"}
 
 
 def dumps_observation_contract(observation: Observation) -> str:

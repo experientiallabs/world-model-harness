@@ -34,6 +34,10 @@ class EvalSuiteConfig(BaseModel):
     no_rag: bool = False
     judge: JudgeName = "rubric"
     embed_dim: int = Field(default=512, gt=0)
+    # Agentic mode (default off): seed a train-split knowledge base into every prediction, and/or
+    # request the deliberate-then-answer output contract. See `wmh.engine.knowledge`.
+    knowledge: bool = False
+    reasoning: bool = False
 
 
 @dataclass(frozen=True)
