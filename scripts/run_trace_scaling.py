@@ -28,7 +28,7 @@ from pathlib import Path
 
 from wmh.engine.eval_suites import resolve_eval_suite
 from wmh.engine.prompts import BASE_ENV_PROMPT
-from wmh.ingest import get_adapter
+from wmh.ingest import drop_degenerate_traces, get_adapter
 from wmh.optimize.judge import Judge, LLMJudge, RubricJudge
 from wmh.providers import ProviderConfig, ProviderKind, get_provider
 from wmh.providers.base import Embedder, Provider
@@ -134,6 +134,9 @@ def _load_corpus(args: argparse.Namespace) -> tuple[list, str]:  # noqa: ANN201 
 
 def _run(args: argparse.Namespace) -> tuple[AblationReport, _MeterBank]:
     traces, label = _load_corpus(args)
+    if args.drop_degenerate:
+        traces, dropped = drop_degenerate_traces(traces)
+        print(f"corpus hygiene: dropped {dropped} degenerate (all-empty-observation) traces")
     if not traces:
         raise SystemExit("no traces ingested")
 
@@ -229,6 +232,11 @@ def main() -> None:
     parser.add_argument("--region", default="us-east-1", help="AWS region (Bedrock).")
     parser.add_argument("--embed-dim", type=int, default=512, help="phi dim (offline embedder).")
     parser.add_argument("--no-rag", action="store_true", help="Disable retrieval (zero-shot).")
+    parser.add_argument(
+        "--drop-degenerate",
+        action="store_true",
+        help="Drop traces whose every observation is empty (failed captures) before splitting.",
+    )
     parser.add_argument("--judge", default="rubric", help="Scorer: rubric (5-dim) | match.")
     parser.add_argument("--out", default=None, help="Path to write the AblationReport JSON.")
     args = parser.parse_args()
