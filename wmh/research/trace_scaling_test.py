@@ -174,6 +174,27 @@ def test_reason_fetch_mode_passes_a_live_grounder(monkeypatch) -> None:  # noqa:
     assert seen == [(True, True)]  # deliberation on + live fetch grounder supplied
 
 
+def test_reason_kb_fetch_mode_combines_both_levers(monkeypatch) -> None:  # noqa: ANN001
+    seen: dict[str, object] = {}
+
+    def fake_score(prompt, held_out, *, knowledge=None, reasoning=False, grounder=None, **_):  # noqa: ANN001, ANN003, ANN202
+        seen.update(knowledge=knowledge, reasoning=reasoning, grounded=grounder is not None)
+        return 0.5
+
+    monkeypatch.setattr(ts, "score_prompt", fake_score)
+    monkeypatch.setattr(ts, "seeded_knowledge_text", lambda traces, provider, **_: "KB")
+    ab = TraceScalingAblation(
+        _corpus(200),
+        "BASE",
+        make_backends=_fake_backends,
+        counts=[5],
+        modes=[ts.REASON_KB_FETCH],
+        budget=4,
+    )
+    assert ab.run(ab.conditions()[0], seed=0) == 0.5
+    assert seen == {"knowledge": "KB", "reasoning": True, "grounded": True}
+
+
 def test_run_ablation_end_to_end_with_fakes(monkeypatch) -> None:  # noqa: ANN001
     # Fidelity rises with n_train so the report shape (mean/std per condition) is exercised.
     monkeypatch.setattr(ts, "optimize_prompt", lambda *a, **k: type("R", (), {"prompt": "E"})())
