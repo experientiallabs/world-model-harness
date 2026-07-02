@@ -49,7 +49,12 @@ _CHECK = "[green]✓[/green]"
 # Serve providers offered in the wizard picker, with the model ids each supports. The first model
 # in each list is the suggested default. Keep these in sync with the provider backends.
 _PROVIDER_MODELS: dict[str, list[str]] = {
-    "bedrock": ["us.anthropic.claude-opus-4-8", "us.anthropic.claude-opus-4-7"],
+    "bedrock": [
+        "us.anthropic.claude-opus-4-8",
+        "us.anthropic.claude-opus-4-7",
+        # haiku needs the dated inference-profile id; the undated alias is rejected by Bedrock
+        "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+    ],
     "anthropic": ["claude-opus-4-8", "claude-opus-4-7", "claude-sonnet-4-6", "claude-haiku-4-5"],
     "openai": ["gpt-5.5", "gpt-5.5-pro", "gpt-5.4"],
     "openai_responses": ["gpt-5.5", "gpt-5.4-mini", "gpt-5.4"],
