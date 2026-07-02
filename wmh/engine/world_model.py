@@ -159,6 +159,7 @@ class WorldModel:
         Raises `KeyError` for an unknown/already-ended session id.
         """
         self._sessions.pop(session_id)  # KeyError for unknown ids, same as get_session
+        self._ground_spent.pop(session_id, None)
         tracker = self._trackers.pop(session_id)
         tracker.stop()
         return tracker.record_summary()
