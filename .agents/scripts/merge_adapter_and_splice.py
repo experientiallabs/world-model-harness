@@ -29,9 +29,25 @@ def main() -> None:
                         help="local HF snapshot dir of the base (auto-resolved if omitted)")
     args = parser.parse_args()
 
+    import json
+    import re
+
     import torch
     from peft import PeftModel
     from transformers import AutoModelForCausalLM
+
+    # verl saves target_modules as its regex string (^.*\.(q_proj|...)$); this peft
+    # version iterates the string into characters. Rewrite to the explicit module list.
+    config_path = Path(args.adapter_dir) / "adapter_config.json"
+    adapter_config = json.loads(config_path.read_text())
+    modules = adapter_config.get("target_modules")
+    if isinstance(modules, str):
+        group = re.search(r"\(([^)]+)\)", modules)
+        if not group:
+            raise SystemExit(f"cannot parse target_modules regex: {modules!r}")
+        adapter_config["target_modules"] = group.group(1).split("|")
+        config_path.write_text(json.dumps(adapter_config, indent=2))
+        print(f"rewrote target_modules regex -> {adapter_config['target_modules']}")
 
     print(f"loading base text model {args.base} (cpu, bf16)...")
     model = AutoModelForCausalLM.from_pretrained(args.base, dtype=torch.bfloat16)
