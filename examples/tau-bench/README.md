@@ -61,6 +61,7 @@ side builds/pulls containers. The rendered figure is committed as `concurrency_s
 report JSON is git-ignored (regenerate with the command above).
 
 ![Concurrency scaling law on tau-bench](./concurrency_scaling.png)
+
 ## Why capture from the REAL benchmark
 
 The world model's job is to reconstruct the **actual downstream benchmark**. If we captured traces

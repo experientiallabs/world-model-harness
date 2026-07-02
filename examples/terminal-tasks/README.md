@@ -88,6 +88,7 @@ speedup), while standing up 16 real containers cold takes **145.6s â†’ 31.1s** â
 real side contends harder for Docker/CPU). Committed figure: `concurrency_scaling.png`.
 
 ![Concurrency scaling law on terminal-tasks](./concurrency_scaling.png)
+
 ## Run ONE real scenario (the real-environment side of the comparison)
 
 ### One command: `run.sh`

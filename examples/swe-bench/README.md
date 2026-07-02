@@ -152,6 +152,7 @@ mode; under `--scale-with-concurrency` each level does more work, so read the wa
 differential panels. Committed figure: `concurrency_scaling.png`.
 
 ![Concurrency scaling law on swe-bench](./concurrency_scaling.png)
+
 ## Run ONE real scenario (the real-environment side of the comparison)
 
 ### One command: `run.sh`

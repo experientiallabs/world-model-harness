@@ -23,6 +23,7 @@ nothing here is imported on the no-network test path.
 from __future__ import annotations
 
 import concurrent.futures as cf
+import logging
 import os
 import subprocess
 import time
@@ -38,6 +39,8 @@ from wmh.research.concurrency_scaling import RealBatch, RealRunner, WorldBatch, 
 from wmh.retrieval.leakfree import DemoRetriever
 from wmh.tracking.metered import MeteredProvider
 from wmh.tracking.tracker import Phase, RunTracker
+
+_log = logging.getLogger(__name__)
 
 # A fresh provider per worker: boto3/httpx clients are not safe to share across threads.
 ProviderFactory = Callable[[], Provider]
@@ -126,11 +129,12 @@ def build_world_runner(
             for future in cf.as_completed(futures):
                 # A failed scenario counts as not-ok (ok < total) rather than aborting the batch —
                 # otherwise one early failure would still block on the rest before surfacing, and
-                # lose the partial timing.
+                # lose the partial timing. Log it so a systematically-failing run (bad creds, etc.)
+                # is diagnosable instead of silently reporting a batch of zeros.
                 try:
                     per.append(future.result())
                 except Exception:  # noqa: BLE001 - provider/network errors -> a failed scenario
-                    pass
+                    _log.warning("world scenario failed at concurrency %d", level, exc_info=True)
         wall = time.monotonic() - start
         steps = sum(p.steps for p in per)
         matches = sum(p.matches for p in per)
@@ -155,7 +159,12 @@ def _run_real_one(
     extra_args: list[str],
     timeout: float | None,
 ) -> tuple[float, bool]:
-    """Shell the example's run.sh for one scenario, pinned by trace_id; return (seconds, ok)."""
+    """Shell the example's run.sh for one scenario, pinned by trace_id; return (seconds, ok).
+
+    Only the wall-clock and exit status are used, so the run.sh output (which for swe-bench/terminal
+    streams multi-GB docker build logs) is discarded rather than buffered — otherwise W concurrent
+    workers would each hold their whole build log in memory. Run `run.sh` directly to watch a build.
+    """
     cmd = [
         str(runner_sh),
         "--trace-id",
@@ -166,7 +175,13 @@ def _run_real_one(
     ]
     start = time.monotonic()
     try:
-        proc = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, timeout=timeout)
+        proc = subprocess.run(
+            cmd,
+            cwd=cwd,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=timeout,
+        )
     except (subprocess.TimeoutExpired, OSError):
         return time.monotonic() - start, False
     return time.monotonic() - start, proc.returncode == 0
@@ -212,11 +227,12 @@ def build_real_runner(
             ]
             for future in cf.as_completed(futures):
                 # `_run_real_one` already returns (secs, False) on its own errors; guard here too so
-                # an unexpected raise counts as a failed scenario, not a batch-wide abort.
+                # an unexpected raise counts as a failed scenario, not a batch-wide abort. Log it so
+                # a systematically-failing sandbox is diagnosable.
                 try:
                     per.append(future.result())
                 except Exception:  # noqa: BLE001 - a failed sandbox launch -> a failed scenario
-                    pass
+                    _log.warning("real sandbox failed at concurrency %d", level, exc_info=True)
         wall = time.monotonic() - start
         return RealBatch(
             wall_seconds=wall,

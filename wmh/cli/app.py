@@ -45,6 +45,7 @@ from wmh.config import (
     validate_name,
 )
 from wmh.engine.build import build as run_build
+from wmh.engine.build import split_traces
 from wmh.engine.demo import run_demo
 from wmh.engine.eval import EvalReport, evaluate_files
 from wmh.engine.eval_suites import (
@@ -55,11 +56,15 @@ from wmh.engine.eval_suites import (
 )
 from wmh.engine.loader import load_world_model
 from wmh.engine.prompts import BASE_ENV_PROMPT
-from wmh.ingest import VendorPull
+from wmh.ingest import VendorPull, get_adapter
 from wmh.optimize.judge import LLMJudge, RubricJudge
-from wmh.providers import ProviderConfig, ProviderKind, verify_all, verify_embedder
-from wmh.providers.base import EmbedderKind
-from wmh.retrieval import HashingEmbedder, get_embedder
+from wmh.providers import ProviderConfig, ProviderKind, get_provider, verify_all, verify_embedder
+from wmh.providers.base import EmbedderKind, Provider
+from wmh.research import Side, run_concurrency_scaling
+from wmh.research.concurrency_run import build_real_runner, build_world_runner
+from wmh.research.concurrency_scaling import ConcurrencyPoint
+from wmh.retrieval import EmbeddingRetriever, HashingEmbedder, get_embedder
+from wmh.retrieval.leakfree import DemoRetriever
 from wmh.serving.server import create_app
 from wmh.telemetry import (
     BuildTelemetryStats,
@@ -900,20 +905,6 @@ def research_concurrency(
     to give the time differential T_real(W)/T_world(W). Reuses the suite's corpus + config
     (train_split, top_k, prompt) and the example's `run.sh`. See `wmh.research.concurrency_run`.
     """
-    from pathlib import Path
-
-    from wmh.engine.build import split_traces
-    from wmh.engine.eval_suites import resolve_eval_suite
-    from wmh.engine.prompts import BASE_ENV_PROMPT
-    from wmh.ingest import get_adapter
-    from wmh.providers import ProviderConfig, get_provider
-    from wmh.providers.base import Provider
-    from wmh.research import Side, run_concurrency_scaling
-    from wmh.research.concurrency_run import build_real_runner, build_world_runner
-    from wmh.research.concurrency_scaling import ConcurrencyPoint
-    from wmh.retrieval import EmbeddingRetriever, HashingEmbedder
-    from wmh.retrieval.leakfree import DemoRetriever
-
     if scenarios < 1:
         raise typer.BadParameter("--scenarios must be at least 1")
     try:
@@ -982,9 +973,12 @@ def research_concurrency(
         # Force each runner's cold-standup + isolation flags so the real side pays its TRUE from-
         # source standup and concurrent sandboxes don't clobber each other's docker state (see
         # _CONCURRENCY_ISOLATION_FLAGS). Skipped if the caller passed their own real-runner args.
+        # Prepend the forced cold-standup/isolation flags; any user `--real-arg` comes AFTER so it
+        # can still override (argparse takes the last value), but the forced flags are never dropped
+        # just because the user passed an unrelated arg.
         forced = _CONCURRENCY_ISOLATION_FLAGS.get(resolved.example, ())
-        if forced and not real_extra:
-            real_extra = list(forced)
+        if forced:
+            real_extra = list(forced) + real_extra
             _console.print(
                 f"[yellow]{resolved.example}: real runner uses {' '.join(forced)} "
                 "(true from-source cold standup, isolated per concurrent scenario)[/yellow]"
@@ -1022,8 +1016,11 @@ def research_concurrency(
     )
     report.benchmark = resolved.example
 
+    # Speedup vs. W=1 is only a like-for-like ratio in fixed-N mode. Under --scale-with-concurrency
+    # each level runs a different number of scenarios (N=W), so a "best speedup" headline would
+    # compare different batch sizes — suppress it there and let the per-level wall-clock speak.
     best = report.best_speedup()
-    if best is not None and best.speedup:
+    if not scale_with_concurrency and best is not None and best.speedup:
         _console.print(
             f"\n[bold]best world-model speedup[/bold]: {best.speedup:.2f}x at concurrency "
             f"{best.level} (efficiency {best.efficiency:.0%})"
@@ -1044,13 +1041,13 @@ def research_plot_concurrency(
     Draws batch wall-clock vs. concurrency (log-log, mean±std), the world-model speedup vs.
     ideal-linear, and the T_real/T_world differential when a report has both sides. Pass several
     report JSONs to overlay them.
+
+    `concurrency_plot` is imported here (not at module scope) because it pulls in matplotlib/pandas
+    from the optional `viz` extra — the harness runtime must not require them. A missing extra
+    raises a plain ImportError naming the module (`uv sync --extra viz`); it is not caught.
     """
-    try:
-        from wmh.research.concurrency_plot import render_report
-    except ImportError as exc:  # pragma: no cover - depends on the optional viz extra
-        raise typer.BadParameter(
-            "plotting needs the 'viz' extra: uv sync --extra viz (seaborn/matplotlib/pandas)"
-        ) from exc
+    from wmh.research.concurrency_plot import render_report
+
     try:
         written = render_report(reports, out, title=title)
     except (ValueError, FileNotFoundError) as exc:

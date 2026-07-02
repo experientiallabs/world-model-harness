@@ -3,7 +3,7 @@
 Reads the JSON `ConcurrencyScalingReport`(s) written by `wmh research concurrency --out` and draws
 three panels that all compare the world model against the real sandbox: batch wall-clock per side,
 each side's speedup vs. ideal-linear, and the time differential T_real(W)/T_world(W). Styling
-follows the brand system (AGENTS.md rule 14): white background, near-black ink, hairline grid,
+follows the brand system (AGENTS.md rule 15): white background, near-black ink, hairline grid,
 brand-palette accents, left-aligned titles — matching `scripts/plot_trace_scaling.py`.
 
 Needs the `viz` extra (matplotlib/pandas); it is imported lazily by the CLI so the harness runtime
@@ -86,7 +86,7 @@ def _load_points(paths: list[str]) -> pd.DataFrame:
     return pd.DataFrame([r.model_dump() for r in rows])
 
 
-# Brand system (AGENTS.md rule 14): white bg, near-black ink, hairline grid, brand-palette accents.
+# Brand system (AGENTS.md rule 15): white bg, near-black ink, hairline grid, brand-palette accents.
 # Ref: scripts/plot_trace_scaling.py.
 _INK = "#0a0a0a"
 _MUTED = "#8a8a8a"
@@ -195,11 +195,15 @@ def render_report(paths: list[str], out: str, *, title: str = "Concurrency scali
         label="ideal (linear)",
         zorder=1,
     )
+    baseline_level = levels[0]
     for side, color in (("world model", _WORLD_COLOR), ("real sandbox", _REAL_COLOR)):
         grp = df[df["side"] == side].sort_values("level")
-        if grp.empty:
+        base_rows = grp[grp["level"] == baseline_level]
+        if grp.empty or base_rows.empty:
+            # No timing at the baseline level -> can't normalize this side to the same W as the
+            # other, so skip it rather than plot a curve on a different (higher) baseline.
             continue
-        base = float(grp.iloc[0]["wall"])
+        base = float(base_rows.iloc[0]["wall"])
         speedup = [base / w if w else 0.0 for w in grp["wall"]]
         line(ax, list(grp["level"]), speedup, color, side)
     ax.legend(loc="upper left", fontsize=10)
