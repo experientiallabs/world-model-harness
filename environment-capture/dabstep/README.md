@@ -17,8 +17,9 @@ is deterministic (numeric tolerance 0.01, normalized string/list match, accepted
   `merchant_category_codes.csv`, `merchant_data.json`, `payments-readme.md`.
 - `gold/<task_id>.json` — gold answers (`answer` + optional `numeric` + `accept` variants), never
   staged into the agent workspace.
-- `traces.otel.jsonl` — the trace corpus: **16 traces / 137 real transitions** (12 trajectories with host-escape content dropped whole by the hygiene audit — see `environment_capture/hygiene.py`; a guarded top-up capture will restore coverage) (train split only;
-  the hidden test split is never captured so the world model can't absorb its dynamics).
+- `traces.otel.jsonl` — the trace corpus: **36 traces / 305 real transitions**, host-content-free
+  (`environment_capture.scan_spans_jsonl` returns no findings; train split only, so the world model
+  can't absorb the hidden test split's dynamics).
 - `fetch_data.py` — downloads the gitignored `payments.csv` (and, with `--all`, every context file)
   from the upstream HuggingFace dataset, so a fresh clone is runnable.
 - `convert_cache.py` — the converter that seeded the corpus from a frozen baseline cache of real
@@ -49,16 +50,21 @@ uv run python environment-capture/dabstep/capture.py \
 - **Traces**: seeded with `convert_cache.py` from a frozen baseline cache of REAL runs over the
   same materialization (**3 traces**, model `gpt-5.4`, mean reward 0.0 — the bare baseline agent's
   heredoc quoting failed before it could submit; 2 zero-transition trajectories skipped at
-  conversion), then grown with `capture.py` — **25 fresh real runs** on Bedrock
-  (`us.anthropic.claude-opus-4-8` and `-4-7`, two passes each; `-4-6-v1`, one pass — mean reward
-  0.240, solving `dab-train-0` and `dab-train-3`). Every train task is covered by every model.
-  Converted traces keep the original run's reward; fresh captures are graded by this adapter's
-  grader and carry their own model id. Multi-run trace ids never collide: a fresh run's task id is
-  suffixed with its model + run tag (e.g. `dab-train-3#opus48-r1`).
+  conversion), then grown with `capture.py` — **33 fresh real runs** on Bedrock
+  (`us.anthropic.claude-opus-4-8` ×16 and `-4-7` ×17, several passes; mean reward 0.273, 9 solves,
+  every train task covered). Converted traces keep the original run's reward; fresh captures are
+  graded by this adapter's grader and carry their own model id. Multi-run trace ids never collide:
+  a fresh run's task id is suffixed with its model + run tag (e.g. `dab-train-3#opus48-r1`).
+- **Workspace containment**: `LocalBashEnv` refuses host-targeting commands, and the shared hygiene
+  audit (`environment_capture.hygiene`) drops any trajectory that reached host filesystem content —
+  data-analysis agents otherwise wander the host (`ls ~`, `find /`) looking for their data. To keep
+  the corpus rich rather than thin, `capture.py` also gives the agent a workspace-scoped system
+  prompt (its data is under `./data/`; host-targeting commands are blocked and invalidate the run),
+  which cut the escape rate to near zero. `scan_spans_jsonl` reports no host content on the corpus.
 - The recording harness echoed an ALLCAPS `*_SUBMIT` sentinel into the baseline runs' final
-  command/output to mark the submission; it is normalized to the neutral `SUBMIT` at conversion
-  (apparatus protocol, not environment content — no result, path, or number is altered). Fresh
-  Bedrock captures use a real `submit` tool and carry no such sentinel.
+  command/output to mark the submission; the shared `load_baseline_cache` normalizes it to the
+  neutral `SUBMIT` (apparatus protocol, not environment content — no result, path, or number is
+  altered). Fresh Bedrock captures use a real `submit` tool and carry no such sentinel.
 
 ## License — read before redistributing
 
