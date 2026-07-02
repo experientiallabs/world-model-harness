@@ -6,6 +6,11 @@ trajectory: a ``messages`` list where each assistant turn carries exactly one fe
 block and the following user turn carries the real ``<returncode>``/``<output>`` the environment
 returned). This module parses that DATA format into Trajectories; the runs themselves were
 executed for real elsewhere, so nothing here synthesizes an observation.
+
+Some harnesses reply to a malformed assistant turn (e.g. two commands at once) with a short
+free-text correction instead of executing anything. Such a turn carries no observation markers
+at all, so the command never ran and is not a transition — it is skipped. A follow-up turn that
+*does* look like an observation but is missing a marker is real format drift and still raises.
 """
 
 from __future__ import annotations
@@ -19,6 +24,11 @@ from environment_capture.trajectory import JsonValue, StepRecord, Task, ToolCall
 _FENCE_RE = re.compile(r"```\w*bash\s*\n(.*?)```", re.DOTALL)
 _RETURNCODE_RE = re.compile(r"<returncode>(-?\d+)</returncode>")
 _OUTPUT_RE = re.compile(r"<output>\n?(.*?)\n?</output>\s*\Z", re.DOTALL)
+
+
+def _is_observation(content: str) -> bool:
+    """Whether a follow-up user turn is an observation attempt at all (vs. a free-text nudge)."""
+    return "<returncode>" in content or "<output>" in content
 
 
 def _parse_observation(content: str, *, task_id: str) -> tuple[str, int]:
@@ -45,7 +55,10 @@ def _steps_from_messages(messages: list[dict[str, str]], *, task_id: str) -> lis
         follow = messages[index + 1] if index + 1 < len(messages) else None
         if follow is None or follow.get("role") != "user":
             continue  # command with no recorded observation (run cut off) -> not a transition
-        output, returncode = _parse_observation(follow.get("content", ""), task_id=task_id)
+        follow_content = follow.get("content", "")
+        if not _is_observation(follow_content):
+            continue  # harness rejected the command with a free-text nudge -> command never ran
+        output, returncode = _parse_observation(follow_content, task_id=task_id)
         steps.append(
             StepRecord(
                 action=ToolCall(name="bash", arguments={"command": command}),

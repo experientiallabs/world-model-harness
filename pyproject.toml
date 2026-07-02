@@ -32,7 +32,7 @@ dev = [
     "ty>=0.0.1a1",
     "world-model-harness[anthropic,openai,bedrock,otel,viz]",
     # Workspace member: benchmark adapters + real-run trace capture (environment-capture/).
-    "environment-capture[bedrock]",
+    "environment-capture[bedrock,fetch]",
 ]
 
 [project.scripts]

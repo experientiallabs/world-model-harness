@@ -82,11 +82,44 @@ def test_load_baseline_cache_parses_commands_and_observations(tmp_path: Path) ->
     assert failed.steps[0].output == "boom"
 
 
-def test_load_baseline_cache_rejects_malformed_observation(tmp_path: Path) -> None:
+def test_load_baseline_cache_skips_rejected_command_nudge(tmp_path: Path) -> None:
+    """A harness correction turn (no observation markers) means the command never ran.
+
+    Some agent harnesses reply to a malformed turn with a short nudge ("issue exactly one
+    command") instead of executing it. That command produced no environment observation, so it is
+    not a transition and must be skipped — not raise and not fabricate an output.
+    """
     root = _write_cache(tmp_path)
     trace_path = root / "traces" / "fb-train-0.json"
     trace = json.loads(trace_path.read_text())
-    trace["messages"][3]["content"] = "no markers here"
+    # Insert a rejected command + nudge before the first real (executed) command.
+    nudge = [
+        {"role": "assistant", "content": "Two at once.\n```sib_bash\nls\ncat a.txt\n```"},
+        {"role": "user", "content": "Provide exactly ONE ```sib_bash``` command block."},
+    ]
+    trace["messages"][2:2] = nudge
+    trace_path.write_text(json.dumps(trace))
+
+    trajectories = load_baseline_cache(root)
+    ok = next(t for t in trajectories if t.task.task_id == "fb-train-0")
+    # The nudged command is dropped; only the two real transitions survive, in order.
+    assert [s.action.arguments["command"] for s in ok.steps] == [
+        "ls docs && grep -in capex docs/*.txt",
+        "printf 'SIB_SUBMIT\\n$1577.00\\n'",
+    ]
+
+
+def test_load_baseline_cache_rejects_malformed_observation(tmp_path: Path) -> None:
+    """A follow-up user turn that looks like an observation but lacks markers still raises.
+
+    Only turns that carry no observation shape at all (a short free-text nudge) are treated as
+    rejections; a turn that resembles a corrupted observation is a real format drift and must be
+    surfaced, not silently dropped.
+    """
+    root = _write_cache(tmp_path)
+    trace_path = root / "traces" / "fb-train-0.json"
+    trace = json.loads(trace_path.read_text())
+    trace["messages"][3]["content"] = "<output>\nno returncode marker\n</output>"
     trace_path.write_text(json.dumps(trace))
     with pytest.raises(ValueError, match="fb-train-0"):
         load_baseline_cache(root)
