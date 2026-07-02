@@ -22,6 +22,7 @@ class _ChatCompletions(Protocol):
         model: str,
         messages: list[ChatCompletionMessageParam],
         max_completion_tokens: int,
+        temperature: float = ...,
     ) -> ChatCompletion: ...
 
 
@@ -46,18 +47,27 @@ def complete(
     system: str,
     messages: list[Message],
     max_tokens: int,
+    temperature: float | None = None,
 ) -> Completion:
     """Run one chat completion and map it onto our `Completion`.
 
-    `max_completion_tokens` (not the deprecated `max_tokens`) and no `temperature` keeps this
-    compatible with GPT 5.5, whose reasoning models reject the legacy field and non-default
-    sampling params.
+    `max_completion_tokens` (not the deprecated `max_tokens`) keeps this compatible with GPT 5.5.
+    `temperature` is sent ONLY when given: GPT 5.5's reasoning models reject non-default sampling
+    params (callers pass None), while OpenAI-compatible servers (vLLM policies) need it.
     """
-    response = chat_completions.create(
-        model=model,
-        messages=to_messages(system, messages),
-        max_completion_tokens=max_tokens,
-    )
+    if temperature is None:
+        response = chat_completions.create(
+            model=model,
+            messages=to_messages(system, messages),
+            max_completion_tokens=max_tokens,
+        )
+    else:
+        response = chat_completions.create(
+            model=model,
+            messages=to_messages(system, messages),
+            max_completion_tokens=max_tokens,
+            temperature=temperature,
+        )
     if not response.choices:
         # Content filtering (and some error modes) can return zero choices; surface it clearly
         # rather than letting choices[0] raise a bare IndexError.

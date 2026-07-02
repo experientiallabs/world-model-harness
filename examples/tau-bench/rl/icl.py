@@ -10,13 +10,19 @@ Modes (`--mode`):
 - `single`   k attempts per scenario; each retry sees the judge critiques of ITS OWN prior
              attempts (within-scenario self-correction). Reported row = final attempt.
 - `collect`  run the TRAIN scenarios once each and write the cross-task memory JSONL
-             (task outcome + critique per scenario) that `multi` consumes.
+             (task outcome + critique per scenario) that `multi` consumes. Train scenarios
+             only — collecting on eval scenarios would leak judge feedback about the eval
+             tasks into the eval row, so the script refuses.
 - `multi`    one attempt per scenario with the frozen cross-task memory from `collect`
              injected (the CLaaS paper's ICL arm shape).
 
-Scenario files are the PINNED sets (scenarios_train.jsonl / scenarios_eval.jsonl — see
-pin_scenarios.py); rows key on scenario provenance. Policy backends: `bedrock:<model-id>`
-(dev stand-in) or `vllm:<model>@<base-url>` (Qwen3.5-9B on the wake/sleep server's vLLM).
+Everything an arm consumes is PINNED (see pin_scenarios.py): the scenario sets AND the
+per-domain tool inventory (tools.json) — nothing is re-derived from the corpus at run time.
+Rows key on scenario provenance and are appended to the results file as each scenario
+completes, so a mid-run failure keeps every finished row. Policy backends:
+`bedrock:<model-id>` (dev stand-in; NOTE Bedrock drops sampling params, so --temperature has
+no effect there) or `vllm:<model>@<base-url>` (Qwen3.5-9B on the wake/sleep server's vLLM,
+which does honor --temperature).
 
 Examples:
     uv run python examples/tau-bench/rl/icl.py --mode base --scenarios eval --limit 2
@@ -35,21 +41,19 @@ from pathlib import Path
 
 from pydantic import BaseModel, Field, ValidationError
 
-from wmh.config import load_config
 from wmh.core.parsing import extract_json_object
 from wmh.core.render import render_action
-from wmh.core.types import Action, ActionKind, EnvState, JsonObject, Step, Trace
-from wmh.engine import ingest, split_traces_3way
+from wmh.core.types import Action, ActionKind, EnvState, JsonObject, Step
 from wmh.engine.world_model import WorldModel
-from wmh.env import DONE_SIGNAL, WorldModelEnv, run_episode
+from wmh.env import DONE_SIGNAL, Scenario, WorldModelEnv, run_episode
 from wmh.optimize.reward import EpisodeScore
 from wmh.providers.base import Message, Provider, ProviderConfig, ProviderKind
 from wmh.providers.registry import get_provider
 
 _HERE = Path(__file__).resolve().parent
 _MODEL_DIR = _HERE.parent / "models" / "tau-bench"
-_TRACES_PATH = _HERE.parent / "traces.otel.jsonl"
 _SCENARIO_FILES = {"train": _HERE / "scenarios_train.jsonl", "eval": _HERE / "scenarios_eval.jsonl"}
+_TOOLS_PATH = _HERE / "tools.json"
 
 HAIKU = "us.anthropic.claude-haiku-4-5-20251001-v1:0"  # dated profile id (undated is rejected)
 OPUS = "us.anthropic.claude-opus-4-8"  # eval reward judge: third family vs both WM backends
@@ -69,12 +73,15 @@ Reply with ONLY one JSON object per turn:
   {{"done": true, "summary": "<what you did>"}}      when the task is complete or impossible
 {memory}"""
 
+_REPARSE_NUDGE = (
+    "Your previous reply was not one valid JSON object of the two allowed shapes. "
+    "Reply again with ONLY the JSON."
+)
 
-class PinnedScenario(BaseModel):
-    """One line of a pinned scenario file (see pin_scenarios.py)."""
 
-    task: str
-    provenance: list[str]
+class PinnedScenario(Scenario):
+    """One line of a pinned scenario file: a `Scenario` plus its tau domain."""
+
     domain: str = "unknown"
 
 
@@ -99,6 +106,8 @@ class RowResult(BaseModel):
     reward: float
     success: bool
     critique: str
+    parse_failures: int = 0  # policy replies that were not valid action JSON
+    error: str | None = None  # infra failure (env error / judge failure); row is NOT a score
     wm_cost_usd: float | None = None
     seconds: float = 0.0
 
@@ -114,7 +123,12 @@ class _Done(BaseModel):
 
 
 class PolicyAgent:
-    """wmh `Agent`: an LLM proposing tau tool calls from task + episode history (+ ICL memory)."""
+    """wmh `Agent`: an LLM proposing tau tool calls from task + episode history (+ ICL memory).
+
+    A malformed policy reply gets ONE re-ask with a terse nudge; a second failure ends the
+    episode (never feed garbage to the world model). `parse_failures` counts both, so rows
+    where the parser — not the policy's decisions — shaped the outcome are identifiable.
+    """
 
     def __init__(
         self,
@@ -131,8 +145,20 @@ class PolicyAgent:
             memory=f"\n{memory_block}" if memory_block else "",
         )
         self._temperature = temperature
+        self.parse_failures = 0
 
     def act(self, task: str | None, state: EnvState, history: list[Step]) -> Action:
+        user = self._render_turn(task, history)
+        action = self._propose(user)
+        if action is None:
+            self.parse_failures += 1
+            action = self._propose(f"{user}\n\n{_REPARSE_NUDGE}")
+        if action is None:
+            self.parse_failures += 1
+            return Action(kind=ActionKind.MESSAGE, content=DONE_SIGNAL)
+        return action
+
+    def _render_turn(self, task: str | None, history: list[Step]) -> str:
         lines = [f"TASK:\n{task or '(none)'}", "", "EPISODE SO FAR:"]
         if not history:
             lines.append("(no steps yet)")
@@ -141,55 +167,51 @@ class PolicyAgent:
             flag = " [ERROR]" if step.observation.is_error else ""
             lines.append(f"{i}. {render_action(step.action)}\n   -> {flag}{observation}")
         lines.append("\nYour next JSON:")
+        return "\n".join(lines)
+
+    def _propose(self, user: str) -> Action | None:
         completion = self._provider.complete(
             self._system,
-            [Message(role="user", content="\n".join(lines))],
+            [Message(role="user", content=user)],
             temperature=self._temperature,
             max_tokens=1024,
         )
         return _parse_action(completion.text)
 
 
-def _parse_action(text: str) -> Action:
+def _parse_action(text: str) -> Action | None:
+    """One of the two allowed reply shapes, or None if the reply matches neither."""
     raw = extract_json_object(text)
-    if raw is not None:
-        try:
-            call = _ToolCall.model_validate_json(raw)
-            return Action(kind=ActionKind.TOOL_CALL, name=call.tool, arguments=call.arguments)
-        except ValidationError:
-            pass
-        try:
-            done = _Done.model_validate_json(raw)
-            if done.done:
-                return Action(kind=ActionKind.MESSAGE, content=DONE_SIGNAL)
-        except ValidationError:
-            pass
-    # Unparseable replies end the episode rather than feeding garbage to the world model.
-    return Action(kind=ActionKind.MESSAGE, content=DONE_SIGNAL)
+    if raw is None:
+        return None
+    try:
+        call = _ToolCall.model_validate_json(raw)
+        return Action(kind=ActionKind.TOOL_CALL, name=call.tool, arguments=call.arguments)
+    except ValidationError:
+        pass
+    try:
+        done = _Done.model_validate_json(raw)
+    except ValidationError:
+        return None
+    return Action(kind=ActionKind.MESSAGE, content=DONE_SIGNAL) if done.done else None
 
 
-def _tool_inventory(train: list[Trace]) -> dict[str, str]:
-    """domain -> 'name: arg, arg' lines, derived from the TRAIN split only (leak-free)."""
-    tools: dict[str, dict[str, set[str]]] = defaultdict(lambda: defaultdict(set))
-    for trace in train:
-        domain = str(trace.metadata.get("domain") or "unknown")
-        for step in trace.steps:
-            if step.action.kind is ActionKind.TOOL_CALL and step.action.name:
-                tools[domain][step.action.name].update(step.action.arguments)
-    blocks: dict[str, str] = {}
-    for domain, by_name in tools.items():
-        lines = [
-            f"- {name}: {', '.join(sorted(args)) or '(no args)'}"
-            for name, args in sorted(by_name.items())
-        ]
-        blocks[domain] = "\n".join(lines)
-    return blocks
+def _load_tools() -> dict[str, str]:
+    """The pinned per-domain tool inventory, rendered as prompt blocks."""
+    inventory: dict[str, dict[str, list[str]]] = json.loads(_TOOLS_PATH.read_text(encoding="utf-8"))
+    return {
+        domain: "\n".join(
+            f"- {name}: {', '.join(args) or '(no args)'}" for name, args in by_name.items()
+        )
+        for domain, by_name in inventory.items()
+    }
 
 
 def _memory_block(records: list[MemoryRecord], domain: str) -> str:
-    """Cross-task learnings: same-domain records first, most recent first, capped."""
-    ranked = [r for r in records if r.domain == domain] + [r for r in records if r.domain != domain]
-    picked = ranked[:MEMORY_RECORDS]
+    """Cross-task learnings: same-domain first, most recent first, capped at MEMORY_RECORDS."""
+    same = [r for r in reversed(records) if r.domain == domain]
+    other = [r for r in reversed(records) if r.domain != domain]
+    picked = (same + other)[:MEMORY_RECORDS]
     if not picked:
         return ""
     lines = ["== Learnings from prior tasks (use them; do not repeat mistakes) =="]
@@ -247,9 +269,10 @@ def _episode(
     temperature: float,
     attempt: int,
 ) -> RowResult:
+    """One scored episode. Infra failures come back as an `error` row, never an exception."""
     agent = PolicyAgent(
         policy,
-        tools.get(scenario.domain, tools.get("unknown", "(tools unknown)")),
+        tools.get(scenario.domain, "(tools unknown)"),
         scenario.domain,
         memory_block=memory_block,
         temperature=temperature,
@@ -257,8 +280,16 @@ def _episode(
     env = WorldModelEnv(wm, score_on_close=True)
     started = time.monotonic()
     result = run_episode(env, agent, task=scenario.task, max_steps=MAX_STEPS)
-    score: EpisodeScore = env.last_score
     usage = env.usage
+    try:
+        score: EpisodeScore = env.last_score
+    except RuntimeError as exc:
+        # Judge failed during the scoring close (throttle/network); the session was still
+        # freed. Record an error row so the batch continues and the row is excluded upstream.
+        score = EpisodeScore(reward=0.0, success=False, critique="")
+        error = f"scoring failed: {exc.__cause__ or exc}"
+    else:
+        error = result.error and f"{result.stop_reason}: {result.error}"
     return RowResult(
         scenario_id=scenario.provenance[0],
         domain=scenario.domain,
@@ -268,6 +299,8 @@ def _episode(
         reward=score.reward,
         success=score.success,
         critique=score.critique,
+        parse_failures=agent.parse_failures,
+        error=error,
         wm_cost_usd=usage.total.cost_usd if usage else None,
         seconds=round(time.monotonic() - started, 1),
     )
@@ -276,13 +309,21 @@ def _episode(
 def _summarize(rows: list[RowResult]) -> str:
     if not rows:
         return "no rows"
+    scored = [r for r in rows if r.error is None]
+    errored = len(rows) - len(scored)
+    if not scored:
+        return f"no scored rows ({errored} infra errors)"
     by_domain: dict[str, list[RowResult]] = defaultdict(list)
-    for r in rows:
+    for r in scored:
         by_domain[r.domain].append(r)
-    success = sum(1 for r in rows if r.success) / len(rows)
-    reward = sum(r.reward for r in rows) / len(rows)
+    success = sum(1 for r in scored if r.success) / len(scored)
+    reward = sum(r.reward for r in scored) / len(scored)
     cost = sum(r.wm_cost_usd or 0.0 for r in rows)
-    parts = [f"n={len(rows)} success={success:.2%} mean_reward={reward:.3f} wm_cost=${cost:.2f}"]
+    parse_failures = sum(r.parse_failures for r in rows)
+    parts = [
+        f"n={len(scored)} success={success:.2%} mean_reward={reward:.3f} wm_cost=${cost:.2f}"
+        f" infra_errors={errored} parse_failures={parse_failures}"
+    ]
     for domain, group in sorted(by_domain.items()):
         ds = sum(1 for r in group if r.success) / len(group)
         parts.append(f"  {domain}: n={len(group)} success={ds:.2%}")
@@ -299,24 +340,45 @@ def main() -> int:
     )
     parser.add_argument("--limit", type=int, default=0, help="cap scenarios (0 = all)")
     parser.add_argument("--attempts", type=int, default=2, help="attempts per scenario (single)")
-    parser.add_argument("--temperature", type=float, default=0.7)
+    parser.add_argument(
+        "--temperature", type=float, default=0.7, help="policy sampling (vllm/openai only)"
+    )
     parser.add_argument("--memory", type=Path, default=_HERE / "icl_memory.jsonl")
     parser.add_argument("--out", type=Path, default=None, help="results JSONL (default: derived)")
     parser.add_argument("--wandb", action="store_true", help="log rows to wandb wmh-rl-transfer")
     args = parser.parse_args()
+    if args.attempts < 1:
+        parser.error("--attempts must be >= 1")
+    if args.limit < 0:
+        parser.error("--limit must be >= 0")
+    if args.mode == "collect" and args.scenarios != "train":
+        parser.error(
+            "--mode collect only runs on --scenarios train: memory collected from eval "
+            "scenarios would leak judge feedback about the eval tasks into the multi row"
+        )
+
+    run = None
+    if args.wandb:
+        # Fail fast (before any WM/provider setup) if wandb isn't installed:
+        # examples are gate-excluded, so this is an opt-in extra (uv run --with wandb ...).
+        import wandb
+
+        run = wandb.init(
+            project="wmh-rl-transfer",
+            name=f"icl-{args.mode}-{args.scenarios}-wm_{args.wm}",
+            config={k: str(v) for k, v in vars(args).items()},
+        )
 
     scenario_path = _SCENARIO_FILES[args.scenarios]
     scenarios = [
         PinnedScenario.model_validate_json(line)
-        for line in scenario_path.read_text().splitlines()
+        for line in scenario_path.read_text(encoding="utf-8").splitlines()
         if line.strip()
     ]
     if args.limit:
         scenarios = scenarios[: args.limit]
 
-    config = load_config(str(_MODEL_DIR))
-    train, _val, _test = split_traces_3way(ingest(config, file=str(_TRACES_PATH)), 0.8, 0.1)
-    tools = _tool_inventory(train)
+    tools = _load_tools()
     wm = _build_wm(args.wm)
     policy = _build_policy(args.policy)
 
@@ -326,64 +388,59 @@ def main() -> int:
             raise SystemExit(f"--mode multi needs {args.memory} (run --mode collect first)")
         memory = [
             MemoryRecord.model_validate_json(line)
-            for line in args.memory.read_text().splitlines()
+            for line in args.memory.read_text(encoding="utf-8").splitlines()
             if line.strip()
         ]
 
-    run = None
-    if args.wandb:
-        import wandb  # example-local optional dep: uv run --with wandb ...
-
-        run = wandb.init(
-            project="wmh-rl-transfer",
-            name=f"icl-{args.mode}-{args.scenarios}-wm_{args.wm}",
-            config={k: str(v) for k, v in vars(args).items()},
-        )
-
+    out = args.out or _HERE / f"icl_{args.mode}_{args.scenarios}_wm-{args.wm}.results.jsonl"
+    attempts = args.attempts if args.mode == "single" else 1
     rows: list[RowResult] = []
     collected: list[MemoryRecord] = []
-    for i, scenario in enumerate(scenarios, start=1):
-        attempts = args.attempts if args.mode == "single" else 1
-        prior: list[RowResult] = []
-        for attempt in range(1, attempts + 1):
-            if args.mode == "multi":
-                block = _memory_block(memory, scenario.domain)
-            elif args.mode == "single":
-                block = _self_critique_block(prior)
-            else:
-                block = ""
-            row = _episode(wm, policy, scenario, tools, block, args.temperature, attempt)
-            prior.append(row)
-            print(
-                f"[{i}/{len(scenarios)} a{attempt}] {scenario.domain} "
-                f"reward={row.reward:.2f} success={row.success} steps={row.steps} "
-                f"({row.seconds}s)"
-            )
-        final = prior[-1]
-        rows.append(final)
-        if run is not None:
-            run.log(
-                {
-                    "reward": final.reward,
-                    "success": int(final.success),
-                    "steps": final.steps,
-                    "wm_cost_usd": final.wm_cost_usd or 0.0,
-                    "scenario_index": i,
-                }
-            )
-        if args.mode == "collect":
-            collected.append(
-                MemoryRecord(
-                    scenario_id=final.scenario_id,
-                    domain=final.domain,
-                    success=final.success,
-                    reward=final.reward,
-                    critique=final.critique,
+    with out.open("w", encoding="utf-8") as sink:  # rows land as they finish, not at the end
+        for i, scenario in enumerate(scenarios, start=1):
+            prior: list[RowResult] = []
+            for attempt in range(1, attempts + 1):
+                if args.mode == "multi":
+                    block = _memory_block(memory, scenario.domain)
+                elif args.mode == "single":
+                    block = _self_critique_block(prior)
+                else:
+                    block = ""
+                row = _episode(wm, policy, scenario, tools, block, args.temperature, attempt)
+                prior.append(row)
+                note = f" ERROR={row.error}" if row.error else ""
+                print(
+                    f"[{i}/{len(scenarios)} a{attempt}] {scenario.domain} "
+                    f"reward={row.reward:.2f} success={row.success} steps={row.steps} "
+                    f"({row.seconds}s){note}"
                 )
-            )
+            final = prior[-1]
+            rows.append(final)
+            sink.write(final.model_dump_json() + "\n")
+            sink.flush()
+            if run is not None:
+                run.log(
+                    {
+                        "reward": final.reward,
+                        "success": int(final.success),
+                        "steps": final.steps,
+                        "parse_failures": final.parse_failures,
+                        "infra_error": int(final.error is not None),
+                        "wm_cost_usd": final.wm_cost_usd or 0.0,
+                        "scenario_index": i,
+                    }
+                )
+            if args.mode == "collect" and final.error is None:
+                collected.append(
+                    MemoryRecord(
+                        scenario_id=final.scenario_id,
+                        domain=final.domain,
+                        success=final.success,
+                        reward=final.reward,
+                        critique=final.critique,
+                    )
+                )
 
-    out = args.out or _HERE / f"icl_{args.mode}_{args.scenarios}_wm-{args.wm}.results.jsonl"
-    out.write_text("\n".join(r.model_dump_json() for r in rows) + "\n", encoding="utf-8")
     if args.mode == "collect":
         args.memory.write_text(
             "\n".join(r.model_dump_json() for r in collected) + "\n", encoding="utf-8"
@@ -393,8 +450,11 @@ def main() -> int:
     print(_summarize(rows))
     print(f"rows -> {out}")
     if run is not None:
-        run.summary["success_rate"] = sum(1 for r in rows if r.success) / len(rows)
-        run.summary["mean_reward"] = sum(r.reward for r in rows) / len(rows)
+        scored = [r for r in rows if r.error is None]
+        if scored:
+            run.summary["success_rate"] = sum(1 for r in scored if r.success) / len(scored)
+            run.summary["mean_reward"] = sum(r.reward for r in scored) / len(scored)
+        run.summary["infra_errors"] = len(rows) - len(scored)
         run.finish()
     return 0
 

@@ -169,31 +169,57 @@ def test_live_verify() -> None:  # pragma: no cover - network
     assert provider.verify().ok is True
 
 
-def test_custom_endpoint_reaches_the_client(monkeypatch) -> None:  # noqa: ANN001
-    """ProviderConfig.endpoint must become the client's base_url (vLLM / OpenAI-compatible)."""
-    from wmh.providers.base import ProviderKind
-    from wmh.providers.openai import OpenAIProvider
-
-    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
-    provider = OpenAIProvider(
+def _endpoint_provider() -> OpenAIProvider:
+    return OpenAIProvider(
         ProviderConfig(
             kind=ProviderKind.OPENAI, model="qwen3.5-9b", endpoint="http://localhost:8001/v1"
         )
     )
-    client = provider._get_client()
+
+
+def test_custom_endpoint_reaches_the_client(monkeypatch: pytest.MonkeyPatch) -> None:
+    """ProviderConfig.endpoint must become the client's base_url (vLLM / OpenAI-compatible)."""
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    client = _endpoint_provider()._get_client()
     assert str(client.base_url).rstrip("/") == "http://localhost:8001/v1"
 
 
-def test_custom_endpoint_needs_no_openai_key(monkeypatch) -> None:  # noqa: ANN001
-    """A self-hosted OpenAI-compatible server (vLLM) has no real key; loading must not raise."""
-    from wmh.providers.base import ProviderKind
-    from wmh.providers.openai import OpenAIProvider
+def test_custom_endpoint_never_receives_the_real_openai_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """OPENAI_API_KEY must not be sent as a Bearer token to an arbitrary custom endpoint."""
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-real-openai-secret")
+    monkeypatch.delenv("WMH_ENDPOINT_API_KEY", raising=False)
+    client = _endpoint_provider()._get_client()
+    assert client.api_key != "sk-real-openai-secret"
 
+
+def test_custom_endpoint_uses_dedicated_key_when_set(monkeypatch: pytest.MonkeyPatch) -> None:
+    """An authenticated OpenAI-compatible server takes its key from WMH_ENDPOINT_API_KEY."""
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-real-openai-secret")
+    monkeypatch.setenv("WMH_ENDPOINT_API_KEY", "endpoint-token")
+    client = _endpoint_provider()._get_client()
+    assert client.api_key == "endpoint-token"
+
+
+def test_custom_endpoint_needs_no_openai_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A self-hosted OpenAI-compatible server (vLLM) has no real key; loading must not raise."""
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-    provider = OpenAIProvider(
-        ProviderConfig(
-            kind=ProviderKind.OPENAI, model="qwen3.5-9b", endpoint="http://localhost:8001/v1"
-        )
-    )
-    client = provider._get_client()
+    monkeypatch.delenv("WMH_ENDPOINT_API_KEY", raising=False)
+    client = _endpoint_provider()._get_client()
     assert client.api_key  # placeholder key, not an exception
+
+
+def test_custom_endpoint_forwards_temperature_but_openai_does_not(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Self-hosted servers get the sampling param; real OpenAI (GPT-5.5) must not (rejects it)."""
+    for endpoint, expects_temperature in [("http://localhost:8001/v1", True), (None, False)]:
+        provider = OpenAIProvider(
+            ProviderConfig(kind=ProviderKind.OPENAI, model="m", endpoint=endpoint)
+        )
+        chat = _FakeChatCompletions(_FakeChatResponse("ok", _FakeUsage(1, 1)))
+        fake = _FakeClient(chat, _FakeEmbeddings(_FakeEmbeddingResponse([[0.0]])))
+        monkeypatch.setattr(provider, "_get_client", lambda fake=fake: fake)
+        provider.complete("sys", [Message(role="user", content="hi")], temperature=0.3)
+        assert ("temperature" in chat.last_kwargs) is expects_temperature

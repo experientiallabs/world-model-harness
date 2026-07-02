@@ -12,6 +12,9 @@ re-derive (a corpus append would silently shift a re-derived list).
 - eval scenarios: EVERY test-split scenario (no sampling — the eval set must never look chosen)
 - identity: each line carries `provenance` (source trace_ids); consumers key on provenance,
   never on line number
+- tools.json: the per-domain tool inventory (name -> argument keys) derived from the TRAIN
+  split only, pinned for the same reason the scenarios are — every arm's agent must see the
+  same tool list, and a corpus append must not silently change it
 
 Run from the repo root:  uv run python examples/tau-bench/rl/pin_scenarios.py
 Idempotent: re-running on the same corpus rewrites byte-identical files.
@@ -25,7 +28,7 @@ from collections import defaultdict
 from pathlib import Path
 
 from wmh.config import load_config
-from wmh.core.types import Trace
+from wmh.core.types import ActionKind, Trace
 from wmh.engine import ingest, split_traces_3way
 from wmh.env import Scenario, scenarios_from_traces
 
@@ -37,6 +40,21 @@ SEED = 4405  # the repo's benchmark-convention seed (D12 lineage)
 
 TRAIN_OUT = _HERE / "scenarios_train.jsonl"
 EVAL_OUT = _HERE / "scenarios_eval.jsonl"
+TOOLS_OUT = _HERE / "tools.json"
+
+
+def _tool_inventory(train: list[Trace]) -> dict[str, dict[str, list[str]]]:
+    """domain -> {tool name -> sorted argument keys}, from the TRAIN split only (leak-free)."""
+    tools: dict[str, dict[str, set[str]]] = defaultdict(lambda: defaultdict(set))
+    for trace in train:
+        domain = _domain(trace)
+        for step in trace.steps:
+            if step.action.kind is ActionKind.TOOL_CALL and step.action.name:
+                tools[domain][step.action.name].update(step.action.arguments)
+    return {
+        domain: {name: sorted(args) for name, args in sorted(by_name.items())}
+        for domain, by_name in sorted(tools.items())
+    }
 
 
 def _domain(trace: Trace) -> str:
@@ -100,6 +118,9 @@ def main() -> int:
 
     _write(TRAIN_OUT, train_scenarios, by_trace)
     _write(EVAL_OUT, eval_scenarios, by_trace)
+    TOOLS_OUT.write_text(
+        json.dumps(_tool_inventory(train), indent=1, sort_keys=True) + "\n", encoding="utf-8"
+    )
 
     def _counts(scenarios: list[Scenario]) -> dict[str, int]:
         counts: dict[str, int] = defaultdict(int)
@@ -111,7 +132,7 @@ def main() -> int:
     print(f"corpus: {len(traces)} traces -> {split_note}")
     print(f"train scenarios: {len(train_scenarios)} (cap {TRAIN_CAP}) {_counts(train_scenarios)}")
     print(f"eval scenarios:  {len(eval_scenarios)} (ALL of test) {_counts(eval_scenarios)}")
-    print(f"wrote {TRAIN_OUT.name}, {EVAL_OUT.name}")
+    print(f"wrote {TRAIN_OUT.name}, {EVAL_OUT.name}, {TOOLS_OUT.name}")
     return 0
 
 
