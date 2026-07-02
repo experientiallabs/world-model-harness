@@ -15,11 +15,12 @@ from wmh.config import ArtifactPaths, load_config
 from wmh.core.parsing import parse_observation
 from wmh.core.types import Action, EnvState, Observation, Session, Step
 from wmh.engine.prompts import BASE_ENV_PROMPT, build_env_prompt
+from wmh.optimize.reward import EpisodeRewardJudge, EpisodeScore
 from wmh.providers.base import Embedder, Message, Provider
 from wmh.retrieval import EmbeddingRetriever, Retriever
 from wmh.retrieval.embedders import get_embedder
 from wmh.telemetry import capture
-from wmh.tracking import Phase, RunRecord, RunTracker
+from wmh.tracking import MeteredProvider, Phase, RunRecord, RunTracker
 
 
 class WorldModel:
@@ -30,6 +31,7 @@ class WorldModel:
         env_prompt: str = BASE_ENV_PROMPT,
         top_k: int = 5,
         telemetry_root: str | Path = ".wmh",
+        reward_provider: Provider | None = None,
     ) -> None:
         self._provider = provider
         self._retriever = retriever
@@ -40,6 +42,9 @@ class WorldModel:
         # Per-session token/cost/time accounting (serve-time observability). One tracker per
         # session, started when the session is created; `session_usage` exposes running totals.
         self._trackers: dict[str, RunTracker] = {}
+        # Reward judging (`score_session`) defaults to the serve provider; pass `reward_provider`
+        # to judge with a different model than the one simulating the environment.
+        self._reward_provider = reward_provider or provider
 
     @classmethod
     def load(
@@ -117,6 +122,31 @@ class WorldModel:
     def sample_steps(self, n: int) -> list[Step]:
         """Return up to `n` steps from the replay buffer (used to seed the demo agent)."""
         return self._retriever.sample(n)
+
+    def score_session(self, session_id: str) -> EpisodeScore:
+        """Judge the session's rollout so far: episode reward, per-step rewards, and a critique.
+
+        This is the RL reward signal. The reward judge sees the session's task and its full step
+        history — never a gold trace — and returns everything the algorithms need in one call:
+        scalar reward/success (GRPO, PPO, REINFORCE++), `step_rewards` (dense diagnostics), and
+        `critique` (SDPO's teacher feedback). Raises `KeyError` for an unknown session id.
+
+        Judge usage is metered onto the session's tracker under `Phase.JUDGE`, so `session_usage`
+        keeps reward cost separate from the world model's SERVE cost.
+        """
+        session = self._sessions[session_id]
+        tracker = self._trackers.get(session_id)
+        provider = (
+            MeteredProvider(self._reward_provider, tracker, base_phase=Phase.JUDGE)
+            if tracker is not None
+            else self._reward_provider
+        )
+        score = EpisodeRewardJudge(provider).score(session.task, session.history)
+        # The scalar rides the final observation too, so replay-buffer consumers that read
+        # Observation.reward (DreamGym-style terminal r) see the same number the API returned.
+        if session.history:
+            session.history[-1].observation.reward = score.reward
+        return score
 
     def render_step_prompt(self, session_id: str, action: Action) -> str:
         """Assemble the exact (system + user) env prompt `step` would send, without calling the LLM.
