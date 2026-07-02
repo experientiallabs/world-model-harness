@@ -22,6 +22,19 @@ def _tool_use(name: str, tool_input: dict[str, JsonValue]) -> dict[str, JsonValu
     }
 
 
+def _parallel_tool_use(
+    calls: list[tuple[str, str, dict[str, JsonValue]]],
+) -> dict[str, JsonValue]:
+    """A single assistant message emitting several toolUse blocks at once (as Bedrock may)."""
+    content: list[JsonValue] = [{"text": "thinking..."}]
+    for tool_use_id, name, tool_input in calls:
+        content.append({"toolUse": {"toolUseId": tool_use_id, "name": name, "input": tool_input}})
+    return {
+        "output": {"message": {"role": "assistant", "content": content}},
+        "stopReason": "tool_use",
+    }
+
+
 class _StubClient:
     def __init__(self, responses: list[dict[str, JsonValue]]) -> None:
         self._responses = responses
@@ -77,6 +90,42 @@ def test_agent_stops_at_max_steps(tmp_path) -> None:  # noqa: ANN001
         env.close()
     assert len(run.steps) == 2
     assert run.final_answer == ""
+
+
+def test_agent_answers_every_parallel_tool_use(tmp_path) -> None:  # noqa: ANN001
+    # Bedrock rejects the next turn unless EVERY toolUse id in an assistant message gets a
+    # toolResult. When a model emits parallel bash calls, the agent must execute and answer all.
+    client = _StubClient(
+        [
+            _parallel_tool_use(
+                [
+                    ("t1", "bash", {"command": "echo one"}),
+                    ("t2", "bash", {"command": "echo two"}),
+                ]
+            ),
+            _tool_use("submit", {"answer": "done"}),
+        ]
+    )
+    agent = BedrockBashAgent(model_id="m", client=client)
+    env = LocalBashEnv(workspace=tmp_path)
+    try:
+        run = agent.run(Task(task_id="t0", prompt="q", data={}), env)
+    finally:
+        env.close()
+
+    assert len(run.steps) == 2
+    assert [s.action.arguments["command"] for s in run.steps] == ["echo one", "echo two"]
+    # The follow-up user turn must carry a toolResult for BOTH parallel tool-use ids.
+    follow_up = client.calls[1]["messages"][-1]
+    assert isinstance(follow_up, dict)
+    content = follow_up["content"]
+    assert isinstance(content, list)
+    answered = {
+        block["toolResult"]["toolUseId"]
+        for block in content
+        if isinstance(block, dict) and isinstance(block.get("toolResult"), dict)
+    }
+    assert answered == {"t1", "t2"}
 
 
 def test_plain_text_reply_is_the_final_answer(tmp_path) -> None:  # noqa: ANN001
