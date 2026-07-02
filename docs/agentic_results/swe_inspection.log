@@ -1,4 +1,0 @@
-swe-bench: 20 test traces
-  base    fidelity=0.710 error_flag_acc=0.981 n=53
-  reason  fidelity=0.748 error_flag_acc=0.981 n=53
-wrote swe-bench.inspection.json
