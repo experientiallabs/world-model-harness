@@ -46,7 +46,9 @@ fallback) — see `environment_capture/benchmarks/financebench.py`.
   here is fresh.
 - **Traces**: converted with `convert_cache.py` from a frozen baseline cache of REAL runs over
   the same materialization (model `gpt-5.4`, mean reward 0.289 across the full 121-task train
-  split; 32 zero-transition trajectories skipped at conversion). Converted traces keep the
+  split; 32 zero-transition trajectories skipped at conversion; the recording harness's
+  submission sentinel is normalized to the neutral `SUBMIT` by the shared loader — apparatus
+  protocol, not environment content). Converted traces keep the
   original run's reward in metadata; future fresh captures via `capture.py` are graded by this
   adapter's grader (documented thresholds, not identical) and carry their own model id.
 

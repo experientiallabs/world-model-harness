@@ -39,7 +39,7 @@ _BENCHMARK = "bird-sql"
 
 _SQL_INSTRUCTIONS = (
     "\n\nThe SQLite database is ./database.db and its DDL schema is ./schema.sql. Read the schema, "
-    "then explore the data with the sqlite3 CLI (e.g. `sqlite3 database.db \"SELECT ...\"`). When "
+    'then explore the data with the sqlite3 CLI (e.g. `sqlite3 database.db "SELECT ..."`). When '
     "confident, call submit with your final answer set to a single SQLite SELECT query (no prose) "
     "that answers the question."
 )

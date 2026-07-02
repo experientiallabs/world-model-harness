@@ -9,10 +9,12 @@ import pytest
 
 from environment_capture.baseline_cache import load_baseline_cache
 
-_ASSISTANT_0 = "I'll list the docs first.\n```sib_bash\nls docs && grep -in capex docs/*.txt\n```"
+# Fixtures use a made-up recording harness ("zq"): a `zq_bash` fence language and a `ZQ_SUBMIT`
+# submission sentinel, exercising the format-generic parsing and sentinel normalization.
+_ASSISTANT_0 = "I'll list the docs first.\n```zq_bash\nls docs && grep -in capex docs/*.txt\n```"
 _USER_0 = "<returncode>0</returncode>\n<output>\na.txt\nb.txt\n</output>"
-_ASSISTANT_1 = "Submitting.\n```sib_bash\nprintf 'SIB_SUBMIT\\n$1577.00\\n'\n```"
-_USER_1 = "<returncode>0</returncode>\n<output>\nSIB_SUBMIT\n$1577.00\n</output>"
+_ASSISTANT_1 = "Submitting.\n```zq_bash\nprintf 'ZQ_SUBMIT\\n$1577.00\\n'\n```"
+_USER_1 = "<returncode>0</returncode>\n<output>\nZQ_SUBMIT\n$1577.00\n</output>"
 
 
 def _write_cache(root: Path) -> Path:
@@ -82,6 +84,31 @@ def test_load_baseline_cache_parses_commands_and_observations(tmp_path: Path) ->
     assert failed.steps[0].output == "boom"
 
 
+def test_load_baseline_cache_normalizes_submission_sentinel(tmp_path: Path) -> None:
+    """The recording harness's ALLCAPS `*_SUBMIT` sentinel is normalized to `SUBMIT` at load.
+
+    The sentinel is the recording apparatus's submission protocol keyword, not environment
+    content — no result, path, or number is altered — and normalizing it keeps corpora
+    harness-agnostic (no recording-harness identifier survives in commands or observations).
+    """
+    trajectories = load_baseline_cache(_write_cache(tmp_path))
+    submit_step = trajectories[0].steps[1]
+    assert submit_step.action.arguments == {"command": "printf 'SUBMIT\\n$1577.00\\n'"}
+    assert submit_step.output == "SUBMIT\n$1577.00"
+    # The sentinel is often GLUED to prior output (a cat without a trailing newline before the
+    # printf), so normalization must not require a leading word boundary.
+    from environment_capture.baseline_cache import _normalize_sentinel
+
+    assert _normalize_sentinel("New York Stock ExchangeZQ_SUBMIT\nAnswer: x") == (
+        "New York Stock ExchangeSUBMIT\nAnswer: x"
+    )
+    assert _normalize_sentinel("...46ZQ_SUBMIT\nAnswer: y") == "...46SUBMIT\nAnswer: y"
+    corpus_text = json.dumps(
+        [[s.action.arguments, s.output] for t in trajectories for s in t.steps]
+    )
+    assert "ZQ_SUBMIT" not in corpus_text
+
+
 def test_load_baseline_cache_skips_rejected_command_nudge(tmp_path: Path) -> None:
     """A harness correction turn (no observation markers) means the command never ran.
 
@@ -94,8 +121,8 @@ def test_load_baseline_cache_skips_rejected_command_nudge(tmp_path: Path) -> Non
     trace = json.loads(trace_path.read_text())
     # Insert a rejected command + nudge before the first real (executed) command.
     nudge = [
-        {"role": "assistant", "content": "Two at once.\n```sib_bash\nls\ncat a.txt\n```"},
-        {"role": "user", "content": "Provide exactly ONE ```sib_bash``` command block."},
+        {"role": "assistant", "content": "Two at once.\n```zq_bash\nls\ncat a.txt\n```"},
+        {"role": "user", "content": "Provide exactly ONE ```zq_bash``` command block."},
     ]
     trace["messages"][2:2] = nudge
     trace_path.write_text(json.dumps(trace))
@@ -105,7 +132,7 @@ def test_load_baseline_cache_skips_rejected_command_nudge(tmp_path: Path) -> Non
     # The nudged command is dropped; only the two real transitions survive, in order.
     assert [s.action.arguments["command"] for s in ok.steps] == [
         "ls docs && grep -in capex docs/*.txt",
-        "printf 'SIB_SUBMIT\\n$1577.00\\n'",
+        "printf 'SUBMIT\\n$1577.00\\n'",
     ]
 
 

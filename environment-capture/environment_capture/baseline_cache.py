@@ -11,6 +11,11 @@ Some harnesses reply to a malformed assistant turn (e.g. two commands at once) w
 free-text correction instead of executing anything. Such a turn carries no observation markers
 at all, so the command never ran and is not a transition — it is skipped. A follow-up turn that
 *does* look like an observation but is missing a marker is real format drift and still raises.
+
+One normalization is applied to the loaded text: the recording harness's submission sentinel (an
+ALLCAPS ``*_SUBMIT`` protocol keyword echoed into the final command and its output) becomes the
+neutral ``SUBMIT``. The sentinel belongs to the recording apparatus, not the environment being
+modeled — no result, path, or number is altered — and normalizing keeps corpora harness-agnostic.
 """
 
 from __future__ import annotations
@@ -24,6 +29,14 @@ from environment_capture.trajectory import JsonValue, StepRecord, Task, ToolCall
 _FENCE_RE = re.compile(r"```\w*bash\s*\n(.*?)```", re.DOTALL)
 _RETURNCODE_RE = re.compile(r"<returncode>(-?\d+)</returncode>")
 _OUTPUT_RE = re.compile(r"<output>\n?(.*?)\n?</output>\s*\Z", re.DOTALL)
+# No leading \b: the sentinel is often glued to prior output (e.g. a cat without a trailing
+# newline directly followed by the sentinel echo), which a word boundary would miss.
+_SENTINEL_RE = re.compile(r"[A-Z][A-Z0-9]{1,7}_SUBMIT\b")
+
+
+def _normalize_sentinel(text: str) -> str:
+    """Rewrite the recording harness's ``*_SUBMIT`` sentinel to the neutral ``SUBMIT``."""
+    return _SENTINEL_RE.sub("SUBMIT", text)
 
 
 def _is_observation(content: str) -> bool:
@@ -61,8 +74,8 @@ def _steps_from_messages(messages: list[dict[str, str]], *, task_id: str) -> lis
         output, returncode = _parse_observation(follow_content, task_id=task_id)
         steps.append(
             StepRecord(
-                action=ToolCall(name="bash", arguments={"command": command}),
-                output=output,
+                action=ToolCall(name="bash", arguments={"command": _normalize_sentinel(command)}),
+                output=_normalize_sentinel(output),
                 is_error=returncode != 0,
             )
         )
@@ -95,7 +108,7 @@ def load_baseline_cache(cache_dir: Path) -> list[Trajectory]:
                     data=task_raw.get("data", {}),
                 ),
                 steps=_steps_from_messages(trace_raw.get("messages", []), task_id=task_id),
-                final_answer=str(trace_raw.get("submission", "")),
+                final_answer=_normalize_sentinel(str(trace_raw.get("submission", ""))),
                 reward=float(entry["reward"]) if entry.get("reward") is not None else None,
                 model=model,
                 split=split,
