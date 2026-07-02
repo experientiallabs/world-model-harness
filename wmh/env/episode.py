@@ -11,10 +11,10 @@ from typing import Protocol, runtime_checkable
 
 from pydantic import BaseModel, Field
 
-from wmh.core.types import Action, EnvState, Step
+from wmh.core.types import Action, ActionKind, EnvState, Step
 from wmh.env.base import Env
 
-# An agent signals it is finished by returning an action whose metadata-free content equals this.
+# An agent signals it is finished by returning a MESSAGE action whose content equals this.
 DONE_SIGNAL = "<DONE>"
 
 
@@ -22,8 +22,9 @@ DONE_SIGNAL = "<DONE>"
 class Agent(Protocol):
     """Anything that maps the episode so far to the next action.
 
-    `act` sees the task, the initial state, and the full history of steps taken this episode.
-    Return an `Action` to continue, or a MESSAGE action whose content is `DONE_SIGNAL` to stop.
+    `act` sees the task, the env's live state view (see `Env.reset`), and the full history of
+    steps taken this episode. Return an `Action` to continue, or a MESSAGE action whose content
+    is `DONE_SIGNAL` to stop.
     """
 
     def act(self, task: str | None, state: EnvState, history: list[Step]) -> Action: ...
@@ -41,44 +42,53 @@ class EpisodeResult(BaseModel):
     task: str | None = None
     steps: list[Step] = Field(default_factory=list)
     stop_reason: StopReason
-    error: str | None = None  # set when stop_reason == ENV_ERROR
+    error: str | None = None  # set when stop_reason == ENV_ERROR; names the failing action
 
 
 def run_episode(
-    env_: Env,
+    env: Env,
     agent: Agent,
     task: str | None = None,
     *,
     seed_state: EnvState | None = None,
     max_steps: int = 20,
 ) -> EpisodeResult:
-    """Roll one episode of `agent` against `env_`, bounded by `max_steps`.
+    """Roll one episode of `agent` against `env`, bounded by `max_steps`.
 
     The env's `reset`/`close` bracket the episode; each turn the agent proposes an action from the
-    accumulated history and the env answers with an observation. An env exception is recorded (not
-    raised) so batch runs survive a flaky backend; callers inspect `stop_reason`/`error`.
+    accumulated history and the env answers with an observation. Each recorded step's
+    `state_before` is a deep copy of the env's state at that moment (the live state object keeps
+    mutating; see `Env.reset`). An env exception is recorded (not raised) so batch runs survive a
+    flaky backend; callers inspect `stop_reason`/`error`.
     """
     if max_steps < 1:
         raise ValueError(f"max_steps must be >= 1, got {max_steps}")
-    state = env_.reset(task=task, seed_state=seed_state)
-    history: list[Step] = []
     try:
+        state = env.reset(task=task, seed_state=seed_state)
+        history: list[Step] = []
         for _ in range(max_steps):
             action = agent.act(task, state, history)
-            if action.content == DONE_SIGNAL:
+            if action.kind is ActionKind.MESSAGE and action.content == DONE_SIGNAL:
                 return EpisodeResult(task=task, steps=history, stop_reason=StopReason.AGENT_DONE)
+            state_before = state.model_copy(deep=True)
             try:
-                observation = env_.step(action)
+                observation = env.step(action)
             except Exception as exc:  # noqa: BLE001 - batch runs must survive one bad episode
                 return EpisodeResult(
                     task=task,
                     steps=history,
                     stop_reason=StopReason.ENV_ERROR,
-                    error=f"{type(exc).__name__}: {exc}",
+                    error=(
+                        f"{type(exc).__name__}: {exc} "
+                        f"(while executing {action.kind.value} {action.name or action.content!r})"
+                    ),
                 )
             history.append(
-                Step(action=action, observation=observation, state_before=state, task=task)
+                Step(action=action, observation=observation, state_before=state_before, task=task)
             )
         return EpisodeResult(task=task, steps=history, stop_reason=StopReason.MAX_STEPS)
     finally:
-        env_.close()
+        try:
+            env.close()
+        except Exception:  # noqa: BLE001, S110 - a teardown failure must not mask the result
+            pass

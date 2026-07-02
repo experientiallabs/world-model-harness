@@ -6,6 +6,7 @@ import json
 from collections.abc import Mapping
 
 import pytest
+from pydantic import JsonValue
 
 from wmh.core.types import Action, ActionKind, Observation, Step
 from wmh.optimize.judge import Judge
@@ -17,7 +18,7 @@ STEP = Step(
 )
 
 
-def _obs(payload: Mapping[str, object], *, is_error: bool = False) -> Observation:
+def _obs(payload: Mapping[str, JsonValue], *, is_error: bool = False) -> Observation:
     return Observation(content=json.dumps(payload), is_error=is_error)
 
 
@@ -90,3 +91,32 @@ def test_non_json_falls_back_to_exact_match() -> None:
 def test_negative_tolerance_rejected() -> None:
     with pytest.raises(ValueError, match="tolerance"):
         NumericJudge(tolerance=-0.1)
+
+
+def test_identical_non_numeric_json_objects_score_one() -> None:
+    # A JSON object with zero numeric fields must fall back to exact match, not "no fields" = 0.
+    same = NumericJudge().score(_obs({"status": "ok"}), _obs({"status": "ok"}), STEP)
+    diff = NumericJudge().score(_obs({"status": "ok"}), _obs({"status": "failed"}), STEP)
+    assert same.score == 1.0
+    assert diff.score == 0.0
+
+
+def test_bool_number_type_mismatch_scores_zero() -> None:
+    # True == 1 in Python; a flag predicted as a number is still the wrong type.
+    result = NumericJudge().score(_obs({"oom": 1}), _obs({"oom": True}), STEP)
+    assert result.dimensions["oom"] == 0.0
+
+
+def test_nan_prediction_of_nan_actual_matches() -> None:
+    # json.loads accepts NaN; a correctly-predicted "no measurement" sentinel counts.
+    result = NumericJudge().score(
+        Observation(content='{"x": NaN}'), Observation(content='{"x": NaN}'), STEP
+    )
+    assert result.score == 1.0
+
+
+def test_fenced_json_is_parsed_like_the_llm_judges() -> None:
+    fenced = Observation(content='```json\n{"latency_s": 10.0}\n```')
+    plain = _obs({"latency_s": 10.0})
+    result = NumericJudge().score(fenced, plain, STEP)
+    assert result.score == 1.0

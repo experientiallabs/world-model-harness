@@ -73,3 +73,46 @@ def test_world_model_env_reset_starts_fresh_session() -> None:
     first = env.session_id
     env.reset(task="b")
     assert env.session_id != first
+
+
+def test_close_ends_session_in_world_model_and_keeps_usage() -> None:
+    wm = _world_model('{"output": "ok", "is_error": false}')
+    env = WorldModelEnv(wm)
+    env.reset(task="a")
+    session_id = env.session_id
+    env.step(Action(kind=ActionKind.TOOL_CALL, name="get_user", arguments={}))
+
+    env.close()
+
+    # The session and its tracker are gone from the world model (no batch-rollout leak)...
+    with pytest.raises(KeyError):
+        wm.get_session(session_id)
+    with pytest.raises(KeyError):
+        wm.session_usage(session_id)
+    # ...but the final usage record survives on the env.
+    assert env.usage is not None and env.usage.run_id == session_id
+    env.close()  # idempotent
+
+
+def test_reset_releases_previous_session() -> None:
+    wm = _world_model('{"output": "ok", "is_error": false}')
+    env = WorldModelEnv(wm)
+    env.reset(task="a")
+    first = env.session_id
+    env.reset(task="b")
+    with pytest.raises(KeyError):  # first session must not linger in the world model
+        wm.get_session(first)
+
+
+def test_recorded_history_snapshots_state_per_step() -> None:
+    # WorldModel._update_state mutates session.state in place; recorded steps must not alias it.
+    wm = _world_model('{"output": "ok", "is_error": false, "state_note": "did a thing"}')
+    env = WorldModelEnv(wm)
+    env.reset(task="a")
+    env.step(Action(kind=ActionKind.TOOL_CALL, name="get_user", arguments={}))
+    env.step(Action(kind=ActionKind.TOOL_CALL, name="get_user", arguments={}))
+
+    history = wm.get_session(env.session_id).history
+    assert history[0].state_before.scratchpad == ""  # state BEFORE the first action
+    assert history[1].state_before.scratchpad == "- did a thing"
+    assert history[0].state_before is not history[1].state_before

@@ -14,6 +14,7 @@ import math
 
 from pydantic import JsonValue
 
+from wmh.core.parsing import extract_json_object
 from wmh.core.types import Observation, Step
 from wmh.optimize.judge import JudgeResult
 
@@ -22,10 +23,13 @@ class NumericJudge:
     """Relative-error judge over the numeric fields of JSON observations.
 
     Each numeric field shared by both observations scores
-    `max(0, 1 - |predicted - actual| / (|actual| + eps)) ** 1`, clamped to [0, 1]; booleans and
-    error flags must match exactly (score 0 or 1). Fields present in only one observation score 0
-    (a missing or hallucinated measurement is wrong, not ignorable). Non-JSON or non-numeric
-    content falls back to exact string match so the judge never silently passes garbage.
+    `max(0, 1 - |predicted - actual| / (|actual| + eps))`, clamped to [0, 1]; booleans and error
+    flags must match exactly — including type: a boolean field predicted as a number (or vice
+    versa) scores 0. Fields present in only one observation score 0 (a missing or hallucinated
+    measurement is wrong, not ignorable). A field whose actual value is exactly 0 must be
+    predicted exactly (relative error is undefined at zero). Content with no numeric fields —
+    or content that isn't a JSON object at all — falls back to exact match so the judge never
+    silently passes garbage.
     """
 
     def __init__(self, *, tolerance: float = 0.0) -> None:
@@ -47,14 +51,9 @@ class NumericJudge:
         predicted_fields = _numeric_fields(predicted.content)
         actual_fields = _numeric_fields(actual.content)
         if predicted_fields is None or actual_fields is None:
-            exact = predicted.content.strip() == actual.content.strip()
-            return JudgeResult(
-                score=1.0 if exact else 0.0,
-                critique="non-numeric content; scored by exact match"
-                + ("" if exact else " (contents differ)"),
-            )
-        if not actual_fields:
-            return JudgeResult(score=0.0, critique="actual observation has no numeric fields")
+            return _exact_match_result(predicted, actual, reason="non-JSON content")
+        if not actual_fields and not predicted_fields:
+            return _exact_match_result(predicted, actual, reason="no numeric fields")
 
         dimensions: dict[str, float] = {}
         misses: list[str] = []
@@ -78,9 +77,16 @@ class NumericJudge:
         return JudgeResult(score=mean, critique=critique, dimensions=dimensions)
 
     def _field_score(self, predicted: float | bool, actual: float | bool) -> float:
+        # Booleans compare exactly, and only against booleans: `True == 1` in Python, but a model
+        # that emits a number for a flag field (or a flag for a numeric field) is wrong.
         if isinstance(actual, bool) or isinstance(predicted, bool):
+            if isinstance(actual, bool) != isinstance(predicted, bool):
+                return 0.0
             return 1.0 if predicted == actual else 0.0
         if not (math.isfinite(predicted) and math.isfinite(actual)):
+            # json.loads accepts NaN/Infinity; a correctly-predicted non-finite sentinel counts.
+            if math.isnan(predicted) and math.isnan(actual):
+                return 1.0
             return 1.0 if predicted == actual else 0.0
         relative_error = abs(predicted - actual) / (abs(actual) + 1e-12)
         if relative_error <= self._tolerance:
@@ -88,13 +94,28 @@ class NumericJudge:
         return max(0.0, 1.0 - relative_error)
 
 
+def _exact_match_result(predicted: Observation, actual: Observation, *, reason: str) -> JudgeResult:
+    exact = predicted.content.strip() == actual.content.strip()
+    return JudgeResult(
+        score=1.0 if exact else 0.0,
+        critique=f"{reason}; scored by exact match" + ("" if exact else " (contents differ)"),
+    )
+
+
 def _numeric_fields(content: str) -> dict[str, float | bool] | None:
     """Flatten the numeric/boolean leaves of a JSON object into dotted-path fields.
 
-    Returns None when `content` is not a JSON object (caller falls back to exact match).
+    Tolerates JSON wrapped in code fences or surrounding prose (same leniency as the LLM judges,
+    via `extract_json_object`). Returns None when no JSON object can be found (caller falls back
+    to exact match). Note: paths are synthesized with `.` and `[i]`, so a literal key like
+    `"a.b"` shares a path with nested `a.b` — exotic, but don't feed the judge keys that contain
+    dots or brackets.
     """
+    raw = extract_json_object(content)
+    if raw is None:
+        return None
     try:
-        parsed: JsonValue = json.loads(content)
+        parsed: JsonValue = json.loads(raw)
     except (json.JSONDecodeError, ValueError):
         return None
     if not isinstance(parsed, dict):
