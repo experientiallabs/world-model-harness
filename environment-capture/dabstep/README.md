@@ -39,6 +39,11 @@ uv run python environment-capture/dabstep/capture.py \
     --out environment-capture/dabstep/traces.otel.jsonl --append
 ```
 
+## Results (2026-07-02, corpus as committed)
+
+- **Open-loop fidelity** (suite `dabstep/default`, seed 0, Opus 4.8 target + rubric judge):
+  mean fidelity **0.886**, error-flag accuracy **0.976**, n=85 held-out steps.
+
 ## Provenance
 
 - **Dataset**: [adyen/DABstep](https://huggingface.co/datasets/adyen/DABstep). The committed
