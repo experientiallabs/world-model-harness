@@ -107,5 +107,10 @@ def test_capacity_classifier_falls_back_to_markers_for_transport_errors() -> Non
     # Transport errors (read/connect timeouts) have no response code -> conservative string match.
     assert _is_capacity_error(RuntimeError("Read timeout on endpoint URL"))
     assert _is_capacity_error(RuntimeError("throttled"))
+    # botocore ConnectionClosedError phrasing (killed a live measurement run, 2026-07-01):
+    # "Connection was closed before we received a valid response from endpoint URL: ..."
+    assert _is_capacity_error(
+        RuntimeError("Connection was closed before we received a valid response from endpoint")
+    )
     # A plain bad-request with no code and no capacity phrasing must NOT be treated as capacity.
     assert not _is_capacity_error(ValueError("malformed request: bad field"))

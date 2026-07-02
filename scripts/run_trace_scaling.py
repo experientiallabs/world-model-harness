@@ -32,6 +32,7 @@ from wmh.ingest import get_adapter
 from wmh.optimize.judge import Judge, LLMJudge, RubricJudge
 from wmh.providers import ProviderConfig, ProviderKind, get_provider
 from wmh.providers.base import Embedder, Provider
+from wmh.providers.fallback import FallbackProvider
 from wmh.research import TraceScalingAblation, run_ablation
 from wmh.research.ablation import AblationReport, Condition
 from wmh.retrieval import HashingEmbedder
@@ -77,6 +78,11 @@ class _MeterBank:
         return record
 
 
+def _with_retries(provider: Provider, attempts: int = 3) -> Provider:
+    """Same-provider FallbackProvider chain = bounded retry on capacity/transport errors."""
+    return FallbackProvider([provider] * attempts)
+
+
 def _make_backends(
     judge_model: str,
     opt_model: str,
@@ -94,11 +100,14 @@ def _make_backends(
     comparable to the rest of the harness. Both run on Bedrock; the embedder is the offline
     HashingEmbedder (no creds) unless --no-rag.
     """
-    serve: Provider = get_provider(
-        ProviderConfig(kind=ProviderKind.BEDROCK, model=opt_model, region=region)
+    # Wrap each raw provider in a same-model FallbackProvider chain: up to 3 attempts per call
+    # on capacity/transport errors (throttling, dropped connections). A single transient
+    # ConnectionClosedError otherwise kills a multi-dollar sweep mid-run.
+    serve: Provider = _with_retries(
+        get_provider(ProviderConfig(kind=ProviderKind.BEDROCK, model=opt_model, region=region))
     )
-    judge_provider: Provider = get_provider(
-        ProviderConfig(kind=ProviderKind.BEDROCK, model=judge_model, region=region)
+    judge_provider: Provider = _with_retries(
+        get_provider(ProviderConfig(kind=ProviderKind.BEDROCK, model=judge_model, region=region))
     )
     scorer: Judge = RubricJudge(judge_provider) if judge == "rubric" else LLMJudge(judge_provider)
     embedder: Embedder | None = None if no_rag else HashingEmbedder(dim=embed_dim)
