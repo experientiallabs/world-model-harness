@@ -665,8 +665,8 @@ wheels = [
 
 [[package]]
 name = "llm-waterfall"
-version = "0.1.0"
-source = { git = "https://github.com/experientiallabs/llm-waterfall?rev=v0.1.0#b56a4d66621a0505b713035e1b313799464653d4" }
+version = "0.1.1"
+source = { git = "https://github.com/experientiallabs/llm-waterfall?rev=v0.1.1#8becf523d13faac4dfd0c996f40f15998e736096" }
 dependencies = [
     { name = "pydantic" },
 ]
@@ -1594,7 +1594,7 @@ requires-dist = [
     { name = "fastapi", specifier = ">=0.110" },
     { name = "gepa", specifier = ">=0.1.1" },
     { name = "httpx", specifier = ">=0.27" },
-    { name = "llm-waterfall", extras = ["anthropic", "bedrock", "openai"], marker = "extra == 'waterfall'", git = "https://github.com/experientiallabs/llm-waterfall?rev=v0.1.0" },
+    { name = "llm-waterfall", extras = ["anthropic", "bedrock", "openai"], marker = "extra == 'waterfall'", git = "https://github.com/experientiallabs/llm-waterfall?rev=v0.1.1" },
     { name = "matplotlib", marker = "extra == 'viz'", specifier = ">=3.8" },
     { name = "numpy", specifier = ">=1.26" },
     { name = "openai", marker = "extra == 'openai'", specifier = ">=1.40" },
