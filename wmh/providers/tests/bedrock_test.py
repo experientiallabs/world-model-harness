@@ -149,7 +149,7 @@ def test_live_verify() -> None:  # pragma: no cover - network
     provider = BedrockProvider(
         ProviderConfig(
             kind=ProviderKind.BEDROCK,
-            model="anthropic.claude-opus-4-8",
+            model="us.anthropic.claude-opus-4-8",
             region=os.environ["AWS_REGION"],
         )
     )
