@@ -146,6 +146,11 @@ class WorldModel:
     def get_session(self, session_id: str) -> Session:
         return self._sessions[session_id]
 
+    @property
+    def knowledge(self) -> KnowledgeBase | None:
+        """The cross-session knowledge base, or None when the artifact ships none."""
+        return self._knowledge
+
     def end_session(self, session_id: str) -> RunRecord:
         """End `session_id`: stop its metering, drop it from the model, return the final usage.
 

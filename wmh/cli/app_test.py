@@ -119,7 +119,35 @@ def _build(root, name: str, tmp_path) -> None:  # noqa: ANN001 - pytest fixture 
 
 def test_cli_exposes_the_small_command_set() -> None:
     names = {cmd.name for cmd in app.registered_commands}
-    assert names == {"build", "list", "serve", "demo", "eval", "play"}
+    assert names == {"build", "list", "serve", "demo", "eval", "play", "knowledge"}
+
+
+def test_knowledge_command_prints_path_and_files(tmp_path) -> None:  # noqa: ANN001 - fixture
+    from wmh.config import save_config
+    from wmh.config.config import HarnessConfig
+    from wmh.engine.knowledge import KnowledgeBase
+
+    root = tmp_path / ".wmh"
+    model_dir = root / "models" / "airline"
+    save_config(HarnessConfig(), root=model_dir)
+    KnowledgeBase(model_dir / "knowledge").write_file("rules.md", "- gate: auth required")
+
+    result = runner.invoke(app, ["knowledge", "--name", "airline", "--root", str(root)])
+    assert result.exit_code == 0, result.output
+    assert "knowledge" in result.output  # the folder path (the real editing surface)
+    assert "rules.md" in result.output
+    assert "gate: auth required" in result.output
+
+
+def test_knowledge_command_without_kb_says_how_to_enable(tmp_path) -> None:  # noqa: ANN001
+    from wmh.config import save_config
+    from wmh.config.config import HarnessConfig
+
+    root = tmp_path / ".wmh"
+    save_config(HarnessConfig(), root=root / "models" / "airline")
+    result = runner.invoke(app, ["knowledge", "--name", "airline", "--root", str(root)])
+    assert result.exit_code == 0, result.output
+    assert "empty" in result.output.lower()
 
 
 def test_providers_subcommand_is_registered() -> None:

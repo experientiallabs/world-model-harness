@@ -42,6 +42,17 @@ class ModelsResponse(BaseModel):
     world_models: list[str]
 
 
+class KnowledgeResponse(BaseModel):
+    """The model's knowledge base: enabled + every markdown file's content."""
+
+    enabled: bool
+    files: dict[str, str]
+
+
+class KnowledgeFileRequest(BaseModel):
+    content: str
+
+
 def _load_named_models(artifact_dir: str, names: list[str] | None) -> dict[str, WorldModel]:
     """Load the requested world models (or all built ones) from `artifact_dir` by name."""
     from wmh.config import WorldModelStore
@@ -141,5 +152,35 @@ def create_app(
         wm = _model_or_404(world_model_name)
         _session_or_404(wm, session_id)
         return wm.end_session(session_id)
+
+    @app.get("/world_models/{world_model_name}/knowledge", response_model=KnowledgeResponse)
+    def get_knowledge(world_model_name: str) -> KnowledgeResponse:
+        """Read the model's knowledge base (`enabled=False` for pre-knowledge artifacts)."""
+        kb = _model_or_404(world_model_name).knowledge
+        if kb is None:
+            return KnowledgeResponse(enabled=False, files={})
+        return KnowledgeResponse(enabled=True, files=kb.files())
+
+    @app.put(
+        "/world_models/{world_model_name}/knowledge/{file_name}",
+        response_model=KnowledgeResponse,
+    )
+    def put_knowledge(
+        world_model_name: str, file_name: str, req: KnowledgeFileRequest
+    ) -> KnowledgeResponse:
+        """Create/replace one knowledge markdown file (the HTTP face of 'edit the folder')."""
+        kb = _model_or_404(world_model_name).knowledge
+        if kb is None:
+            raise HTTPException(
+                status_code=409,
+                detail=f"world model {world_model_name!r} has no knowledge base; "
+                "build it with knowledge enabled (or create a knowledge/ dir in its artifact "
+                "and re-serve)",
+            )
+        try:
+            kb.write_file(file_name, req.content)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return KnowledgeResponse(enabled=True, files=kb.files())
 
     return app
