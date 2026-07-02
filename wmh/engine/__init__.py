@@ -1,6 +1,6 @@
 """The world-model engine: prompt assembly, the WorldModel, the build pipeline, eval, demo, play."""
 
-from wmh.engine.build import build, ingest, split_traces
+from wmh.engine.build import build, ingest, split_traces, split_traces_3way
 from wmh.engine.demo import DemoResult, run_demo
 from wmh.engine.eval import EvalReport, evaluate_files
 from wmh.engine.loader import load_world_model
@@ -12,6 +12,7 @@ __all__ = [
     "build",
     "ingest",
     "split_traces",
+    "split_traces_3way",
     "DemoResult",
     "run_demo",
     "EvalReport",

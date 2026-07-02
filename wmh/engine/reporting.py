@@ -31,7 +31,7 @@ class BuildReporter(Protocol):
         ...
 
     def rollout(self, done: int, budget: int, score: float | None) -> None:
-        """Called as GEPA consumes its rollout budget. `score` is the best held-out score so far."""
+        """Called as GEPA consumes its rollout budget. `score` is the mean rollout score so far."""
         ...
 
     def optimize_done(self, held_out_accuracy: float, frontier_size: int, rollouts: int) -> None:
