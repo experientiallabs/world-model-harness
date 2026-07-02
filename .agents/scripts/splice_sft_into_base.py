@@ -12,7 +12,6 @@ Usage: python splice_sft_into_base.py <base_snapshot_dir> <merged_dir> <out_dir>
 from __future__ import annotations
 
 import json
-import os
 import shutil
 import sys
 from pathlib import Path

@@ -72,10 +72,16 @@ class BedrockProvider:
             # stack 3 internal attempts per model UNDER our 4-model failover — up to 12 backend
             # calls with back-off for one throttled request — turning graceful degradation into a
             # slow crawl.
+            # `tcp_keepalive` guards the other stall mode: a keep-alive connection the LB
+            # silently dropped during an idle gap. Without it, the next call on that socket
+            # hangs until read_timeout (observed as ~10-minute stalls on the FIRST call after
+            # idle — turn-1 WM steps, sparse judge calls); with it, the OS detects the dead
+            # peer and the call fails fast into the FallbackProvider.
             client_config = Config(
                 connect_timeout=15,
                 read_timeout=600,
                 retries={"max_attempts": 1},
+                tcp_keepalive=True,
             )
             self._client = boto3.client(
                 "bedrock-runtime", region_name=self.config.region, config=client_config

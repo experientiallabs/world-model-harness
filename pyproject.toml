@@ -65,4 +65,6 @@ python-version = "3.11"
 [tool.ty.src]
 # `plot_trace_scaling.py` is a one-off research figure that imports matplotlib ephemerally
 # (`uv run --with matplotlib`), not a project dependency — exclude it from the type gate.
-exclude = ["examples/", "scripts/plot_trace_scaling.py"]
+# `.agents/` is the agents workspace (one-off scripts/runners) - gate-exempt per the
+# repo layout rule: nothing may depend on it.
+exclude = ["examples/", "scripts/plot_trace_scaling.py", ".agents/"]
