@@ -57,8 +57,29 @@ class BedrockProvider:
         # AWS_REGION / the default boto3 chain when config.region is unset.
         if self._client is None:
             import boto3
+            from botocore.config import Config
 
-            self._client = boto3.client("bedrock-runtime", region_name=self.config.region)
+            # Bound each request so a stalled connection RAISES instead of blocking forever. Without
+            # this, a single hung InvokeModel wedges the whole run (long GEPA/eval jobs never
+            # finish) and a FallbackProvider can't fail over — it only reacts to raised errors.
+            # `read_timeout` is generous because reasoning models can generate for a while at up to
+            # `max_tokens` (a mid-generation cutoff wastes the whole call and, under a fallback
+            # chain, silently substitutes a different model into an eval).
+            #
+            # `max_attempts=1` disables botocore's OWN retries on purpose: throttling / 5xx /
+            # timeouts should surface IMMEDIATELY to the caller, where FallbackProvider owns retry
+            # policy (fail over to the next model). Leaving botocore's adaptive retries on would
+            # stack 3 internal attempts per model UNDER our 4-model failover — up to 12 backend
+            # calls with back-off for one throttled request — turning graceful degradation into a
+            # slow crawl.
+            client_config = Config(
+                connect_timeout=15,
+                read_timeout=600,
+                retries={"max_attempts": 1},
+            )
+            self._client = boto3.client(
+                "bedrock-runtime", region_name=self.config.region, config=client_config
+            )
         return self._client
 
     def complete(
