@@ -130,10 +130,10 @@ class BedrockBashAgent:
     def run(self, task: Task, env: CommandEnv) -> AgentRun:
         """Drive the environment until the agent submits, answers in text, or hits max_steps.
 
-        A single assistant turn may carry several tool-use blocks (Anthropic models emit parallel
-        tool calls). Every one is executed and answered with a toolResult in the following user
-        turn — leaving a toolUse id unanswered makes the next Converse call fail validation. A
-        ``submit`` block ends the episode immediately (any later blocks in that turn are dropped).
+        A single turn may contain several tool-use blocks (Bedrock emits parallel tool calls);
+        every one must be answered with a toolResult or the next Converse call is rejected. So all
+        bash calls in a turn are executed in order, each recorded as its own transition, and their
+        results returned together in one follow-up user message.
         """
         messages: list[JsonValue] = [{"role": "user", "content": [{"text": task.prompt}]}]
         steps: list[StepRecord] = []
@@ -196,7 +196,7 @@ class BedrockBashAgent:
 
 
 def _tool_uses(message: dict[str, JsonValue]) -> list[tuple[str, str, dict[str, JsonValue]]]:
-    """Every tool-use block in an assistant turn, in order (parallel tool calls are common)."""
+    """Every (id, name, input) tool-use block in the message, in order (Bedrock may emit many)."""
     content = message.get("content")
     if not isinstance(content, list):
         return []

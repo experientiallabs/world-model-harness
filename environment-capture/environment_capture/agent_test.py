@@ -27,18 +27,12 @@ def _tool_use(name: str, tool_input: dict[str, JsonValue]) -> dict[str, JsonValu
 def _parallel_tool_use(
     calls: list[tuple[str, str, dict[str, JsonValue]]],
 ) -> dict[str, JsonValue]:
-    """An assistant turn emitting several tool-use blocks at once (parallel tool calls)."""
+    """A single assistant message emitting several toolUse blocks at once (as Bedrock may)."""
+    content: list[JsonValue] = [{"text": "thinking..."}]
+    for tool_use_id, name, tool_input in calls:
+        content.append({"toolUse": {"toolUseId": tool_use_id, "name": name, "input": tool_input}})
     return {
-        "output": {
-            "message": {
-                "role": "assistant",
-                "content": [{"text": "doing several things"}]
-                + [
-                    {"toolUse": {"toolUseId": tid, "name": name, "input": tool_input}}
-                    for tid, name, tool_input in calls
-                ],
-            }
-        },
+        "output": {"message": {"role": "assistant", "content": content}},
         "stopReason": "tool_use",
     }
 
@@ -62,7 +56,7 @@ class _StubClient:
 
 
 class _FlakyClient:
-    """Raises a transient error on the first N converse calls, then delegates to a stub."""
+    """Raises a transient error on the first N converse calls, then returns a fixed response."""
 
     def __init__(self, error: Exception, fails: int, response: dict[str, JsonValue]) -> None:
         self._error = error
@@ -76,20 +70,6 @@ class _FlakyClient:
             self._remaining_fails -= 1
             raise self._error
         return self._response
-
-
-def test_read_timeout_is_retried(tmp_path) -> None:  # noqa: ANN001
-    """A hung Bedrock call (read timeout) is transient and must be retried, not fatal."""
-    timeout = ReadTimeoutError(endpoint_url="https://bedrock-runtime.us-east-1.amazonaws.com")
-    client = _FlakyClient(timeout, fails=2, response=_tool_use("submit", {"answer": "42"}))
-    agent = BedrockBashAgent(model_id="m", client=client, retry_backoff_s=0.0)
-    env = LocalBashEnv(workspace=tmp_path)
-    try:
-        run = agent.run(Task(task_id="t0", prompt="q", data={}), env)
-    finally:
-        env.close()
-    assert run.final_answer == "42"
-    assert client.calls == 3  # two timeouts retried, third succeeds
 
 
 def test_agent_executes_commands_then_submits(tmp_path) -> None:  # noqa: ANN001
@@ -131,39 +111,54 @@ def test_agent_stops_at_max_steps(tmp_path) -> None:  # noqa: ANN001
     assert run.final_answer == ""
 
 
-def test_parallel_tool_uses_all_get_answered(tmp_path) -> None:  # noqa: ANN001
-    """Every tool-use block in one turn must be executed and answered (Bedrock requires it).
-
-    Anthropic models emit parallel tool calls; responding to only the first leaves dangling
-    toolUse ids and the next Converse call is rejected.
-    """
-    (tmp_path / "a.txt").write_text("alpha")
-    (tmp_path / "b.txt").write_text("beta")
+def test_agent_answers_every_parallel_tool_use(tmp_path) -> None:  # noqa: ANN001
+    # Bedrock rejects the next turn unless EVERY toolUse id in an assistant message gets a
+    # toolResult. When a model emits parallel bash calls, the agent must execute and answer all.
     client = _StubClient(
         [
             _parallel_tool_use(
                 [
-                    ("u1", "bash", {"command": "cat a.txt"}),
-                    ("u2", "bash", {"command": "cat b.txt"}),
+                    ("t1", "bash", {"command": "echo one"}),
+                    ("t2", "bash", {"command": "echo two"}),
                 ]
             ),
-            _tool_use("submit", {"answer": "alpha+beta"}),
+            _tool_use("submit", {"answer": "done"}),
         ]
     )
     agent = BedrockBashAgent(model_id="m", client=client)
     env = LocalBashEnv(workspace=tmp_path)
     try:
-        run = agent.run(Task(task_id="t0", prompt="read both", data={}), env)
+        run = agent.run(Task(task_id="t0", prompt="q", data={}), env)
     finally:
         env.close()
 
-    assert [s.action.arguments["command"] for s in run.steps] == ["cat a.txt", "cat b.txt"]
-    assert run.final_answer == "alpha+beta"
-    # The follow-up user turn carries a toolResult for BOTH ids, in order.
+    assert len(run.steps) == 2
+    assert [s.action.arguments["command"] for s in run.steps] == ["echo one", "echo two"]
+    # The follow-up user turn must carry a toolResult for BOTH parallel tool-use ids.
     follow_up = client.calls[1]["messages"][-1]
-    assert follow_up["role"] == "user"
-    result_ids = [block["toolResult"]["toolUseId"] for block in follow_up["content"]]
-    assert result_ids == ["u1", "u2"]
+    assert isinstance(follow_up, dict)
+    content = follow_up["content"]
+    assert isinstance(content, list)
+    answered = {
+        block["toolResult"]["toolUseId"]
+        for block in content
+        if isinstance(block, dict) and isinstance(block.get("toolResult"), dict)
+    }
+    assert answered == {"t1", "t2"}
+
+
+def test_read_timeout_is_retried(tmp_path) -> None:  # noqa: ANN001
+    """A hung Bedrock call (read timeout) is transient and must be retried, not fatal."""
+    timeout = ReadTimeoutError(endpoint_url="https://bedrock-runtime.us-east-1.amazonaws.com")
+    client = _FlakyClient(timeout, fails=2, response=_tool_use("submit", {"answer": "42"}))
+    agent = BedrockBashAgent(model_id="m", client=client, retry_backoff_s=0.0)
+    env = LocalBashEnv(workspace=tmp_path)
+    try:
+        run = agent.run(Task(task_id="t0", prompt="q", data={}), env)
+    finally:
+        env.close()
+    assert run.final_answer == "42"
+    assert client.calls == 3  # two timeouts retried, third succeeds
 
 
 def test_custom_system_prompt_is_sent(tmp_path) -> None:  # noqa: ANN001

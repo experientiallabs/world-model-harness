@@ -17,6 +17,25 @@ fallback) — see `environment_capture/benchmarks/financebench.py`.
 - `convert_cache.py` — the converter that produced the corpus (see provenance).
 - `capture.py` — fresh real-run capture against this adapter (Bedrock agent), used to top up the
   corpus with richer multi-step trajectories.
+- `evals/default.toml` — fidelity suite; run with
+  `uv run wmh eval run financebench/default --examples-root environment-capture`.
+- `wm_replace_demo.py` — the same agent runs the held-out test tasks against the REAL env and a
+  world model of it (`wmh build --name financebench --file .../traces.otel.jsonl` first), graded
+  by the same deterministic grader; full transcripts land in `runs/` for auditing.
+
+## Results (2026-07-02, corpus as committed)
+
+- **Open-loop fidelity** (suite `financebench/default`, seed 0, Opus 4.8 target + rubric judge):
+  mean fidelity **0.581**, error-flag accuracy **0.800**, n=35 held-out steps. Notably below the
+  shell-like corpora (tau ~0.90, terminal ~0.86, swe ~0.82): observations here are long verbatim
+  document excerpts, which are much harder to reconstruct than command output.
+- **WM-replacement demo** (5 test tasks, Opus 4.8 agent, Opus 4.8 WM): reward agreement 5/5 on
+  the first run; a 2-task audit rerun showed agent-side nondeterminism in the REAL env (a task
+  flipping 1.0→0.0 across runs), so single-run agreement on n=5 is indicative, not a claim.
+  Audited caveat: the WM invents plausible-but-wrong doc filenames yet often reconstructs
+  historically TRUE figures — the backbone knows public SEC facts from pretraining, so
+  financebench agreement partly reflects model knowledge rather than trace grounding. Treat this
+  benchmark as an easy-mode WM target; the stateful benchmarks are the stronger test.
 
 ## Provenance
 
