@@ -141,6 +141,14 @@ def test_optimize_runs_bounded_loop_and_returns_valid_frontier() -> None:
     # PLUS exploration (see `_metric_call_budget`). So rollouts run past `budget` itself; the point
     # of the fix is that GEPA actually explores instead of spending everything validating the seed.
     assert result.metrics.rollouts_used > budget
+    # ...but it still TERMINATES near the translated metric-call budget (GEPA treats
+    # max_metric_calls as a soft cap, finishing the in-flight iteration, so allow a one-iteration
+    # overshoot). This upper bound is the regression guard against a runaway budget blowing up cost.
+    from wmh.optimize.gepa import _metric_call_budget
+
+    # trainset = 2 traces x 2 steps = 4 -> minibatch = min(3,4) = 3; valset = 1 trace x 2 steps.
+    cap = _metric_call_budget(budget, valset_size=2, minibatch=3)
+    assert result.metrics.rollouts_used <= cap + 2 + 3  # soft cap: + one valset + one minibatch
     assert 0.0 <= result.metrics.held_out_accuracy <= 1.0
     # The judge was actually consulted, and the loop terminated (didn't run forever).
     assert judge.calls > 0

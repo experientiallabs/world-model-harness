@@ -255,7 +255,7 @@ _REFLECTION_SYSTEM = (
 # already encodes the environment's output conventions, id/value patterns, and error behaviors
 # helps even when retrieval misses. So we ENCOURAGE additive knowledge accumulation — into a
 # dedicated growing section, leaving the hand-tuned rules intact (a full rewrite empirically
-# regressed 35 of 84 previously-perfect steps). Placeholders required by GEPA.
+# regressed many already-passing steps to fix a handful). Placeholders required by GEPA.
 _REFLECTION_PROMPT_TEMPLATE = """You are improving the prompt for an LLM that role-plays an \
 ENVIRONMENT: it reads an agent's action (a tool call or command) and must output exactly what the \
 real system would return — the same JSON shape, field names, error format, and success/empty \
@@ -367,7 +367,11 @@ class GEPAOptimizer:
         `select_on_hard` (only meaningful with `hard_step_filter`) additionally filters the VALSET
         that GEPA selects candidates on: when overall val fidelity is near-saturated, a candidate
         that fixes the few hard cases barely moves the mean and loses to base on noise, so pareto
-        keeps base. Selecting on hard-step fidelity lets the real improvement win.
+        keeps base. Selecting on hard-step fidelity lets the real improvement win. NOTE: with
+        `select_on_hard`, the returned `metrics.held_out_accuracy` is the HARD-subset mean, not the
+        full-val mean — report a separate full-set test number for cross-run comparability. (Also:
+        GEPA's merge proposer needs >= merge_val_overlap_floor (default 5) val examples, so on a
+        hard-filtered valset smaller than that, merge silently no-ops.)
         `budget` is the number of optimization ITERATIONS (candidate prompts to propose and fully
         evaluate) — NOT a raw metric-call count. It is translated to GEPA's `max_metric_calls`
         budget by `_metric_call_budget`, which adds the one-time seed valset evaluation so the

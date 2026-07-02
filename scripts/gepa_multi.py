@@ -70,14 +70,16 @@ def score(prompt, test, train, provider, embedder, max_tokens):  # noqa: ANN001,
     )
 
 
-def hard_mean(rep) -> tuple[float, int]:  # noqa: ANN001
+def hard_mean(rep) -> tuple[float | None, int]:  # noqa: ANN001
+    # Returns None (not NaN) when a split has no hard steps: json.dumps writes bare `NaN`, which is
+    # invalid JSON that strict parsers (jq, JS) reject; None serializes as valid `null`.
     hs = [
         r.score
         for r in rep.results
         if any(k in (r.action or "").lower() for k in ("search", "list", "find"))
         or r.is_error_actual
     ]
-    return (sum(hs) / len(hs) if hs else float("nan"), len(hs))
+    return (sum(hs) / len(hs) if hs else None, len(hs))
 
 
 def run_one_candidate(idx, subset, val, base_prompt, provider, embedder, iterations):  # noqa: ANN001, ANN201
@@ -85,7 +87,10 @@ def run_one_candidate(idx, subset, val, base_prompt, provider, embedder, iterati
     from wmh.optimize import GEPAOptimizer, RubricJudge
     from wmh.retrieval import EmbeddingRetriever
 
-    opt = GEPAOptimizer(provider, RubricJudge(provider), retriever=EmbeddingRetriever(embedder))
+    # Distinct GEPA seed per candidate so even candidates sharing a subset explore differently.
+    opt = GEPAOptimizer(
+        provider, RubricJudge(provider), retriever=EmbeddingRetriever(embedder), seed=idx
+    )
     result = opt.optimize(
         subset, val, base_prompt, iterations, hard_step_filter=_is_hard, select_on_hard=True
     )
@@ -123,12 +128,12 @@ def main() -> None:
     provider = build_provider(args.region)
     embedder = HashingEmbedder(dim=512)
 
-    # Each candidate optimizes on a different HALF of train (by trace-id bucketing), so they explore
-    # different failure subsets; merge/knowledge-accumulation then compounds within each run.
-    def subset(seed_mod: int) -> list:
-        return [
-            t for i, t in enumerate(sorted(train, key=lambda x: x.trace_id)) if i % 2 == seed_mod
-        ] or train
+    # Each candidate optimizes on a DISTINCT bucket of train (trace-id round-robin into `candidates`
+    # buckets), so they explore genuinely different failure subsets rather than duplicating halves.
+    ordered = sorted(train, key=lambda x: x.trace_id)
+
+    def subset(bucket: int) -> list:
+        return [t for i, t in enumerate(ordered) if i % args.candidates == bucket] or train
 
     print(f"launching {args.candidates} GEPA candidates in parallel...", flush=True)
     results: list[tuple] = []
@@ -137,7 +142,7 @@ def main() -> None:
             pool.submit(
                 run_one_candidate,
                 i,
-                subset(i % 2),
+                subset(i),
                 val,
                 BASE_ENV_PROMPT,
                 provider,
@@ -160,6 +165,9 @@ def main() -> None:
     print(f"  base + RAG     = {base_rag.mean_score:.3f}   <-- the number to beat", flush=True)
 
     # Each evolved candidate on test (with RAG).
+    def fmt(x) -> str:  # noqa: ANN001 - "0.723" or "n/a" for a None (no-hard-steps) mean
+        return f"{x:.3f}" if x is not None else "n/a"
+
     rows = []
     for idx, prompt, changed in results:
         rep = score(prompt, test, train, provider, embedder, args.max_tokens)
@@ -168,7 +176,7 @@ def main() -> None:
             {"idx": idx, "changed": changed, "test": rep.mean_score, "hard": hm, "prompt": prompt}
         )
         print(
-            f"  candidate {idx}: test={rep.mean_score:.3f} hard={hm:.3f} "
+            f"  candidate {idx}: test={rep.mean_score:.3f} hard={fmt(hm)} "
             f"vs base+RAG {base_rag.mean_score:.3f} ({rep.mean_score - base_rag.mean_score:+.3f}) "
             f"changed={changed}",
             flush=True,
@@ -180,7 +188,7 @@ def main() -> None:
         print(
             f"\n=== BEST GEPA vs base+RAG: {best['test'] - base_rag.mean_score:+.3f} "
             f"(overall {base_rag.mean_score:.3f} -> {best['test']:.3f}); "
-            f"hard {bhm:.3f} -> {best['hard']:.3f} ===",
+            f"hard {fmt(bhm)} -> {fmt(best['hard'])} ===",
             flush=True,
         )
     args.out.parent.mkdir(parents=True, exist_ok=True)

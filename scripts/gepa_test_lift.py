@@ -153,20 +153,23 @@ def main() -> None:
 
     # Hard-subset fidelity: the sensitive metric. Overall test lift is diluted by the many easy
     # steps both prompts already ace; the hard steps (searches/errors) are where GEPA can move.
-    def _hard_mean(rep) -> tuple[float, int]:  # noqa: ANN001
+    def _hard_mean(rep) -> tuple[float | None, int]:  # noqa: ANN001
+        # None (serialized as valid JSON `null`) rather than NaN (invalid JSON) when no hard steps.
         hs = [
             r.score
             for r in rep.results
             if any(k in (r.action or "").lower() for k in ("search", "list", "find"))
             or r.is_error_actual
         ]
-        return (sum(hs) / len(hs) if hs else float("nan"), len(hs))
+        return (sum(hs) / len(hs) if hs else None, len(hs))
 
     base_hard, n_hard_test = _hard_mean(base_rep)
     eff_hard, _ = _hard_mean(eff_rep)
+    hard_lift = eff_hard - base_hard if (base_hard is not None and eff_hard is not None) else None
+    fmt = lambda x: f"{x:.3f}" if x is not None else "n/a"  # noqa: E731
     print(
         f"  HARD-subset test fidelity ({n_hard_test} steps): "
-        f"base {base_hard:.3f} -> evolved {eff_hard:.3f} ({eff_hard - base_hard:+.3f})"
+        f"base {fmt(base_hard)} -> evolved {fmt(eff_hard)} ({fmt(hard_lift)})"
     )
 
     lift = eff_rep.mean_score - base_rep.mean_score
@@ -182,7 +185,7 @@ def main() -> None:
                 "base": base_rep.model_dump(),
                 "evolved": eff_rep.model_dump(),
                 "lift": lift,
-                "hard_lift": eff_hard - base_hard,
+                "hard_lift": hard_lift,
                 "base_hard": base_hard,
                 "evolved_hard": eff_hard,
                 "n_hard_test": n_hard_test,

@@ -84,7 +84,28 @@ def test_empty_chain_rejected() -> None:
         FallbackProvider([])
 
 
-def test_capacity_classifier() -> None:
-    assert _is_capacity_error(RuntimeError("ThrottlingException"))
-    assert _is_capacity_error(RuntimeError("429 Too Many Requests"))
-    assert not _is_capacity_error(ValueError("ValidationException: bad model id"))
+class _ClientError(Exception):
+    """Mimics botocore ClientError: carries a `.response` dict with Error.Code."""
+
+    def __init__(self, code: str, message: str = "") -> None:
+        super().__init__(f"{code}: {message}")
+        self.response = {"Error": {"Code": code, "Message": message}}
+
+
+def test_capacity_classifier_prefers_error_code() -> None:
+    # Structured botocore error codes are the reliable signal.
+    assert _is_capacity_error(_ClientError("ThrottlingException", "slow down"))
+    assert _is_capacity_error(_ClientError("ServiceUnavailableException"))
+    assert _is_capacity_error(_ClientError("ModelNotReadyException"))
+    # A real client error is NOT capacity, even if its MESSAGE mentions a scary token — the code
+    # decides, so it propagates instead of being wrongly retried across the whole chain.
+    assert not _is_capacity_error(_ClientError("ValidationException", "request timeout too large"))
+    assert not _is_capacity_error(_ClientError("AccessDeniedException", "not available"))
+
+
+def test_capacity_classifier_falls_back_to_markers_for_transport_errors() -> None:
+    # Transport errors (read/connect timeouts) have no response code -> conservative string match.
+    assert _is_capacity_error(RuntimeError("Read timeout on endpoint URL"))
+    assert _is_capacity_error(RuntimeError("throttled"))
+    # A plain bad-request with no code and no capacity phrasing must NOT be treated as capacity.
+    assert not _is_capacity_error(ValueError("malformed request: bad field"))

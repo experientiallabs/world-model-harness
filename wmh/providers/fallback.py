@@ -20,24 +20,44 @@ from wmh.providers.base import (
     verify_via_ping,
 )
 
-# Substrings that mark a *capacity* failure (retry on the next provider) rather than a client error
-# (propagate). Bedrock surfaces these as botocore ClientError codes / messages.
+# Botocore error CODES that mean "this model is capacity-constrained right now" — the reliable
+# signal (from `exc.response["Error"]["Code"]`), preferred over string matching.
+_CAPACITY_ERROR_CODES = frozenset(
+    {
+        "ThrottlingException",
+        "TooManyRequestsException",
+        "ServiceUnavailableException",
+        "ServiceQuotaExceededException",
+        "ModelNotReadyException",
+        "ModelTimeoutException",
+        "InternalServerException",  # transient 5xx, safe to fail over
+    }
+)
+
+# Fallback substrings for non-ClientError transports (e.g. botocore Read/ConnectTimeoutError, which
+# carry no response code). Kept conservative: only phrases that unambiguously mean
+# capacity/transport failure, NOT generic tokens like "429"/"503"/"capacity" that can appear in a
+# bad-request message and cause a real error to be wrongly retried instead of surfaced.
 _CAPACITY_MARKERS = (
     "throttl",
-    "too many requests",
-    "serviceunavailable",
-    "service unavailable",
-    "modelnotready",
-    "model not ready",
-    "capacity",
-    "timeout",
+    "read timeout",
+    "connect timeout",
+    "connection reset",
+    "connection aborted",
     "timed out",
-    "503",
-    "429",
+    "service unavailable",
+    "model not ready",
 )
 
 
 def _is_capacity_error(exc: Exception) -> bool:
+    # Prefer the structured botocore error code when present (ClientError.response).
+    response = getattr(exc, "response", None)
+    if isinstance(response, dict):
+        code = response.get("Error", {}).get("Code")
+        if code is not None:
+            return code in _CAPACITY_ERROR_CODES
+    # Otherwise fall back to conservative substring markers (transport-level errors).
     return any(marker in str(exc).lower() for marker in _CAPACITY_MARKERS)
 
 
@@ -74,9 +94,12 @@ class FallbackProvider:
                     raise  # a real error (bad request/auth) — don't mask it behind a fallback
                 last_capacity_exc = exc
                 continue  # capacity-constrained: try the next provider in the chain
-        # Every provider was capacity-constrained.
-        assert last_capacity_exc is not None
-        raise last_capacity_exc
+        # Every provider was capacity-constrained. `last_capacity_exc` is always set here (the loop
+        # ran at least once — __init__ guarantees a non-empty chain — and only capacity errors
+        # `continue`), but guard explicitly rather than `assert` (stripped under `python -O`).
+        if last_capacity_exc is not None:
+            raise last_capacity_exc
+        raise RuntimeError("FallbackProvider: no providers were tried")  # unreachable
 
     def embed(self, texts: list[str]) -> list[list[float]]:
         return self._providers[0].embed(texts)
