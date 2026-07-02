@@ -1,0 +1,20 @@
+corpus terminal-tasks: 280 traces -> train pool 164, valid 51, test 65 (scoring 40)
+counts=[160], modes=reason,reason+kb, seeds=[0, 1], budget=12
+opt-model=us.anthropic.claude-opus-4-7, judge=rubric (us.anthropic.claude-opus-4-8)
+
+  reason@160     seed=0  fidelity=0.890  serve: 99 calls, 481424in/17326out tok, $2.840, 78s
+  reason@160     seed=1  fidelity=0.888  serve: 99 calls, 529328in/15739out tok, $3.040, 77s
+  reason+kb@160  seed=0  fidelity=0.884  serve: 107 calls, 1530622in/68224out tok, $9.359, 525s
+  reason+kb@160  seed=1  fidelity=0.901  serve: 107 calls, 1498606in/58779out tok, $8.963, 460s
+
+=== trace-scaling-law (seeds=[0, 1]) ===
+  reason@160               mean=0.889 std=0.001 n=2
+  reason+kb@160            mean=0.893 std=0.008 n=2
+
+serve-side usage per run (judge cost excluded):
+  reason@160     seed=0  99 calls  481424in/17326out tok  $2.840  78s
+  reason@160     seed=1  99 calls  529328in/15739out tok  $3.040  77s
+  reason+kb@160  seed=0  107 calls  1530622in/68224out tok  $9.359  525s
+  reason+kb@160  seed=1  107 calls  1498606in/58779out tok  $8.963  460s
+
+wrote report -> docs/agentic_results/terminal-tasks.v2.json (+ terminal-tasks.v2.usage.json)

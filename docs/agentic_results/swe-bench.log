@@ -1,0 +1,25 @@
+corpus swe-bench: 255 traces -> train pool 173, valid 34, test 48 (scoring 20)
+counts=[24], modes=base,reason,reason+kb, seeds=[0, 1], budget=12
+opt-model=us.anthropic.claude-opus-4-7, judge=rubric (us.anthropic.claude-opus-4-8)
+
+  base@24        seed=0  fidelity=0.722  serve: 53 calls, 660916in/13549out tok, $3.643, 93s
+  base@24        seed=1  fidelity=0.696  serve: 53 calls, 651708in/15410out tok, $3.644, 98s
+  reason@24      seed=0  fidelity=0.749  serve: 53 calls, 668866in/20249out tok, $3.851, 104s
+  reason@24      seed=1  fidelity=0.711  serve: 53 calls, 659658in/19884out tok, $3.795, 112s
+  reason+kb@24   seed=0  fidelity=0.750  serve: 61 calls, 1166032in/76407out tok, $7.740, 578s
+  reason+kb@24   seed=1  fidelity=0.695  serve: 56 calls, 925716in/38005out tok, $5.579, 224s
+
+=== trace-scaling-law (seeds=[0, 1]) ===
+  base@24                  mean=0.709 std=0.013 n=2
+  reason@24                mean=0.730 std=0.019 n=2
+  reason+kb@24             mean=0.723 std=0.028 n=2
+
+serve-side usage per run (judge cost excluded):
+  base@24        seed=0  53 calls  660916in/13549out tok  $3.643  93s
+  base@24        seed=1  53 calls  651708in/15410out tok  $3.644  98s
+  reason@24      seed=0  53 calls  668866in/20249out tok  $3.851  104s
+  reason@24      seed=1  53 calls  659658in/19884out tok  $3.795  112s
+  reason+kb@24   seed=0  61 calls  1166032in/76407out tok  $7.740  578s
+  reason+kb@24   seed=1  56 calls  925716in/38005out tok  $5.579  224s
+
+wrote report -> docs/agentic_results/swe-bench.json (+ swe-bench.usage.json)

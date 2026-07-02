@@ -140,8 +140,11 @@ OUTPUT_CONTRACT = (
 # unbounded deliberations blew the token budget and truncated the output (hence "1-4 short
 # sentences"); agent-side policy was mistaken for an env gate (a cancel the policy forbids still
 # EXECUTES — tools are mechanical); unobserved state was assumed ("already installed");
-# exploratory greps/finds were assumed to hit when the corpus shows they miss 33-72% of the
-# time; and exact computations missed edge cases (fold/wc off-by-one on a trailing newline).
+# exploratory greps/finds were assumed to hit because the task narrative implied the target
+# exists; and exact computations missed edge cases (fold/wc off-by-one on a trailing newline).
+# NOTE the search guidance is deliberately evidence-NEUTRAL: a first draft said "searches miss
+# often — predict empty", derived from a corpus whose empties turned out to be capture junk
+# (D24), and it measurably hurt on the clean corpus. Bias neither way; follow the evidence.
 _REASONING_FIELD = (
     '{"reasoning": "<1-4 short sentences BEFORE deciding the output: what would this action'
     " really do given the current state? Check the gates the ENVIRONMENT itself enforces (auth"
@@ -149,10 +152,10 @@ _REASONING_FIELD = (
     " examples — policy the AGENT is merely supposed to follow does not make a tool refuse, so"
     " predict refusal only where the environment demonstrably enforces it. Never assume"
     " unobserved state (installed packages, existing files) — default to a fresh environment."
-    " Exploratory searches (grep/find for guessed strings, line ranges that may exceed the"
-    " file) MISS often: predict empty output unless the evidence shows the target exists there,"
-    " and match how similar commands actually behaved in the examples. Work exact computations"
-    ' carefully (counts, off-by-one, trailing newlines)>", '
+    " Searches and reads (grep/find for guessed strings, line ranges that may exceed the file)"
+    " can genuinely miss: decide hit vs. miss from the evidence and from how similar commands"
+    " behaved in the examples, not from what the task narrative hopes is there. Work exact"
+    ' computations carefully (counts, off-by-one, trailing newlines)>", '
 )
 _BASE_FIELDS = (
     '"output": "<exactly what the environment returns to the agent>", '

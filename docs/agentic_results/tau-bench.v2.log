@@ -1,0 +1,20 @@
+corpus tau-bench: 1033 traces -> train pool 648, valid 176, test 209 (scoring 40)
+counts=[200], modes=reason,reason+kb, seeds=[0, 1], budget=12
+opt-model=us.anthropic.claude-opus-4-7, judge=rubric (us.anthropic.claude-opus-4-8)
+
+  reason@200     seed=0  fidelity=0.913  serve: 164 calls, 660663in/67332out tok, $4.987, 163s
+  reason@200     seed=1  fidelity=0.922  serve: 164 calls, 671296in/67156out tok, $5.035, 166s
+  reason+kb@200  seed=0  fidelity=0.916  serve: 172 calls, 2105798in/110240out tok, $13.285, 640s
+  reason+kb@200  seed=1  fidelity=0.914  serve: 172 calls, 2157357in/113919out tok, $13.635, 696s
+
+=== trace-scaling-law (seeds=[0, 1]) ===
+  reason@200               mean=0.917 std=0.005 n=2
+  reason+kb@200            mean=0.915 std=0.001 n=2
+
+serve-side usage per run (judge cost excluded):
+  reason@200     seed=0  164 calls  660663in/67332out tok  $4.987  163s
+  reason@200     seed=1  164 calls  671296in/67156out tok  $5.035  166s
+  reason+kb@200  seed=0  172 calls  2105798in/110240out tok  $13.285  640s
+  reason+kb@200  seed=1  172 calls  2157357in/113919out tok  $13.635  696s
+
+wrote report -> docs/agentic_results/tau-bench.v2.json (+ tau-bench.v2.usage.json)
