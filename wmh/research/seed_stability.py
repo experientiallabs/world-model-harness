@@ -7,14 +7,14 @@ seeds and measures the spread of held-out fidelity. A small std means GEPA is re
 is fine); a large std means the winning prompt is seed-dependent and a real build should sweep seeds
 and keep the best.
 
-Unlike a temperature sweep (parked — see docs/research_directions.md — because the shipped
-providers reject sampling params), this needs no sampling knob: it varies only the GEPA engine
-`seed`, plumbed through `GEPAOptimizer`. Fidelity is scored with whatever `Judge` the caller injects
-— pass `RubricJudge` to score on the canonical 5 dimensions, exactly as `wmh eval` does.
+Unlike a temperature sweep, which is parked because the shipped providers reject sampling params,
+this needs no sampling knob: it varies only the GEPA engine `seed`, plumbed through `GEPAOptimizer`.
+Fidelity is scored with whatever `Judge` the caller injects — pass `RubricJudge` to score on the
+canonical 5 dimensions, exactly as `wmh eval` does.
 
 Dependency-injected: it takes a factory for the (provider, judge, embedder) trio and the
-already-split train/held-out traces, so the unit test drives it with fakes and the `scripts/` runner
-drives it with live Bedrock — same code path.
+already-split train/held-out traces, so tests can drive it with fakes and live callers can use the
+same code path with real providers.
 """
 
 from __future__ import annotations

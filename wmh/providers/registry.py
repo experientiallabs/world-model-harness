@@ -11,12 +11,14 @@ from wmh.providers.azure_openai import AzureOpenAIProvider
 from wmh.providers.base import Provider, ProviderConfig, ProviderKind, VerifyResult
 from wmh.providers.bedrock import BedrockProvider
 from wmh.providers.openai import OpenAIProvider
+from wmh.providers.openai_responses import OpenAIResponsesProvider
 
 _BACKENDS = {
     ProviderKind.ANTHROPIC: AnthropicProvider,
     ProviderKind.BEDROCK: BedrockProvider,
     ProviderKind.AZURE_OPENAI: AzureOpenAIProvider,
     ProviderKind.OPENAI: OpenAIProvider,
+    ProviderKind.OPENAI_RESPONSES: OpenAIResponsesProvider,
 }
 
 

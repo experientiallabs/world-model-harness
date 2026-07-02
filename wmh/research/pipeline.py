@@ -10,12 +10,11 @@ These wrap the real pipeline so an ablation measures the deployed behavior, not 
   free).
 
 Both take an explicit `Provider`, `Judge`, and `Embedder` so callers control whether they hit a live
-backend (the `scripts/` runner) or fakes (the unit tests) — no network is assumed here.
+backend or fakes in tests — no network is assumed here.
 
 Note on temperature: the rollout temperature is intentionally NOT a knob here. Every shipped
 provider runs Opus 4.8 / GPT 5.5, which reject sampling params, so a temperature sweep would be
-inert. It is parked as a future direction (docs/research_directions.md) pending a sampling-capable
-provider.
+inert. It is parked pending a sampling-capable provider.
 """
 
 from __future__ import annotations
@@ -58,12 +57,17 @@ def score_prompt(
     embedder: Embedder | None,
     train: list[Trace] | None,
     top_k: int = 5,
+    sample_turns: str = "all",
+    seed: int = 0,
+    concurrency: int = 1,
 ) -> float:
     """Replay-score `prompt`'s held-out fidelity, leak-free. Returns the mean judge score (0..1).
 
     Thin adapter over `wmh.engine.replay.replay`: builds the serving retriever from `embedder` and
     forwards the leak-free `train` corpus, then returns the aggregate `mean_score`. Using `replay`
     (not a private loop) means the rubric/judge the rest of the harness uses scores ablations too.
+    `sample_turns="sampled"` scores Qwen-AgentWorld's 5 turns per trace (cheaper on big test sets);
+    `seed` makes that turn selection reproducible.
     """
     retriever = EmbeddingRetriever(embedder) if embedder is not None else None
     report = replay(
@@ -74,5 +78,8 @@ def score_prompt(
         retriever=retriever,
         train=train if embedder is not None else None,
         top_k=top_k,
+        sample_turns=sample_turns,
+        seed=seed,
+        concurrency=concurrency,
     )
     return report.mean_score

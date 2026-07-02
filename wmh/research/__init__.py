@@ -15,9 +15,13 @@ Two layers:
   GEPA at a chosen seed) and `score_prompt` (replay-score held-out fidelity via the canonical
   `wmh.engine.replay`, leak-free).
 
-`seed_stability` is the first concrete experiment: how reproducible is GEPA's evolved prompt across
-seeds. The train-vs-eval temperature sweep is parked (the shipped providers reject sampling params);
-see docs/research_directions.md.
+Concrete experiments:
+
+- `seed_stability` — how reproducible is GEPA's evolved prompt across seeds.
+- `trace_scaling` — how reconstruction fidelity scales with the number of training traces (the trace
+  scaling law), against a fixed held-out test set.
+
+The train-vs-eval temperature sweep is parked because the shipped providers reject sampling params.
 """
 
 from wmh.research.ablation import (
@@ -30,7 +34,9 @@ from wmh.research.ablation import (
     run_ablation,
 )
 from wmh.research.pipeline import optimize_prompt, score_prompt
+from wmh.research.scaling_split import CorpusSplit, partition_corpus, subsample_train
 from wmh.research.seed_stability import SeedStabilityAblation
+from wmh.research.trace_scaling import BASE, GEPA, MODES, TraceScalingAblation
 
 __all__ = [
     "Ablation",
@@ -39,8 +45,15 @@ __all__ = [
     "ConditionReport",
     "SeedScore",
     "SeedStabilityAblation",
+    "TraceScalingAblation",
+    "CorpusSplit",
+    "BASE",
+    "GEPA",
+    "MODES",
     "aggregate",
     "optimize_prompt",
+    "partition_corpus",
     "run_ablation",
     "score_prompt",
+    "subsample_train",
 ]

@@ -1,0 +1,52 @@
+"""Tests for project-local settings under .wmh/settings.toml."""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+
+from wmh.config.settings import (
+    ProjectSettings,
+    ensure_telemetry_anonymous_id,
+    load_settings,
+    save_settings,
+    set_telemetry_enabled,
+    settings_path,
+)
+
+
+def test_missing_settings_defaults_to_telemetry_enabled(tmp_path: Path) -> None:
+    settings = load_settings(tmp_path / ".wmh")
+    assert settings.telemetry.enabled is True
+    assert settings.telemetry.anonymous_id is None
+
+
+def test_save_then_load_settings_round_trips(tmp_path: Path) -> None:
+    root = tmp_path / ".wmh"
+    save_settings(ProjectSettings(), root)
+    loaded = load_settings(root)
+    assert loaded.telemetry.enabled is True
+
+
+def test_set_telemetry_enabled_writes_project_settings(tmp_path: Path) -> None:
+    root = tmp_path / ".wmh"
+    set_telemetry_enabled(False, root)
+    assert load_settings(root).telemetry.enabled is False
+    assert "enabled = false" in settings_path(root).read_text(encoding="utf-8")
+
+
+def test_ensure_telemetry_anonymous_id_persists_value(tmp_path: Path) -> None:
+    root = tmp_path / ".wmh"
+    first = ensure_telemetry_anonymous_id(root)
+    second = ensure_telemetry_anonymous_id(root)
+    assert first == second
+    assert len(first) == 32
+
+
+def test_load_corrupt_settings_raises_friendly_error(tmp_path: Path) -> None:
+    root = tmp_path / ".wmh"
+    root.mkdir()
+    settings_path(root).write_text("not = = toml", encoding="utf-8")
+    with pytest.raises(ValueError, match="not valid TOML"):
+        load_settings(root)

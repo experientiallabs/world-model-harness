@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING
 
 from wmh.providers import _openai_common
 from wmh.providers.base import (
+    DEFAULT_MAX_TOKENS,
     Completion,
     Message,
     ProviderConfig,
@@ -58,7 +59,7 @@ class AzureOpenAIProvider:
         messages: list[Message],
         *,
         temperature: float = 0.7,
-        max_tokens: int = 2048,
+        max_tokens: int = DEFAULT_MAX_TOKENS,
     ) -> Completion:
         return _openai_common.complete(
             self._get_client().chat.completions, self._deployment(), system, messages, max_tokens

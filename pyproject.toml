@@ -14,6 +14,7 @@ dependencies = [
     "rich>=13.7",
     "gepa>=0.1.1",
     "tomli-w>=1.0",  # writing .wmh/config.toml (stdlib tomllib reads); every `wmh build` needs it
+    "posthog>=7.0",
 ]
 
 [project.optional-dependencies]
@@ -50,11 +51,9 @@ testpaths = ["wmh"]
 [tool.ruff]
 line-length = 100
 target-version = "py311"
-# `tools/` holds isolated, self-contained capture tooling that runs in its OWN Python env
-# (e.g. tools/tau2-capture imports the real tau2-bench under Python 3.13). It is NOT part of the
-# `wmh` package and `wmh` never imports it — only the trace files it produces land in `examples/`.
-# Keep it out of the 3.11 wmh lint/type gate.
-extend-exclude = ["tools/"]
+# `examples/` holds isolated, self-contained task launch/capture helpers that can depend on their
+# own benchmark environments. They are not part of the reusable `wmh` package.
+extend-exclude = ["examples/"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "ANN", "BLE"]
@@ -63,4 +62,6 @@ select = ["E", "F", "I", "UP", "B", "ANN", "BLE"]
 python-version = "3.11"
 
 [tool.ty.src]
-exclude = ["tools/"]
+# `plot_trace_scaling.py` is a one-off research figure that imports matplotlib ephemerally
+# (`uv run --with matplotlib`), not a project dependency — exclude it from the type gate.
+exclude = ["examples/", "scripts/plot_trace_scaling.py"]

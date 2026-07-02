@@ -13,6 +13,7 @@ class ProviderKind(StrEnum):
     BEDROCK = "bedrock"  # Claude 4.8 via AWS
     AZURE_OPENAI = "azure_openai"  # GPT 5.5 via Azure
     OPENAI = "openai"  # GPT 5.5 direct
+    OPENAI_RESPONSES = "openai_responses"  # GPT 5.x direct via the Responses API
 
 
 class EmbedderKind(StrEnum):
@@ -53,6 +54,9 @@ class Completion(BaseModel):
     usage: TokenUsage = Field(default_factory=TokenUsage)
 
 
+DEFAULT_MAX_TOKENS = 8192
+
+
 class VerifyResult(BaseModel):
     ok: bool
     kind: ProviderKind
@@ -76,6 +80,7 @@ class ProviderConfig(BaseModel):
     region: str | None = None  # AWS Bedrock region
     deployment: str | None = None  # Azure OpenAI deployment name
     api_version: str | None = None  # Azure OpenAI API version
+    reasoning_effort: str | None = None  # OpenAI Responses reasoning.effort
 
 
 @runtime_checkable
@@ -101,7 +106,7 @@ class Provider(Protocol):
         messages: list[Message],
         *,
         temperature: float = 0.7,
-        max_tokens: int = 2048,
+        max_tokens: int = DEFAULT_MAX_TOKENS,
     ) -> Completion:
         """Generate a completion. Used by the world model, GEPA, the judge, and the demo agent."""
         ...

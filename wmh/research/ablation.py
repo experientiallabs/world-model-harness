@@ -107,9 +107,9 @@ def run_ablation(
 ) -> AblationReport:
     """Sweep every condition × seed of `ablation` and aggregate per-condition mean + std.
 
-    `on_run(condition, seed, score)` is called after each individual run (for live progress/logging
-    in the `scripts/` runner). Conditions run in their declared order, seeds in the given order, so
-    a run is fully reproducible given the same `ablation` and `seeds`.
+    `on_run(condition, seed, score)` is called after each individual run for live progress or
+    logging. Conditions run in their declared order, seeds in the given order, so a run is fully
+    reproducible given the same `ablation` and `seeds`.
     """
     reports: list[ConditionReport] = []
     for condition in ablation.conditions():

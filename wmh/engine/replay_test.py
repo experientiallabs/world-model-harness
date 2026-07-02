@@ -21,7 +21,7 @@ class FakeProvider:
         messages: list[Message],
         *,
         temperature: float = 0.7,
-        max_tokens: int = 2048,
+        max_tokens: int = 8192,
     ) -> Completion:
         self.last_user = messages[0].content
         return Completion(text=self._reply)
@@ -175,3 +175,15 @@ def test_replay_sample_turns_all_scores_every_step() -> None:
         sample_turns="all",
     )
     assert report.n_steps == 10
+
+
+def test_replay_concurrency_preserves_results_and_order() -> None:
+    # PerActionJudge scores by step index, so the per-step result sequence is order-sensitive:
+    # concurrent scoring must return the identical ordered results as serial.
+    traces = [_trace("a", n=4), _trace("b", n=3)]
+    fp = FakeProvider('{"output": "x"}')
+    serial = replay("BASE", traces, fp, PerActionJudge(), concurrency=1)
+    parallel = replay("BASE", traces, fp, PerActionJudge(), concurrency=4)
+    assert serial.n_steps == parallel.n_steps == 7
+    assert [r.score for r in serial.results] == [r.score for r in parallel.results]
+    assert serial.mean_score == parallel.mean_score

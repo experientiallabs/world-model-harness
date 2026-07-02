@@ -24,8 +24,7 @@ from wmh.retrieval import EmbeddingRetriever
 class EvalReport(BaseModel):
     """Per-file fidelity reports plus the step-weighted overall mean ± std.
 
-    This is the frozen contract the reporting/leaderboard layer consumes: `per_file` maps a trace
-    file's clean name to its `ReplayReport` (per-step `StepResult`s), and
+    `per_file` maps a trace file's clean name to its `ReplayReport` (per-step `StepResult`s), and
     `overall_fidelity`/`overall_std` are the step-weighted aggregates across files.
     """
 
@@ -46,15 +45,13 @@ def evaluate_files(
     top_k: int = 5,
     sample_turns: str = "all",
     seed: int = 0,
-    max_tokens: int = 1024,
     adapter_name: str = "otel-genai",
 ) -> EvalReport:
     """Replay-score each trace file's held-out split. `embedder=None` -> zero-shot (no retrieval).
 
     Each file is split deterministically; tiny corpora with no held-out trace fall back to scoring
     every trace. RAG, when enabled, retrieves from that file's own train split only (leak-free).
-    `sample_turns`/`seed`/`max_tokens` are forwarded to `replay` (see its docstring); raise
-    `max_tokens` for a reasoning world model whose think-trace precedes the JSON observation.
+    `sample_turns`/`seed` are forwarded to `replay` (see its docstring).
     """
     adapter = get_adapter(adapter_name)
     per_file: dict[str, ReplayReport] = {}
@@ -66,8 +63,7 @@ def evaluate_files(
         if not holdout:  # tiny corpus: evaluate on everything
             train, holdout = traces, traces
         retriever = EmbeddingRetriever(embedder) if embedder is not None else None
-        # Clean display name: "tau2-bench.otel.jsonl" -> "tau2-bench".
-        name = path.name.removesuffix(".jsonl").removesuffix(".otel")
+        name = _display_name(path)
         per_file[name] = replay(
             prompt,
             holdout,
@@ -78,7 +74,6 @@ def evaluate_files(
             top_k=top_k,
             sample_turns=sample_turns,
             seed=seed,
-            max_tokens=max_tokens,
         )
 
     # Step-weighted aggregate over every scored step across files.
@@ -91,3 +86,9 @@ def evaluate_files(
         overall_std=overall_std,
         total_steps=len(step_scores),
     )
+
+
+def _display_name(path: Path) -> str:
+    """Human label for a corpus, using the example folder name for `traces.otel.jsonl`."""
+    name = path.name.removesuffix(".jsonl").removesuffix(".otel")
+    return path.parent.name if name == "traces" else name
