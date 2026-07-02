@@ -122,6 +122,14 @@ def test_cli_exposes_the_small_command_set() -> None:
     assert names == {"build", "list", "serve", "demo", "eval", "play"}
 
 
+@pytest.mark.parametrize("args", [[], ["providers"], ["examples"], ["config"]])
+def test_bare_invocation_shows_help(args: list[str]) -> None:
+    result = runner.invoke(app, args)
+    assert "Missing command" not in result.output
+    assert "Usage:" in result.output
+    assert "--help" in result.output
+
+
 def test_providers_subcommand_is_registered() -> None:
     group_names = {group.name for group in app.registered_groups}
     assert "providers" in group_names
