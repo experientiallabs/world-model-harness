@@ -38,13 +38,9 @@ def main() -> None:
     merged = load_all(merged_dir)
     print(f"merged text tensors: {len(merged)}")
 
-    # Map merged text keys (model.*, lm_head.*) -> base namespace.
-    def to_base_key(key: str) -> str:
-        if key.startswith("model."):
-            return "model.language_model." + key[len("model.") :]
-        return key  # lm_head.weight is top-level in both
-
-    remapped = {to_base_key(k): v for k, v in merged.items()}
+    # The text-only merged checkpoint already uses the base namespace
+    # (model.language_model.* / lm_head.*) — verified empirically; no remap.
+    remapped = dict(merged)
 
     index = json.loads((base_dir / "model.safetensors.index.json").read_text())
     weight_map: dict[str, str] = index["weight_map"]
