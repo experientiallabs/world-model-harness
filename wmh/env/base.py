@@ -12,6 +12,7 @@ from typing import Protocol, runtime_checkable
 
 from wmh.core.types import Action, EnvState, Observation
 from wmh.engine.world_model import WorldModel
+from wmh.optimize.reward import EpisodeScore
 from wmh.tracking import RunRecord
 
 
@@ -43,12 +44,22 @@ class WorldModelEnv:
     Each `reset` opens a new session (ending any previous one); `step` delegates to
     `WorldModel.step`. `close` ends the session in the world model — freeing its history and
     metering — and keeps the final token/cost record available as `usage`.
+
+    RL rollouts need the episode judged before the session's history is freed, and `run_episode`
+    closes the env in its `finally` — so with `score_on_close=True`, `close` scores the session
+    (`WorldModel.score_session`) right before ending it and keeps the result as `last_score`:
+
+        env = WorldModelEnv(wm, score_on_close=True)
+        result = run_episode(env, agent, task)
+        reward = env.last_score.reward  # scalar for GRPO/PPO/REINFORCE++; .critique for SDPO
     """
 
-    def __init__(self, world_model: WorldModel) -> None:
+    def __init__(self, world_model: WorldModel, *, score_on_close: bool = False) -> None:
         self._world_model = world_model
+        self._score_on_close = score_on_close
         self._session_id: str | None = None
         self._usage: RunRecord | None = None
+        self._last_score: EpisodeScore | None = None
 
     @property
     def session_id(self) -> str:
@@ -63,6 +74,20 @@ class WorldModelEnv:
             return self._world_model.session_usage(self._session_id)
         return self._usage
 
+    @property
+    def last_score(self) -> EpisodeScore:
+        """The episode score captured by the most recent scoring `close`.
+
+        Raises if no scored episode has completed yet — either the env was built without
+        `score_on_close=True`, or `close` hasn't run.
+        """
+        if self._last_score is None:
+            raise RuntimeError(
+                "no scored episode yet; construct WorldModelEnv(wm, score_on_close=True) "
+                "and complete an episode (run_episode closes — and thus scores — for you)"
+            )
+        return self._last_score
+
     def reset(self, task: str | None = None, seed_state: EnvState | None = None) -> EnvState:
         self.close()  # a leftover session would otherwise leak in the world model
         session = self._world_model.new_session(task=task, seed_state=seed_state)
@@ -74,5 +99,7 @@ class WorldModelEnv:
 
     def close(self) -> None:
         if self._session_id is not None:
+            if self._score_on_close:
+                self._last_score = self._world_model.score_session(self._session_id)
             self._usage = self._world_model.end_session(self._session_id)
             self._session_id = None

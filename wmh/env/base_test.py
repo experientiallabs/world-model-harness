@@ -116,3 +116,40 @@ def test_recorded_history_snapshots_state_per_step() -> None:
     assert history[0].state_before.scratchpad == ""  # state BEFORE the first action
     assert history[1].state_before.scratchpad == "- did a thing"
     assert history[0].state_before is not history[1].state_before
+
+
+def test_score_on_close_captures_episode_score_before_session_ends() -> None:
+    """RL rollouts: run_episode closes the env, so scoring must happen inside close()."""
+    from wmh.optimize.reward import EpisodeScore
+
+    env_reply = '{"output": "found u1", "is_error": false}'
+    judge_reply = '{"success": true, "reward": 0.7, "step_rewards": [0.7], "critique": "nice"}'
+    retriever = EmbeddingRetriever(HashingEmbedder(dim=64))
+    wm = WorldModel(
+        FakeProvider(env_reply), retriever, top_k=1, reward_provider=FakeProvider(judge_reply)
+    )
+    env = WorldModelEnv(wm, score_on_close=True)
+    env.reset(task="find u1")
+    session_id = env.session_id
+    env.step(Action(kind=ActionKind.TOOL_CALL, name="get_user", arguments={"id": "u1"}))
+    env.close()
+    assert isinstance(env.last_score, EpisodeScore)
+    assert env.last_score.reward == 0.7
+    assert env.last_score.critique == "nice"
+    # the session is gone (memory freed) but the score survived
+    with pytest.raises(KeyError):
+        wm.get_session(session_id)
+
+
+def test_last_score_raises_before_any_scored_episode() -> None:
+    env = WorldModelEnv(_world_model("{}"), score_on_close=True)
+    with pytest.raises(RuntimeError, match="no scored episode"):
+        _ = env.last_score
+
+
+def test_close_without_score_on_close_does_not_judge() -> None:
+    env = WorldModelEnv(_world_model("{}"))
+    env.reset(task="t")
+    env.close()
+    with pytest.raises(RuntimeError):
+        _ = env.last_score

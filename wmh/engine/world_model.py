@@ -53,12 +53,15 @@ class WorldModel:
         provider: Provider,
         embedder: Embedder | None = None,
         telemetry_root: str | Path | None = None,
+        reward_provider: Provider | None = None,
     ) -> WorldModel:
         """Construct from a built `.wmh/` artifact (optimized prompt + indexed replay buffer).
 
         `provider` serves the live world model (generation). `embedder` supplies phi for retrieval;
         when omitted we reconstruct the configured embedder (`embed_provider` + `embed_dim`), which
         defaults to the offline `HashingEmbedder` so loading needs no embedding credentials.
+        `reward_provider` backs `score_session` (defaults to `provider`) — pass it to judge with a
+        different model than the one simulating the environment.
         """
         config = load_config(artifact_dir)
         paths = ArtifactPaths(artifact_dir)
@@ -78,6 +81,7 @@ class WorldModel:
             env_prompt=env_prompt,
             top_k=config.top_k,
             telemetry_root=telemetry_root or _default_telemetry_root(artifact_dir),
+            reward_provider=reward_provider,
         )
 
     def new_session(self, task: str | None = None, seed_state: EnvState | None = None) -> Session:

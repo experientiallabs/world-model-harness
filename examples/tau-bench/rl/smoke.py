@@ -122,10 +122,7 @@ def _load_wm_with_haiku() -> tuple[WorldModel, Provider]:
     _ = config  # config is consumed inside WorldModel.load; we override the provider only
     haiku_cfg = ProviderConfig(kind=ProviderKind.BEDROCK, model=_HAIKU_MODEL, region=_REGION)
     provider = get_provider(haiku_cfg)
-    wm = WorldModel.load(str(_MODEL_DIR), provider)
-    # score_session judges with `_reward_provider`; default is the serve provider, but the seam
-    # allows a different reward model. For smoke we deliberately use the same haiku for both.
-    wm._reward_provider = provider  # noqa: SLF001 - smoke; production would take a kwarg
+    wm = WorldModel.load(str(_MODEL_DIR), provider, reward_provider=provider)
     return wm, provider
 
 
@@ -161,11 +158,14 @@ class HaikuToolCallAgent:
 
     def act(self, task: str | None, state: EnvState, history: list[Step]) -> Action:
         # Feed the model the task and (very brief) history — enough for a smoke tool call.
-        history_text = "\n".join(
-            f"step {i + 1} ACTION: {render_action(s.action)}\n"
-            f"step {i + 1} OBSERVATION: {s.observation.content[:200]}"
-            for i, s in enumerate(history[-3:])
-        ) or "(no prior steps)"
+        history_text = (
+            "\n".join(
+                f"step {i + 1} ACTION: {render_action(s.action)}\n"
+                f"step {i + 1} OBSERVATION: {s.observation.content[:200]}"
+                for i, s in enumerate(history[-3:])
+            )
+            or "(no prior steps)"
+        )
         example_block = "\n\n".join(render_demo(e) for e in self._examples[:2]) or "(no examples)"
         user = (
             "You role-play a tau-bench airline/retail/telecom customer-service agent. Emit one "
@@ -269,8 +269,7 @@ def _method_icl(wm: WorldModel, provider: Provider, scenarios: list[Scenario]) -
     )
     print(f"  augmented next-episode prompt (first 300 chars):\n    {augmented[:300]!r}")
     return (
-        f"episode steps={len(result.steps)}, follow-up reward={score.reward:.2f}, "
-        f"critique injected"
+        f"episode steps={len(result.steps)}, follow-up reward={score.reward:.2f}, critique injected"
     )
 
 
@@ -374,7 +373,9 @@ def _method_grpo(wm: WorldModel, provider: Provider, scenarios: list[Scenario]) 
             r["advantage"] = r["reward"] - mean
         print(f"  group {task_id}: mean_reward={mean:.3f}")
         for r in group:
-            print(f"    rollout {r['rollout_index']}: reward={r['reward']:.2f} adv={r['advantage']:+.3f}")
+            print(
+                f"    rollout {r['rollout_index']}: reward={r['reward']:.2f} adv={r['advantage']:+.3f}"
+            )
     n_rollouts = sum(len(g) for g in groups.values())
     return f"{len(groups)} groups, {n_rollouts} rollouts, group-relative advantages computed"
 
@@ -465,7 +466,9 @@ def main() -> int:
     t0 = time.monotonic()
     wm, provider = _load_wm_with_haiku()
     train, _test, scenarios = _load_scenarios()
-    print(f"  loaded wm + {len(train)} train traces + {len(scenarios)} scenarios ({time.monotonic() - t0:.1f}s)")
+    print(
+        f"  loaded wm + {len(train)} train traces + {len(scenarios)} scenarios ({time.monotonic() - t0:.1f}s)"
+    )
 
     report = Report()
     _run(report, "1_ICL", lambda: _method_icl(wm, provider, scenarios))
