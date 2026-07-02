@@ -80,6 +80,8 @@ def replay(
     sample_turns: str = "all",
     seed: int = 0,
     concurrency: int = 1,
+    knowledge: str | None = None,
+    reasoning: bool = False,
 ) -> ReplayReport:
     """Replay held-out steps, scoring predicted vs. actual observations.
 
@@ -87,6 +89,9 @@ def replay(
       (Qwen-AgentWorld's 5-turn protocol) using `seed` for reproducible turn selection.
     - `retriever` + `train` enable leak-free RAG (demos from the train corpus, never the own trace);
       omit either for zero-shot.
+    - `knowledge`/`reasoning`: the serving engine's agentic mode (rendered knowledge-base text +
+      the deliberate-then-answer contract). Callers own leak-freedom: `knowledge` must be derived
+      from TRAIN traces only (see `wmh.engine.knowledge.seed_knowledge`).
     - `concurrency`: steps are independent (each a predict + judge round trip), so `concurrency > 1`
       scores them on a thread pool — the result is identical and order-preserving (only the wall
       clock changes). Default 1 keeps existing callers unchanged; raise it to cut latency on large
@@ -108,7 +113,17 @@ def replay(
 
     def _score(item: tuple[str, Step, list[Step]]) -> StepResult:
         trace_id, step, history = item
-        return _score_step(prompt, trace_id, step, provider, judge, demos, history)
+        return _score_step(
+            prompt,
+            trace_id,
+            step,
+            provider,
+            judge,
+            demos,
+            history,
+            knowledge=knowledge,
+            reasoning=reasoning,
+        )
 
     if concurrency > 1 and len(work) > 1:
         with ThreadPoolExecutor(max_workers=concurrency) as pool:
@@ -136,6 +151,9 @@ def _score_step(
     judge: Judge,
     demos: DemoRetriever,
     history: list[Step],
+    *,
+    knowledge: str | None = None,
+    reasoning: bool = False,
 ) -> StepResult:
     """Predict the observation for one step and score it against the recorded observation."""
     predicted = predict_observation(
@@ -146,6 +164,8 @@ def _score_step(
         step.action,
         demos=demos.demos_for(trace_id, step),
         history=history,
+        knowledge=knowledge,
+        reasoning=reasoning,
     )
     verdict = judge.score(predicted, step.observation, step)
     return StepResult(

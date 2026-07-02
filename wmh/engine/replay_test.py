@@ -111,6 +111,31 @@ def test_replay_rag_is_leakfree() -> None:
     assert "real-" not in (provider.last_user or "").split("SIMILAR PAST EXAMPLES")[-1]
 
 
+def test_replay_threads_knowledge_and_reasoning_through_the_shared_assembly() -> None:
+    provider = FakeProvider(
+        '{"reasoning": "auth gate passed", "output": "real-0", "is_error": false}'
+    )
+    report = replay(
+        "BASE",
+        [_trace("h", n=1)],
+        provider,
+        FakeJudge(1.0),
+        knowledge="- gate: modifying a booking requires auth",
+        reasoning=True,
+    )
+    user = provider.last_user or ""
+    assert "KNOWLEDGE BASE" in user and "gate: modifying a booking requires auth" in user
+    assert '"reasoning"' in user  # deliberate-then-answer contract requested
+    # The deliberation is stripped: the judge scores only what the agent would observe.
+    assert report.results[0].predicted == "real-0"
+
+
+def test_replay_defaults_render_no_knowledge_section() -> None:
+    provider = FakeProvider('{"output": "real-0", "is_error": false}')
+    replay("BASE", [_trace("h", n=1)], provider, FakeJudge(1.0))
+    assert "KNOWLEDGE BASE" not in (provider.last_user or "")
+
+
 def test_replay_empty_is_safe() -> None:
     report = replay("BASE", [], FakeProvider("{}"), FakeJudge(1.0))
     assert report.n_steps == 0

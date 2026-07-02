@@ -8,12 +8,15 @@ overall scorecard. Keeping it here (not in the CLI) keeps the command thin and t
 
 from __future__ import annotations
 
+import tempfile
 from pathlib import Path
 from statistics import fmean, pstdev
 
 from pydantic import BaseModel, Field
 
+from wmh.core.types import Trace
 from wmh.engine.build import split_traces
+from wmh.engine.knowledge import KnowledgeBase, seed_knowledge
 from wmh.engine.replay import ReplayReport, replay
 from wmh.ingest import get_adapter
 from wmh.optimize.judge import Judge
@@ -46,12 +49,18 @@ def evaluate_files(
     sample_turns: str = "all",
     seed: int = 0,
     adapter_name: str = "otel-genai",
+    knowledge: bool = False,
+    reasoning: bool = False,
 ) -> EvalReport:
     """Replay-score each trace file's held-out split. `embedder=None` -> zero-shot (no retrieval).
 
     Each file is split deterministically; tiny corpora with no held-out trace fall back to scoring
     every trace. RAG, when enabled, retrieves from that file's own train split only (leak-free).
     `sample_turns`/`seed` are forwarded to `replay` (see its docstring).
+
+    `knowledge` seeds an ephemeral knowledge base from each file's TRAIN split (never the holdout —
+    the same leak-free discipline as RAG) and renders it into every prediction; `reasoning`
+    requests the deliberate-then-answer contract. Grounding never runs in eval (hermetic).
     """
     adapter = get_adapter(adapter_name)
     per_file: dict[str, ReplayReport] = {}
@@ -63,6 +72,7 @@ def evaluate_files(
         if not holdout:  # tiny corpus: evaluate on everything
             train, holdout = traces, traces
         retriever = EmbeddingRetriever(embedder) if embedder is not None else None
+        knowledge_text = _seed_eval_knowledge(train, provider) if knowledge else None
         name = _display_name(path)
         per_file[name] = replay(
             prompt,
@@ -74,6 +84,8 @@ def evaluate_files(
             top_k=top_k,
             sample_turns=sample_turns,
             seed=seed,
+            knowledge=knowledge_text,
+            reasoning=reasoning,
         )
 
     # Step-weighted aggregate over every scored step across files.
@@ -86,6 +98,19 @@ def evaluate_files(
         overall_std=overall_std,
         total_steps=len(step_scores),
     )
+
+
+def _seed_eval_knowledge(train: list[Trace], provider: Provider) -> str | None:
+    """Seed an ephemeral KB from the train split and return its rendered text.
+
+    The KB lives in a temp dir for the duration of seeding only — eval runs never read or write a
+    model artifact's shipped knowledge (whose `learned.md`/`grounded.md` could carry facts from
+    arbitrary serve sessions), so the scored knowledge is train-derived by construction.
+    """
+    with tempfile.TemporaryDirectory(prefix="wmh-eval-kb-") as tmp:
+        kb = KnowledgeBase(Path(tmp))
+        seed_knowledge(kb, train, provider)
+        return kb.render() or None
 
 
 def _display_name(path: Path) -> str:

@@ -81,6 +81,9 @@ def predict_observation(
     action: Action,
     demos: list[Step],
     history: list[Step] | None = None,
+    *,
+    knowledge: str | None = None,
+    reasoning: bool = False,
 ) -> Observation:
     """Predict the observation for (state, action) under `prompt`, using only a Provider.
 
@@ -88,11 +91,22 @@ def predict_observation(
     shared `wmh.core.render.build_env_prompt` and parses the completion with the shared
     `parse_observation` — the exact assembly AND output contract the serving engine uses — so the
     predicted observation (content + is_error + state_note) matches what the world model produces.
+    `knowledge`/`reasoning` mirror the serving engine's agentic mode (grounding stays serve-only:
+    optimization and eval rollouts never touch the network beyond the provider).
 
     Rollouts run deterministically: the providers (Opus 4.8 / GPT 5.5) reject sampling params, so no
     temperature is forwarded.
     """
-    system, user = build_env_prompt(prompt, task, state, action, history=history, demos=demos)
+    system, user = build_env_prompt(
+        prompt,
+        task,
+        state,
+        action,
+        history=history,
+        demos=demos,
+        knowledge=knowledge,
+        reasoning=reasoning,
+    )
     completion = provider.complete(
         system, [Message(role="user", content=user)], temperature=0.0, max_tokens=DEFAULT_MAX_TOKENS
     )

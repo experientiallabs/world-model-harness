@@ -14,6 +14,8 @@ from pathlib import Path
 from wmh.config import ArtifactPaths, load_config
 from wmh.core.parsing import parse_observation
 from wmh.core.types import Action, EnvState, Observation, Session, Step
+from wmh.engine.grounding import Grounder, get_grounder, render_grounding
+from wmh.engine.knowledge import KnowledgeBase
 from wmh.engine.prompts import BASE_ENV_PROMPT, build_env_prompt
 from wmh.optimize.reward import EpisodeRewardJudge, EpisodeScore
 from wmh.providers.base import Embedder, Message, Provider
@@ -21,6 +23,18 @@ from wmh.retrieval import EmbeddingRetriever, Retriever
 from wmh.retrieval.embedders import get_embedder
 from wmh.telemetry import capture
 from wmh.tracking import MeteredProvider, Phase, RunRecord, RunTracker
+
+# Live web searches allowed per session (cache hits are free); keeps grounding cost bounded.
+DEFAULT_GROUND_BUDGET = 5
+
+
+class _StepUsage:
+    """Accumulates token/cost totals across the (1 or 2) completions of a single step."""
+
+    def __init__(self) -> None:
+        self.input_tokens = 0
+        self.output_tokens = 0
+        self.cost_usd: float | None = None
 
 
 class WorldModel:
@@ -32,6 +46,11 @@ class WorldModel:
         top_k: int = 5,
         telemetry_root: str | Path = ".wmh",
         reward_provider: Provider | None = None,
+        *,
+        knowledge: KnowledgeBase | None = None,
+        reasoning: bool = False,
+        grounder: Grounder | None = None,
+        ground_budget: int = DEFAULT_GROUND_BUDGET,
     ) -> None:
         self._provider = provider
         self._retriever = retriever
@@ -45,6 +64,15 @@ class WorldModel:
         # Reward judging (`score_session`) defaults to the serve provider; pass `reward_provider`
         # to judge with a different model than the one simulating the environment.
         self._reward_provider = reward_provider or provider
+        # Agentic mode (all optional; defaults preserve pre-knowledge behavior exactly).
+        # `knowledge` is the cross-session KB rendered into every prompt and written to via the
+        # env's kb_note; `reasoning` selects the deliberate-then-answer contract; `grounder`
+        # enables bounded web search for unknown entities (None = the contract never offers it).
+        self._knowledge = knowledge
+        self._reasoning = reasoning
+        self._grounder = grounder
+        self._ground_budget = ground_budget
+        self._ground_spent: dict[str, int] = {}  # session id -> live web searches used
 
     @classmethod
     def load(
@@ -62,6 +90,10 @@ class WorldModel:
         defaults to the offline `HashingEmbedder` so loading needs no embedding credentials.
         `reward_provider` backs `score_session` (defaults to `provider`) — pass it to judge with a
         different model than the one simulating the environment.
+
+        Agentic mode comes from the artifact: a `knowledge/` directory enables the KB (models
+        without one — every pre-knowledge artifact — serve unchanged), and `reasoning`/`grounder`
+        come from config.toml (absent fields default off).
         """
         config = load_config(artifact_dir)
         paths = ArtifactPaths(artifact_dir)
@@ -82,6 +114,9 @@ class WorldModel:
             top_k=config.top_k,
             telemetry_root=telemetry_root or _default_telemetry_root(artifact_dir),
             reward_provider=reward_provider,
+            knowledge=KnowledgeBase(paths.knowledge) if paths.knowledge.is_dir() else None,
+            reasoning=config.reasoning,
+            grounder=None if config.grounder == "none" else get_grounder(config.grounder),
         )
 
     def new_session(self, task: str | None = None, seed_state: EnvState | None = None) -> Session:
@@ -159,7 +194,15 @@ class WorldModel:
         """
         session = self._sessions[session_id]
         demos = self._retriever.topk(session.state, action, self._top_k)
-        system, user = build_env_prompt(self._env_prompt, session, action, demos)
+        system, user = build_env_prompt(
+            self._env_prompt,
+            session,
+            action,
+            demos,
+            knowledge=self._rendered_knowledge(),
+            reasoning=self._reasoning,
+            grounding=self._grounder is not None,
+        )
         return f"{system}\n\n=== USER ===\n{user}"
 
     def step(self, session_id: str, action: Action) -> Observation:
@@ -170,10 +213,12 @@ class WorldModel:
         # (1) retrieve top-k similar past steps conditioned on the latest state + action
         demos = self._retriever.topk(session.state, action, self._top_k)
 
-        # (2) assemble the env prompt and (3) predict the observation
-        system, user = build_env_prompt(self._env_prompt, session, action, demos)
+        # (2) assemble the env prompt and (3) predict the observation — with at most one bounded
+        # grounding round-trip (the model asks to search the web for an entity it can't ground,
+        # then answers again with the results in context)
+        usage = _StepUsage()
         try:
-            completion = self._provider.complete(system, [_user_message(user)])
+            observation = self._predict(session, action, demos, usage)
         except Exception:
             capture(
                 "wmh generated step failed",
@@ -184,16 +229,8 @@ class WorldModel:
                 root=self._telemetry_root,
             )
             raise
-        observation = parse_observation(completion.text)
 
-        # serve-time metering: attribute this call's tokens/cost to the session
-        usage_cost_usd: float | None = None
-        tracker = self._trackers.get(session_id)
-        if tracker is not None:
-            usage_event = tracker.record(Phase.SERVE, self._provider.config.model, completion.usage)
-            usage_cost_usd = usage_event.cost_usd
-
-        # (4) advance session: append step, update structured state + scratchpad, enrich buffer.
+        # (4) advance session: append step, update scratchpad + cross-session KB, enrich buffer.
         # state_before is a deep copy: _update_state mutates session.state in place, and an aliased
         # reference would rewrite every recorded step (and the text the retriever embeds in add())
         # to the post-mutation state.
@@ -205,6 +242,7 @@ class WorldModel:
         )
         session.history.append(step)
         self._update_state(session, step)
+        self._update_knowledge(session, observation)
         self._retriever.add(step)
         capture(
             "wmh generated step completed",
@@ -213,13 +251,100 @@ class WorldModel:
                 "generated_step_count": 1,
                 "session_step_count": len(session.history),
                 "duration_seconds": round(time.monotonic() - started, 3),
-                "input_tokens": completion.usage.input_tokens,
-                "output_tokens": completion.usage.output_tokens,
-                "cost_usd": round(usage_cost_usd, 6) if usage_cost_usd is not None else None,
+                "input_tokens": usage.input_tokens,
+                "output_tokens": usage.output_tokens,
+                "cost_usd": round(usage.cost_usd, 6) if usage.cost_usd is not None else None,
             },
             root=self._telemetry_root,
         )
         return observation
+
+    def _predict(
+        self, session: Session, action: Action, demos: list[Step], usage: _StepUsage
+    ) -> Observation:
+        """One observation prediction, with at most one grounding search + re-completion.
+
+        The re-completion renders with `grounding=False` so the model cannot request a second
+        search for the same step — the step cost is bounded at two provider calls.
+        """
+        knowledge = self._rendered_knowledge()
+        observation = self._complete(
+            session, action, demos, knowledge, self._grounder is not None, usage
+        )
+        query = observation.metadata.get("ground_query")
+        if self._grounder is not None and isinstance(query, str) and query.strip():
+            results = self._ground(session.id, query.strip())
+            if results is not None:
+                grounded_section = f"## web search results: {query.strip()}\n{results}"
+                augmented = f"{knowledge}\n\n{grounded_section}" if knowledge else grounded_section
+                observation = self._complete(session, action, demos, augmented, False, usage)
+        return observation
+
+    def _complete(
+        self,
+        session: Session,
+        action: Action,
+        demos: list[Step],
+        knowledge: str | None,
+        grounding: bool,
+        usage: _StepUsage,
+    ) -> Observation:
+        """One metered provider completion under the current agentic-mode settings."""
+        system, user = build_env_prompt(
+            self._env_prompt,
+            session,
+            action,
+            demos,
+            knowledge=knowledge,
+            reasoning=self._reasoning,
+            grounding=grounding,
+        )
+        completion = self._provider.complete(system, [_user_message(user)])
+        usage.input_tokens += completion.usage.input_tokens
+        usage.output_tokens += completion.usage.output_tokens
+        tracker = self._trackers.get(session.id)
+        if tracker is not None:
+            event = tracker.record(Phase.SERVE, self._provider.config.model, completion.usage)
+            if event.cost_usd is not None:
+                usage.cost_usd = (usage.cost_usd or 0.0) + event.cost_usd
+        return parse_observation(completion.text)
+
+    def _rendered_knowledge(self) -> str | None:
+        """The KB rendered for the prompt, or None when the KB is absent/empty."""
+        if self._knowledge is None:
+            return None
+        return self._knowledge.render() or None
+
+    def _ground(self, session_id: str, query: str) -> str | None:
+        """Resolve a ground_query: KB cache first, then one budgeted live search.
+
+        Cache hits are free (no budget spend). A live search is cached into the KB
+        (`grounded.md`) so the same entity is never searched twice across sessions. Returns None
+        when the session's live-search budget is exhausted (the step proceeds ungrounded).
+        """
+        if self._knowledge is not None:
+            cached = self._knowledge.lookup_grounded(query)
+            if cached is not None:
+                return cached
+        if self._grounder is None or self._ground_spent.get(session_id, 0) >= self._ground_budget:
+            return None
+        results_text = render_grounding(self._grounder.ground(query))
+        self._ground_spent[session_id] = self._ground_spent.get(session_id, 0) + 1
+        if self._knowledge is not None:
+            self._knowledge.append_grounded(query, results_text)
+        return results_text
+
+    def _update_knowledge(self, session: Session, observation: Observation) -> None:
+        """Persist the env's `kb_note` (a cross-session canonical fact) to the KB.
+
+        Writes go only to `learned.md` with session provenance — seeded files and human edits are
+        never auto-modified.
+        """
+        if self._knowledge is None:
+            return
+        note = observation.metadata.get("kb_note")
+        if isinstance(note, str) and note.strip():
+            self._knowledge.append_learned(note, provenance=f"session {session.id[:8]}")
 
     def _update_state(self, session: Session, step: Step) -> None:
         """Fold the step's effect into session.state (the env's free-text scratchpad "database").

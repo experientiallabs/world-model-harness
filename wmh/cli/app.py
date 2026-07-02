@@ -97,6 +97,8 @@ class _EvalOptions:
     sample_turns: str
     seed: int
     top_k: int
+    knowledge: bool
+    reasoning: bool
 
 
 @config_app.command("telemetry")
@@ -438,6 +440,16 @@ def eval_(  # noqa: A001 - `eval` is the user-facing command name; the builtin i
     top_k: int | None = typer.Option(
         None, help="Retrieved demos per step (default: 5, or suite config)."
     ),
+    knowledge: bool | None = typer.Option(
+        None,
+        "--knowledge/--no-knowledge",
+        help="Seed a knowledge base from the train split and render it into every prediction.",
+    ),
+    reasoning: bool | None = typer.Option(
+        None,
+        "--reasoning/--no-reasoning",
+        help="Deliberate-then-answer output contract (explicit reasoning pass).",
+    ),
     out: str | None = typer.Option(None, help="Optional path to write the full JSON report."),
     examples_root: str | None = typer.Option(
         None, help="Directory containing example eval suites. Default: repo-local examples/."
@@ -486,6 +498,8 @@ def eval_(  # noqa: A001 - `eval` is the user-facing command name; the builtin i
             sample_turns=sample_turns,
             seed=seed,
             top_k=top_k,
+            knowledge=knowledge,
+            reasoning=reasoning,
             out=out,
         )
         return
@@ -504,6 +518,8 @@ def eval_(  # noqa: A001 - `eval` is the user-facing command name; the builtin i
         sample_turns=sample_turns,
         seed=seed,
         top_k=top_k,
+        knowledge=knowledge,
+        reasoning=reasoning,
     )
     report = _run_eval_files(
         [Path(f) for f in args],
@@ -604,6 +620,8 @@ def _eval_run_suite(
     sample_turns: str | None,
     seed: int | None,
     top_k: int | None,
+    knowledge: bool | None,
+    reasoning: bool | None,
     out: str | None,
 ) -> None:
     suite = resolve_eval_suite(selector, examples_root)
@@ -617,6 +635,8 @@ def _eval_run_suite(
         sample_turns=sample_turns or suite.config.sample_turns,
         seed=seed if seed is not None else suite.config.seed,
         top_k=top_k if top_k is not None else suite.config.top_k,
+        knowledge=knowledge if knowledge is not None else suite.config.knowledge,
+        reasoning=reasoning if reasoning is not None else suite.config.reasoning,
     )
     files = suite.resolve_files()
     report = _run_eval_files(files, options, provider=provider, model=model, region=region)
@@ -645,6 +665,8 @@ def _eval_run_suite(
             "rag": options.use_rag,
             "judge": options.judge,
             "embed_dim": options.embed_dim,
+            "knowledge": options.knowledge,
+            "reasoning": options.reasoning,
         },
         "report": _eval_report_payload(report),
     }
@@ -673,6 +695,8 @@ def _eval_options(
     sample_turns: str | None,
     seed: int | None,
     top_k: int | None,
+    knowledge: bool | None = None,
+    reasoning: bool | None = None,
 ) -> _EvalOptions:
     split = 0.7 if train_split is None else train_split
     dim = 512 if embed_dim is None else embed_dim
@@ -700,6 +724,8 @@ def _eval_options(
         sample_turns=turns,
         seed=rng_seed,
         top_k=demos,
+        knowledge=bool(knowledge),
+        reasoning=bool(reasoning),
     )
 
 
@@ -737,6 +763,8 @@ def _run_eval_files(
         top_k=options.top_k,
         sample_turns=options.sample_turns,
         seed=options.seed,
+        knowledge=options.knowledge,
+        reasoning=options.reasoning,
     )
 
 

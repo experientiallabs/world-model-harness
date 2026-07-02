@@ -40,6 +40,14 @@ class HarnessConfig(BaseModel):
     train_split: float = Field(default=0.8, gt=0.0, lt=1.0)
     gepa_budget: int = 50  # rollout budget for prompt evolution
     trace_adapter: str = "otel-genai"
+    # Agentic-mode flags (all default OFF: artifacts built before these fields serve unchanged).
+    # `knowledge`: seed a knowledge base from train traces at build and render it into the env
+    # prompt at serve. `reasoning`: deliberate-then-answer output contract. `grounder`: web-search
+    # backend for grounding unknown entities ("none" keeps everything hermetic; see
+    # `wmh.engine.grounding` for backends).
+    knowledge: bool = False
+    reasoning: bool = False
+    grounder: str = "none"
 
     def provider_config(self, kind: ProviderKind) -> ProviderConfig:
         """Return the configured ProviderConfig for `kind` (model + backend knobs)."""
@@ -149,6 +157,11 @@ class ArtifactPaths:
     @property
     def metrics(self) -> Path:
         return self.root / "metrics.json"
+
+    @property
+    def knowledge(self) -> Path:
+        """Cross-session knowledge base directory (optional; absent on pre-knowledge artifacts)."""
+        return self.root / "knowledge"
 
 
 def _strip_none(value: JsonValue) -> JsonValue:

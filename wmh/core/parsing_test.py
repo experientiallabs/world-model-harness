@@ -37,6 +37,35 @@ def test_parse_observation_falls_back_to_plaintext() -> None:
     assert obs.is_error is False
 
 
+def test_parse_observation_strips_reasoning_into_metadata() -> None:
+    obs = parse_observation(
+        '{"reasoning": "gate: user is authed (step 2), record exists => success", '
+        '"output": "ok", "is_error": false, "state_note": "", '
+        '"kb_note": "flight HAT-201 JFK->SFO exists", "ground_query": ""}'
+    )
+    assert obs.content == "ok"  # reasoning never leaks into what the agent observes
+    assert obs.metadata["reasoning"] == "gate: user is authed (step 2), record exists => success"
+    assert obs.metadata["kb_note"] == "flight HAT-201 JFK->SFO exists"
+    assert "ground_query" not in obs.metadata  # empty fields stay out of metadata
+
+
+def test_parse_observation_ground_query_in_metadata() -> None:
+    obs = parse_observation(
+        '{"reasoning": "package unknown", "output": "", "is_error": false, '
+        '"ground_query": "tomli_w python package api"}'
+    )
+    assert obs.metadata["ground_query"] == "tomli_w python package api"
+
+
+def test_parse_observation_empty_output_with_reasoning_is_still_contract() -> None:
+    # A silent command (empty output) in reasoning mode must not fall back to raw-JSON content.
+    obs = parse_observation(
+        '{"reasoning": "mkdir prints nothing", "output": "", "is_error": false}'
+    )
+    assert obs.content == ""
+    assert obs.is_error is False
+
+
 def test_dumps_observation_contract_roundtrips() -> None:
     obs = Observation(content="ok", is_error=False, metadata={"state_note": "did x"})
     text = dumps_observation_contract(obs)

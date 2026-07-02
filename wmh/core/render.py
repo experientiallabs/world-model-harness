@@ -72,6 +72,9 @@ def build_env_prompt(
     *,
     history: list[Step] | None = None,
     demos: list[Step] | None = None,
+    knowledge: str | None = None,
+    reasoning: bool = False,
+    grounding: bool = False,
 ) -> tuple[str, str]:
     """Assemble the (system, user) world-model completion that predicts the next observation.
 
@@ -80,6 +83,13 @@ def build_env_prompt(
     action form the user message. This is the *single* assembly used by both the serving engine
     (`wmh.engine.prompts`) and the GEPA optimizer, so prompts are evolved against exactly what the
     world model serves.
+
+    `knowledge`/`reasoning`/`grounding` are the opt-in agentic-mode extensions; at their defaults
+    the rendering is byte-identical to the pre-knowledge shape (pinned in render_test), so
+    prebuilt models keep serving unchanged. `knowledge` (the model's cross-session knowledge
+    base, rendered by `wmh.engine.knowledge`) becomes an authoritative facts section; `reasoning`
+    switches the output contract to deliberate-then-answer; `grounding` additionally offers the
+    `ground_query` escape hatch (pass it only when a live grounder will actually serve it).
     """
     system = base_prompt
     demo_block = (
@@ -94,14 +104,21 @@ def build_env_prompt(
         if history
         else "(start of session)"
     )
+    knowledge_block = (
+        "KNOWLEDGE BASE (canonical facts about this environment — authoritative over your priors;"
+        f" entities, rules, schemas, and state-dependent gates):\n{knowledge}\n\n"
+        if knowledge
+        else ""
+    )
     user = (
         f"TASK:\n{task or '(none)'}\n\n"
+        f"{knowledge_block}"
         f"INTERACTION HISTORY:\n{history_block}\n\n"
         f"SIMILAR PAST EXAMPLES:\n{demo_block}\n\n"
         f"CURRENT ENV STATE:\n  structured: {render_json(state.structured)}\n"
         f"  scratchpad: {state.scratchpad or '(empty)'}\n\n"
         f"AGENT ACTION:\n{render_action(action)}\n\n"
-        f"{OUTPUT_CONTRACT}"
+        f"{output_contract(reasoning=reasoning, grounding=grounding)}"
     )
     return system, user
 
@@ -114,3 +131,50 @@ OUTPUT_CONTRACT = (
     '"is_error": <true if the action failed/was invalid>, '
     '"state_note": "<one short fact to remember about the new env state, or empty>"}'
 )
+
+# Reasoning-mode contract pieces. `reasoning` MUST be the first key: decoding is ordered, so
+# putting the deliberation before `output` is what makes it an actual deliberation rather than a
+# post-hoc rationalization. `kb_note` is the cross-session counterpart of `state_note` (persisted
+# to the knowledge base by the engine); `ground_query` is offered only when a grounder is active.
+_REASONING_FIELD = (
+    '{"reasoning": "<before deciding the output: what would this action really do given the'
+    " current state? check the knowledge base's rules and state-dependent gates (auth,"
+    " availability, preconditions), the interaction history, and the examples; decide success"
+    ' vs. error from evidence, not optimism>", '
+)
+_BASE_FIELDS = (
+    '"output": "<exactly what the environment returns to the agent>", '
+    '"is_error": <true if the action failed/was invalid>, '
+    '"state_note": "<one short fact to remember about the new env state, or empty>"'
+)
+_KB_NOTE_FIELD = (
+    ', "kb_note": "<one canonical fact about this environment worth remembering across ALL'
+    ' future sessions (an entity that exists, a rule, a schema), or empty>"'
+)
+_GROUND_QUERY_FIELD = (
+    ', "ground_query": "<a web search query IF the action references a real-world entity (API,'
+    " package, flight, product) you cannot ground in the knowledge base, examples, or history —"
+    ' the search runs and you answer again with the results; else empty>"'
+)
+
+
+def output_contract(*, reasoning: bool = False, grounding: bool = False) -> str:
+    """Return the output-contract instruction for the requested mode.
+
+    The base contract (both flags off) is exactly `OUTPUT_CONTRACT` — the shape every existing
+    model was built against. All variants are parsed by the one lenient
+    `wmh.core.parsing.parse_observation`.
+    """
+    if not reasoning and not grounding:
+        return OUTPUT_CONTRACT
+    ground_field = _GROUND_QUERY_FIELD if grounding else ""
+    if reasoning:
+        return (
+            "First deliberate, then answer. Respond with ONLY a JSON object whose FIRST key is"
+            f" your deliberation:\n{_REASONING_FIELD}{_BASE_FIELDS}{_KB_NOTE_FIELD}{ground_field}}}"
+        )
+    # Grounding without the deliberation pass: the base contract + the ground_query escape hatch.
+    return (
+        "Respond with ONLY a JSON object describing the environment's response to this action:\n"
+        f"{{{_BASE_FIELDS}{ground_field}}}"
+    )

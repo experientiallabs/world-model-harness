@@ -11,6 +11,7 @@ import json
 
 from wmh.config import ArtifactPaths, HarnessConfig, save_config
 from wmh.core.types import Trace
+from wmh.engine.knowledge import KnowledgeBase, seed_knowledge
 from wmh.engine.prompts import BASE_ENV_PROMPT
 from wmh.engine.reporting import BuildReporter, NullReporter
 from wmh.ingest import VendorPull, get_adapter
@@ -119,6 +120,13 @@ def build(
 
     provider = serve_provider or get_provider(config.serve_provider_config())
     embed = embedder or HashingEmbedder(dim=config.embed_dim)
+
+    # Optional knowledge base: extract canonical env facts (rules/gates, entities, schemas) from
+    # the TRAIN split only — the same leak-free discipline as retrieval — into human-editable
+    # markdown under knowledge/. Falls back to the full corpus only when the corpus is too small
+    # to split (mirrors the `test or train` GEPA fallback below).
+    if config.knowledge:
+        seed_knowledge(KnowledgeBase(paths.knowledge), train or traces, provider)
 
     # Serving index over the full corpus: at serve time we retrieve from everything we have seen.
     retriever = EmbeddingRetriever(embed)
