@@ -79,9 +79,13 @@ examples_app = typer.Typer(
     help="List and launch self-contained task examples.", no_args_is_help=True
 )
 config_app = typer.Typer(help="Manage local harness config.", no_args_is_help=True)
+research_app = typer.Typer(
+    help="Research experiments over the harness (scaling laws, ablations).", no_args_is_help=True
+)
 app.add_typer(providers_app, name="providers")
 app.add_typer(examples_app, name="examples")
 app.add_typer(config_app, name="config")
+app.add_typer(research_app, name="research")
 _console = Console()
 _CHECK = "[green]✓[/green]"
 
@@ -90,6 +94,23 @@ _EVAL_TOKENS = typer.Argument(
     None,
     help="Trace files to score, or eval flow: list | run <suite> | results optional-suite.",
 )
+# Repeatable option default hoisted out of the signature (ruff B008 forbids the call inline).
+_RESEARCH_REAL_ARG = typer.Option(
+    None, "--real-arg", help="Extra arg forwarded to the real sandbox run.sh; repeat for several."
+)
+_RESEARCH_PLOT_REPORTS = typer.Argument(
+    ..., help="ConcurrencyScalingReport JSON file(s) to plot (overlay several as hues)."
+)
+# Flags each real runner needs so concurrent scenarios stay COLD/FRESH (as if on separate machines)
+# and measure the TRUE standup cost. swe-bench: `--mode build` forces the honest from-source standup
+# (base image + conda/pip env install + repo clone/checkout/install, minutes/env) instead of pulling
+# SWE-bench's prebuilt image (~16s, which under-counts the real environment cost ~15-30x); plus
+# `--no-family-purge` keeps each instance's own build cold without deleting sibling runs' images.
+# terminal-tasks needs nothing — it already builds a per-run unique image tag under concurrency.
+# tau-bench's real side is in-process (no docker), so it is always isolated.
+_CONCURRENCY_ISOLATION_FLAGS: dict[str, tuple[str, ...]] = {
+    "swe-bench": ("--mode", "build", "--no-family-purge"),
+}
 
 
 @dataclass(frozen=True)
@@ -841,6 +862,200 @@ def _resolve_example(name: str) -> Path:
     available = ", ".join(path.name for path in _discover_examples())
     hint = f" (available: {available})" if available else ""
     raise typer.BadParameter(f"unknown example {name!r}{hint}")
+
+
+@research_app.command("concurrency")
+def research_concurrency(
+    suite: str = typer.Argument(
+        ..., help="Eval suite / example name (e.g. tau-bench) — its corpus + config are reused."
+    ),
+    scenarios: int = typer.Option(8, "--scenarios", help="Batch size N held fixed across levels."),
+    levels: str = typer.Option(
+        "1,2,4,8,16", "--levels", help="Comma-separated concurrency levels (baseline first)."
+    ),
+    trials: int = typer.Option(1, "--trials", help="Timed repeats per level (for error bars)."),
+    side: str = typer.Option(
+        "both", "--side", help="both = differential | world = WM-only | real = sandbox-only."
+    ),
+    provider: str = typer.Option("bedrock", "--provider", help="Provider running the model."),
+    model: str = typer.Option("us.anthropic.claude-opus-4-8", help="Model id (environment LLM)."),
+    region: str | None = typer.Option(None, help="AWS region (Bedrock)."),
+    scale_with_concurrency: bool = typer.Option(
+        False,
+        "--scale-with-concurrency",
+        help="Run N=W scenarios at each level W (one concurrent wave per level) instead of a fixed "
+        "N. Reaches high W without an N-sequential W=1 baseline; --scenarios/--levels set the max.",
+    ),
+    real_arg: list[str] | None = _RESEARCH_REAL_ARG,
+    real_timeout: float | None = typer.Option(
+        None, "--real-timeout", help="Abort a real sandbox run after N seconds."
+    ),
+    out: str | None = typer.Option(None, help="Path to write the ConcurrencyScalingReport JSON."),
+    examples_root: str | None = typer.Option(None, help="Examples dir. Default: repo-local."),
+) -> None:
+    """Measure the concurrency scaling law: batch wall-clock vs. how many scenarios run at once.
+
+    Reconstructs a fixed batch of N held-out scenarios from `suite`'s corpus at each concurrency
+    level, timing the world-model batch and (with `--side both`) the matching real-sandbox batch,
+    to give the time differential T_real(W)/T_world(W). Reuses the suite's corpus + config
+    (train_split, top_k, prompt) and the example's `run.sh`. See `wmh.research.concurrency_run`.
+    """
+    from pathlib import Path
+
+    from wmh.engine.build import split_traces
+    from wmh.engine.eval_suites import resolve_eval_suite
+    from wmh.engine.prompts import BASE_ENV_PROMPT
+    from wmh.ingest import get_adapter
+    from wmh.providers import ProviderConfig, get_provider
+    from wmh.providers.base import Provider
+    from wmh.research import Side, run_concurrency_scaling
+    from wmh.research.concurrency_run import build_real_runner, build_world_runner
+    from wmh.research.concurrency_scaling import ConcurrencyPoint
+    from wmh.retrieval import EmbeddingRetriever, HashingEmbedder
+    from wmh.retrieval.leakfree import DemoRetriever
+
+    if scenarios < 1:
+        raise typer.BadParameter("--scenarios must be at least 1")
+    try:
+        which = Side(side)
+    except ValueError:
+        allowed = ", ".join(s.value for s in Side)
+        raise typer.BadParameter(f"--side must be one of: {allowed}") from None
+    # Validate the provider up front, not lazily inside a worker thread mid-sweep.
+    try:
+        provider_kind = ProviderKind(provider)
+    except ValueError:
+        kinds = ", ".join(k.value for k in ProviderKind)
+        raise typer.BadParameter(f"unknown provider {provider!r}; choose one of: {kinds}") from None
+    level_list = [int(x) for x in levels.split(",") if x.strip()]
+    if not level_list:
+        raise typer.BadParameter("--levels must list at least one concurrency level")
+
+    suite_root = str(_examples_root()) if examples_root is None else examples_root
+    resolved = resolve_eval_suite(suite, suite_root)
+    files = resolved.resolve_files()
+    missing = [f for f in files if not f.exists()]
+    if not files or missing:
+        raise typer.BadParameter(f"suite {suite!r} has no trace corpus at {missing or files}")
+    adapter = get_adapter("otel-genai")
+    traces = [t for f in files for t in adapter.from_file(str(f))]
+    if not traces:
+        raise typer.BadParameter(f"suite {suite!r} ingested no traces")
+
+    # Pick the N simplest held-out scenarios (fewest steps), so both sides replay the SAME held-out
+    # traces by index — keep N within the held-out pool so the split stays aligned. With
+    # --scale-with-concurrency, the batch grows to the largest level, so we need that many traces.
+    train, holdout = split_traces(traces, resolved.config.train_split)
+    pool = holdout or traces
+    need = max(level_list) if scale_with_concurrency else scenarios
+    if need > len(pool):
+        raise typer.BadParameter(
+            f"need {need} scenario(s) but suite {suite!r} has only {len(pool)} held-out trace(s); "
+            "lower --scenarios/--levels or grow the corpus"
+        )
+    selected = sorted(enumerate(pool), key=lambda item: len(item[1].steps))[:need]
+
+    # Prompt + retrieval mirror the suite's eval config, so the timed reconstruction is the same
+    # work `wmh eval run <suite>` scores.
+    suite_prompt = resolved.resolve_prompt()
+    prompt = (
+        suite_prompt.read_text(encoding="utf-8") if suite_prompt is not None else BASE_ENV_PROMPT
+    )
+    use_rag = not resolved.config.no_rag
+    embedder = HashingEmbedder(dim=resolved.config.embed_dim) if use_rag else None
+    demos = DemoRetriever(
+        EmbeddingRetriever(embedder) if embedder is not None else None,
+        train if use_rag else [],
+        top_k=resolved.config.top_k,
+    )
+
+    def provider_factory() -> Provider:
+        return get_provider(ProviderConfig(kind=provider_kind, model=model, region=region))
+
+    world_runner = build_world_runner(
+        provider_factory, prompt, demos, selected, scale_with_level=scale_with_concurrency
+    )
+    real_runner = None
+    if which in (Side.BOTH, Side.REAL):
+        example_dir = _resolve_example(resolved.example)
+        real_extra = list(real_arg or [])
+        # Force each runner's cold-standup + isolation flags so the real side pays its TRUE from-
+        # source standup and concurrent sandboxes don't clobber each other's docker state (see
+        # _CONCURRENCY_ISOLATION_FLAGS). Skipped if the caller passed their own real-runner args.
+        forced = _CONCURRENCY_ISOLATION_FLAGS.get(resolved.example, ())
+        if forced and not real_extra:
+            real_extra = list(forced)
+            _console.print(
+                f"[yellow]{resolved.example}: real runner uses {' '.join(forced)} "
+                "(true from-source cold standup, isolated per concurrent scenario)[/yellow]"
+            )
+        real_runner = build_real_runner(
+            example_dir,
+            selected,
+            train_split=resolved.config.train_split,
+            extra_args=real_extra,
+            timeout=real_timeout,
+            scale_with_level=scale_with_concurrency,
+        )
+
+    batch_desc = (
+        f"N=W (one concurrent wave per level, up to {len(selected)})"
+        if scale_with_concurrency
+        else f"batch of {len(selected)}"
+    )
+    _console.print(
+        f"\n[bold]concurrency scaling[/bold] {suite}: {batch_desc} held-out "
+        f"scenario(s), levels={level_list}, side={which.value}, trials={trials}\n"
+    )
+
+    def _progress(point: ConcurrencyPoint) -> None:
+        _console.print(f"  {point.summary()}")
+
+    report = run_concurrency_scaling(
+        world_runner,
+        real_runner,
+        levels=level_list,
+        scenarios=len(selected),
+        trials=trials,
+        side=which,
+        on_point=_progress,
+    )
+    report.benchmark = resolved.example
+
+    best = report.best_speedup()
+    if best is not None and best.speedup:
+        _console.print(
+            f"\n[bold]best world-model speedup[/bold]: {best.speedup:.2f}x at concurrency "
+            f"{best.level} (efficiency {best.efficiency:.0%})"
+        )
+    if out:
+        Path(out).write_text(report.model_dump_json(indent=2), encoding="utf-8")
+        _console.print(f"wrote report -> {out}")
+
+
+@research_app.command("plot-concurrency")
+def research_plot_concurrency(
+    reports: list[str] = _RESEARCH_PLOT_REPORTS,
+    out: str = typer.Option("concurrency_scaling.png", "--out", help="Output image path."),
+    title: str = typer.Option("Concurrency scaling law", "--title", help="Figure title."),
+) -> None:
+    """Render concurrency scaling-law report JSON(s) to a figure (needs the `viz` extra).
+
+    Draws batch wall-clock vs. concurrency (log-log, mean±std), the world-model speedup vs.
+    ideal-linear, and the T_real/T_world differential when a report has both sides. Pass several
+    report JSONs to overlay them.
+    """
+    try:
+        from wmh.research.concurrency_plot import render_report
+    except ImportError as exc:  # pragma: no cover - depends on the optional viz extra
+        raise typer.BadParameter(
+            "plotting needs the 'viz' extra: uv sync --extra viz (seaborn/matplotlib/pandas)"
+        ) from exc
+    try:
+        written = render_report(reports, out, title=title)
+    except (ValueError, FileNotFoundError) as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    _console.print(f"wrote figure -> {written}")
 
 
 def _load_model(name: str | None, root: str):  # noqa: ANN202 - (WorldModel, name, Provider)

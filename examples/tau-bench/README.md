@@ -32,6 +32,35 @@ uv run wmh demo --root examples/tau-bench --name tau-telecom
 uv run wmh play --root examples/tau-bench --name tau-telecom
 ```
 
+## Concurrency scaling law
+
+`wmh research concurrency` measures how batch wall-clock falls as more scenarios reconstruct at once
+— for the world model, and (with `--side both`) the matching real tau2 sandbox — giving the time
+differential T_real(W)/T_world(W). The world side fans `replay()` (open-loop, teacher-forced, so
+scenarios are independent) across a thread pool; the real side shells this folder's `run.sh` per
+scenario.
+
+```bash
+# world-model side only (no tau2 venv needed) — the clean speedup curve
+AWS_REGION=us-east-1 uv run wmh research concurrency tau-bench \
+    --scenarios 16 --levels 1,2,4,8,16 --side world --out conc.json
+
+# both sides (needs the tau2 .venv this folder's run.sh provisions) — the differential
+AWS_REGION=us-east-1 uv run wmh research concurrency tau-bench \
+    --scenarios 16 --levels 1,2,4,8,16 --side both --out conc.json
+
+# render the figure (needs the `viz` extra: uv sync --extra viz)
+uv run wmh research plot-concurrency conc.json --out conc.png
+```
+
+Measured (Haiku 4.5, N=16, both sides): the world model speeds up **8.5× from W=1 to W=16**
+(32.7s → 3.9s) and stays **~1.6–1.7× faster than the real tau2 sandbox at every level** (both sides
+pinned to the same scenarios by `trace_id`). Even against tau-bench's cheap in-process sandbox the
+world model wins on standup; the gap is far larger on terminal-tasks and swe-bench, where the real
+side builds/pulls containers. The rendered figure is committed as `concurrency_scaling.png`; the
+report JSON is git-ignored (regenerate with the command above).
+
+![Concurrency scaling law on tau-bench](./concurrency_scaling.png)
 ## Why capture from the REAL benchmark
 
 The world model's job is to reconstruct the **actual downstream benchmark**. If we captured traces

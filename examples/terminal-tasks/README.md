@@ -67,6 +67,27 @@ reconstructs from action + retrieved steps + teacher-forced history).
 
 The output is OTel-GenAI span JSONL that `wmh.ingest.otel_genai` reads directly.
 
+## Concurrency scaling law
+
+`wmh research concurrency terminal-tasks` measures how batch wall-clock falls as more scenarios
+reconstruct at once (world side fans `predict_observation` across a thread pool; `--side both` also
+times the matching real container, pinned to the same scenarios by `trace_id`).
+
+```bash
+AWS_REGION=us-east-1 uv run wmh research concurrency terminal-tasks \
+    --scenarios 16 --levels 1,2,4,8,16 --side both --out conc.json
+uv run wmh research plot-concurrency conc.json --out conc.png   # needs the viz extra
+```
+
+Each concurrent real container is built genuinely cold from scratch (unique per-run image tag,
+`--no-cache` apt install) — as if on a separate machine, not sharing one warm image.
+
+Measured (Haiku 4.5, N=16, both sides): the world model goes **26.7s → 4.1s** (W=1 → W=16, 6.5×
+speedup), while standing up 16 real containers cold takes **145.6s → 31.1s** — so the world model is
+**5.5–8.6× faster than the real sandbox at every level**, and the gap *grows* with concurrency (the
+real side contends harder for Docker/CPU). Committed figure: `concurrency_scaling.png`.
+
+![Concurrency scaling law on terminal-tasks](./concurrency_scaling.png)
 ## Run ONE real scenario (the real-environment side of the comparison)
 
 ### One command: `run.sh`
