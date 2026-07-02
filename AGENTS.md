@@ -50,6 +50,13 @@ uv run pytest -q
    Exception: `web/` — the project website (Next.js/TypeScript). It is excluded from the Python
    gate (ruff/ty/pytest never touch it) and carries its own gate instead: `npm run lint` and
    `npx tsc --noEmit` from `web/` must be clean before every commit that touches it.
+   Exception: `environment-capture/` — a uv workspace member that runs benchmarks for real and
+   records agent-environment transitions as OTel GenAI JSONL (extraction-ready: its
+   `environment_capture` package never imports `wmh`, except the one round-trip test pinning the
+   wire format). It IS part of the Python gate. Per-benchmark data dirs inside it
+   (`environment-capture/<benchmark>/`) follow the examples/ pattern: committed
+   `traces.otel.jsonl` + provenance README + thin scripts; heavy deps and cloned upstreams stay
+   in local, gitignored venvs.
 
 6. **Keep dataset-specific logic inside examples.** SWE-bench, tau-bench, terminal-task, and similar
    dataset-specific launch or conversion logic belongs under `examples/<task>/`. A standard example

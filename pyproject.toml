@@ -31,6 +31,8 @@ dev = [
     "ruff>=0.5",
     "ty>=0.0.1a1",
     "world-model-harness[anthropic,openai,bedrock,otel,viz]",
+    # Workspace member: benchmark adapters + real-run trace capture (environment-capture/).
+    "environment-capture[bedrock,fetch]",
 ]
 
 [project.scripts]
@@ -43,10 +45,16 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["wmh"]
 
+[tool.uv.workspace]
+members = ["environment-capture"]
+
+[tool.uv.sources]
+environment-capture = { workspace = true }
+
 [tool.pytest.ini_options]
 # Tests live inline next to the modules they cover (foo.py -> foo_test.py).
 python_files = ["*_test.py"]
-testpaths = ["wmh"]
+testpaths = ["wmh", "environment-capture"]
 
 [tool.ruff]
 line-length = 100
