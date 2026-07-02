@@ -15,8 +15,8 @@ else normalized text exact-match or containment — see
 - `gold/<task_id>.json` — gold answers (`answer`, `answer_type`, `tolerance`, optional `numeric`),
   never staged into the agent workspace.
 - `traces.otel.jsonl` — the trace corpus (train split only; the hidden test split is never captured
-  so the world model can't absorb its dynamics): 25 converted real runs covering every train task,
-  plus fresh Bedrock captures appended via `capture.py`.
+  so the world model can't absorb its dynamics): **50 traces / 315 real transitions** — 25
+  converted real runs plus 25 fresh Bedrock captures, together covering every train task.
 - `fetch_data.py` — fetches the shared `products.db` from the upstream HuggingFace dataset (the
   ~400 MB db is gitignored; questions + gold are committed, so a fresh clone only needs this).
 - `convert_cache.py` — converts a frozen baseline cache of real runs into the corpus.
@@ -50,9 +50,10 @@ in-process, which is all the offline suite uses.
     submission-sentinel keyword is renamed to a neutral `SUBMIT` (a harness protocol token, not
     environment content — no query result, schema, or number is altered); conversion asserts no
     source-project reference survives.
-  - *Fresh*: additional real captures via `capture.py` (Bedrock, `us.anthropic.claude-opus-4-8` /
-    `-4-7` / `-4-6-v1`), graded by this adapter's grader (documented thresholds) and carrying their
-    own model id. Each fresh run gets a run-suffixed task id (`clb-train-3#opus48-r1`) so trace ids
+  - *Fresh*: 25 real captures via `capture.py` (Bedrock, `us.anthropic.claude-opus-4-8` / `-4-7` /
+    `-4-6-v1`, sharded to beat throttling; mean reward ≈ 0.16 — these models don't max out the hard
+    tasks either), graded by this adapter's grader (documented thresholds) and carrying their own
+    model id. Each fresh run gets a run-suffixed task id (`clb-train-3#opus48-r1`) so trace ids
     never collide with the converted traces or with each other.
 
 ## License — read before redistributing
