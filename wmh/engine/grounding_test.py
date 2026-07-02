@@ -6,10 +6,13 @@ import json
 
 import pytest
 
+from wmh.core.types import Action, ActionKind
 from wmh.engine.grounding import (
     BraveGrounder,
+    FetchGrounder,
     GroundingResult,
     NullGrounder,
+    extract_get_url,
     get_grounder,
     render_grounding,
 )
@@ -87,3 +90,59 @@ def test_render_grounding_is_compact_markdown() -> None:
 
 def test_render_grounding_empty_says_so() -> None:
     assert "no results" in render_grounding([]).lower()
+
+
+def test_extract_get_url_finds_curl_get_targets() -> None:
+    a = _bash('curl -s "https://api.github.com/repos/octocat/Hello-World" | jq .id')
+    assert extract_get_url(a) == "https://api.github.com/repos/octocat/Hello-World"
+    # plain flag soup still yields the url
+    a2 = _bash("curl -sL -H 'Accept: application/json' https://pypi.org/pypi/flask/json")
+    assert extract_get_url(a2) == "https://pypi.org/pypi/flask/json"
+
+
+def test_extract_get_url_rejects_mutating_or_non_curl_commands() -> None:
+    assert extract_get_url(_bash('curl -X POST -d "x=1" https://api.example.com/things')) is None
+    assert extract_get_url(_bash("curl --data foo https://api.example.com/things")) is None
+    assert extract_get_url(_bash("curl -T file.txt https://api.example.com/up")) is None
+    assert extract_get_url(_bash("wget https://example.com/file")) is None  # curl only, for now
+    assert extract_get_url(_bash("echo hello")) is None
+    assert extract_get_url(Action(kind=ActionKind.MESSAGE, content="curl https://x.dev")) is None
+
+
+def test_fetch_grounder_gets_url_and_memoizes() -> None:
+    calls: list[str] = []
+
+    def fake_fetch(url: str, headers: dict[str, str]) -> str:
+        calls.append(url)
+        return '{"info": {"home_page": null}}'
+
+    grounder = FetchGrounder(fetch=fake_fetch)
+    results = grounder.ground("https://pypi.org/pypi/flask/json")
+    assert results[0].url == "https://pypi.org/pypi/flask/json"
+    assert '"home_page": null' in results[0].snippet
+    grounder.ground("https://pypi.org/pypi/flask/json")  # second ask
+    assert calls == ["https://pypi.org/pypi/flask/json"]  # memoized: one real fetch
+
+
+def test_fetch_grounder_caps_body_and_swallows_fetch_errors() -> None:
+    def big(url: str, headers: dict[str, str]) -> str:
+        return "x" * 100_000
+
+    capped = FetchGrounder(fetch=big, max_chars=500).ground("https://a.dev")
+    assert len(capped[0].snippet) <= 520  # body cap + truncation marker
+
+    def boom(url: str, headers: dict[str, str]) -> str:
+        raise OSError("connection refused")
+
+    assert FetchGrounder(fetch=boom).ground("https://b.dev") == []  # fail-safe: no results
+
+
+def test_fetch_grounder_ignores_non_url_queries() -> None:
+    def fail(url: str, headers: dict[str, str]) -> str:
+        raise AssertionError("must not fetch")
+
+    assert FetchGrounder(fetch=fail).ground("tomli_w python package") == []
+
+
+def _bash(command: str) -> Action:
+    return Action(kind=ActionKind.TOOL_CALL, name="bash", arguments={"command": command})

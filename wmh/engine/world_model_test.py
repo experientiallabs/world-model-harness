@@ -264,6 +264,28 @@ def test_step_ground_query_cache_hit_skips_search(tmp_path: Path) -> None:
     assert "cached: tomli_w writes TOML" in provider.users[1]
 
 
+def test_step_prefetches_curl_get_urls_before_the_first_completion(tmp_path: Path) -> None:
+    provider = FakeProvider('{"reasoning": "grounded", "output": "null", "is_error": false}')
+    grounder = _RecordingGrounder()
+    kb = _kb(tmp_path)
+    wm = WorldModel(
+        provider, _retriever_with([]), top_k=1, knowledge=kb, reasoning=True, grounder=grounder
+    )
+    session = wm.new_session(task="t")
+    action = Action(
+        kind=ActionKind.TOOL_CALL,
+        name="bash",
+        arguments={"command": "curl -s https://pypi.org/pypi/flask/json | jq .info.home_page"},
+    )
+    obs = wm.step(session.id, action)
+    # Prefetched (no ground_query emitted, ONE completion), and the body reached the prompt.
+    assert grounder.queries == ["https://pypi.org/pypi/flask/json"]
+    assert "live fetch: https://pypi.org/pypi/flask/json" in (provider.last_user or "")
+    assert obs.content == "null"
+    # Cached in the KB so the same endpoint is never fetched twice across sessions.
+    assert kb.lookup_grounded("https://pypi.org/pypi/flask/json") is not None
+
+
 def test_step_grounding_budget_bounds_searches_per_session(tmp_path: Path) -> None:
     replies: list[str] = []
     for i in range(3):

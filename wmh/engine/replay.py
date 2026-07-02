@@ -23,6 +23,7 @@ from pydantic import BaseModel, Field
 
 from wmh.core.render import render_action
 from wmh.core.types import Step, Trace
+from wmh.engine.grounding import Grounder, prefetched_knowledge
 from wmh.optimize.gepa import predict_observation
 from wmh.optimize.judge import Judge
 from wmh.providers.base import Provider
@@ -85,6 +86,7 @@ def replay(
     concurrency: int = 1,
     knowledge: str | None = None,
     reasoning: bool = False,
+    grounder: Grounder | None = None,
 ) -> ReplayReport:
     """Replay held-out steps, scoring predicted vs. actual observations.
 
@@ -95,6 +97,9 @@ def replay(
     - `knowledge`/`reasoning`: the serving engine's agentic mode (rendered knowledge-base text +
       the deliberate-then-answer contract). Callers own leak-freedom: `knowledge` must be derived
       from TRAIN traces only (see `wmh.engine.knowledge.seed_knowledge`).
+    - `grounder`: prefetch a step's read-only `curl` GET URL live and put the real body in
+      context (mirrors the serving engine's prefetch). NON-HERMETIC — the web has moved since
+      capture — so it stays off everywhere except explicitly-labeled experiments.
     - `concurrency`: steps are independent (each a predict + judge round trip), so `concurrency > 1`
       scores them on a thread pool — the result is identical and order-preserving (only the wall
       clock changes). Default 1 keeps existing callers unchanged; raise it to cut latency on large
@@ -126,6 +131,7 @@ def replay(
             history,
             knowledge=knowledge,
             reasoning=reasoning,
+            grounder=grounder,
         )
 
     if concurrency > 1 and len(work) > 1:
@@ -157,6 +163,7 @@ def _score_step(
     *,
     knowledge: str | None = None,
     reasoning: bool = False,
+    grounder: Grounder | None = None,
 ) -> StepResult:
     """Predict the observation for one step and score it against the recorded observation."""
     predicted = predict_observation(
@@ -167,7 +174,7 @@ def _score_step(
         step.action,
         demos=demos.demos_for(trace_id, step),
         history=history,
-        knowledge=knowledge,
+        knowledge=prefetched_knowledge(knowledge, step.action, grounder),
         reasoning=reasoning,
     )
     verdict = judge.score(predicted, step.observation, step)

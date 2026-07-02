@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from wmh.core.types import Action, ActionKind, EnvState, Observation, Step, Trace
+from wmh.engine.grounding import GroundingResult
 from wmh.engine.replay import replay
 from wmh.optimize.judge import JudgeResult
 from wmh.providers.base import Completion, Message, ProviderConfig, ProviderKind
@@ -136,6 +137,46 @@ def test_replay_defaults_render_no_knowledge_section() -> None:
     provider = FakeProvider('{"output": "real-0", "is_error": false}')
     replay("BASE", [_trace("h", n=1)], provider, FakeJudge(1.0))
     assert "KNOWLEDGE BASE" not in (provider.last_user or "")
+
+
+class _RecordingFetchGrounder:
+    def __init__(self) -> None:
+        self.queries: list[str] = []
+
+    def ground(self, query: str) -> list[GroundingResult]:
+        self.queries.append(query)
+        return [GroundingResult(title=query, url=query, snippet='{"home_page": null}')]
+
+
+def test_replay_grounder_prefetches_curl_get_urls_into_the_prompt() -> None:
+    curl = Trace(
+        trace_id="c",
+        steps=[
+            Step(
+                action=Action(
+                    kind=ActionKind.TOOL_CALL,
+                    name="bash",
+                    arguments={"command": "curl -s https://pypi.org/pypi/flask/json | jq .info"},
+                ),
+                observation=Observation(content="null"),
+            )
+        ],
+    )
+    provider = FakeProvider('{"output": "null", "is_error": false}')
+    grounder = _RecordingFetchGrounder()
+    replay("BASE", [curl], provider, FakeJudge(1.0), grounder=grounder)
+    assert grounder.queries == ["https://pypi.org/pypi/flask/json"]
+    user = provider.last_user or ""
+    assert "live fetch: https://pypi.org/pypi/flask/json" in user
+    assert '{"home_page": null}' in user  # the fetched body reached the model
+
+
+def test_replay_grounder_skips_non_curl_steps() -> None:
+    provider = FakeProvider('{"output": "real-0", "is_error": false}')
+    grounder = _RecordingFetchGrounder()
+    replay("BASE", [_trace("h", n=1)], provider, FakeJudge(1.0), grounder=grounder)
+    assert grounder.queries == []  # get_user tool call: nothing to fetch
+    assert "live fetch" not in (provider.last_user or "")
 
 
 def test_replay_empty_is_safe() -> None:

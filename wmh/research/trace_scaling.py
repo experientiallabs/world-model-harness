@@ -28,6 +28,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 from wmh.core.types import JsonValue, Trace
+from wmh.engine.grounding import FetchGrounder
 from wmh.engine.knowledge import seeded_knowledge_text
 from wmh.research.ablation import Condition
 from wmh.research.pipeline import optimize_prompt, score_prompt
@@ -44,8 +45,11 @@ BASE: Mode = "base"
 GEPA: Mode = "gepa"
 REASON: Mode = "reason"
 REASON_KB: Mode = "reason+kb"
+# reason + live prefetch of read-only curl GET URLs (FetchGrounder). NON-HERMETIC: hits the real
+# web, and the web has moved since capture — label results accordingly.
+REASON_FETCH: Mode = "reason+fetch"
 MODES: tuple[Mode, ...] = (BASE, GEPA)
-ALL_MODES: tuple[Mode, ...] = (BASE, GEPA, REASON, REASON_KB)
+ALL_MODES: tuple[Mode, ...] = (BASE, GEPA, REASON, REASON_KB, REASON_FETCH)
 
 
 def _as_int(value: JsonValue) -> int:
@@ -154,9 +158,11 @@ class TraceScalingAblation:
             prompt = self._base_prompt
 
         # Agentic-mode cells (roadmap f): same base prompt and RAG buffer, plus the deliberation
-        # contract, and for reason+kb a knowledge base seeded from THIS run's train sample only.
-        reasoning = mode in (REASON, REASON_KB)
+        # contract; reason+kb seeds a knowledge base from THIS run's train sample only;
+        # reason+fetch adds the live curl-GET prefetch (non-hermetic by definition).
+        reasoning = mode in (REASON, REASON_KB, REASON_FETCH)
         knowledge = seeded_knowledge_text(train, provider) if mode == REASON_KB else None
+        grounder = FetchGrounder() if mode == REASON_FETCH else None
 
         return score_prompt(
             prompt,
@@ -171,6 +177,7 @@ class TraceScalingAblation:
             concurrency=self._concurrency,
             knowledge=knowledge,
             reasoning=reasoning,
+            grounder=grounder,
         )
 
 

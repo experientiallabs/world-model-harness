@@ -14,7 +14,7 @@ from pathlib import Path
 from wmh.config import ArtifactPaths, load_config
 from wmh.core.parsing import parse_observation
 from wmh.core.types import Action, EnvState, Observation, Session, Step
-from wmh.engine.grounding import Grounder, get_grounder, render_grounding
+from wmh.engine.grounding import Grounder, extract_get_url, get_grounder, render_grounding
 from wmh.engine.knowledge import KnowledgeBase
 from wmh.engine.prompts import BASE_ENV_PROMPT, build_env_prompt
 from wmh.optimize.reward import EpisodeRewardJudge, EpisodeScore
@@ -270,10 +270,21 @@ class WorldModel:
     ) -> Observation:
         """One observation prediction, with at most one grounding search + re-completion.
 
-        The re-completion renders with `grounding=False` so the model cannot request a second
-        search for the same step — the step cost is bounded at two provider calls.
+        Two grounding paths, both budgeted through `_ground`:
+        - PREFETCH: when the action is itself a read-only `curl` GET, the URL is fetched before
+          the first completion (no extra provider call) — found empirically to be the dominant
+          groundable case (42% of terminal-tasks steps).
+        - ground_query: the model may still request a search for entities the prefetch can't see;
+          the re-completion renders with `grounding=False` so the step is bounded at two calls.
         """
         knowledge = self._rendered_knowledge()
+        if self._grounder is not None:
+            url = extract_get_url(action)
+            if url is not None:
+                fetched = self._ground(session.id, url)
+                if fetched is not None:
+                    block = f"## live fetch: {url}\n{fetched}"
+                    knowledge = f"{knowledge}\n\n{block}" if knowledge else block
         observation = self._complete(
             session, action, demos, knowledge, self._grounder is not None, usage
         )

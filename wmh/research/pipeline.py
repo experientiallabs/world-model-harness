@@ -20,6 +20,7 @@ inert. It is parked pending a sampling-capable provider.
 from __future__ import annotations
 
 from wmh.core.types import Trace
+from wmh.engine.grounding import Grounder
 from wmh.engine.replay import replay
 from wmh.optimize.gepa import GEPAOptimizer, OptimizeResult
 from wmh.optimize.judge import Judge
@@ -62,6 +63,7 @@ def score_prompt(
     concurrency: int = 1,
     knowledge: str | None = None,
     reasoning: bool = False,
+    grounder: Grounder | None = None,
 ) -> float:
     """Replay-score `prompt`'s held-out fidelity, leak-free. Returns the mean judge score (0..1).
 
@@ -86,5 +88,6 @@ def score_prompt(
         concurrency=concurrency,
         knowledge=knowledge,
         reasoning=reasoning,
+        grounder=grounder,
     )
     return report.mean_score
