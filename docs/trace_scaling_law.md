@@ -20,9 +20,9 @@ All three curves are **flat**. Going from 10 → hundreds of training traces bar
 |---|---|---|---|
 | tau-bench (tool calls) | ~0.90 (n=10) | ~0.92 (n=640) | 1033 / 5289 |
 | terminal-tasks (bash) | ~0.86 (n=10) | ~0.87 (n=160) | 280 / 685 |
-| swe-bench (arbitrary code output) | ~0.82 (n=5) | ~0.82 (n=24) | 40 / 556 |
+| swe-bench (arbitrary code output) | ~0.72 (n=10) | ~0.73 (n=170) | 255 / 1868 |
 
-The across-seed std at every point is small (≤0.014), so the flatness is real, not noise. A handful
+The across-seed std at every point is small (≤0.016), so the flatness is real, not noise. A handful
 of retrieved neighbours is enough for the frontier model to reconstruct the next observation; more
 of the same trace distribution adds little.
 
