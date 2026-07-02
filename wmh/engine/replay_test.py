@@ -126,8 +126,10 @@ def test_replay_threads_knowledge_and_reasoning_through_the_shared_assembly() ->
     user = provider.last_user or ""
     assert "KNOWLEDGE BASE" in user and "gate: modifying a booking requires auth" in user
     assert '"reasoning"' in user  # deliberate-then-answer contract requested
-    # The deliberation is stripped: the judge scores only what the agent would observe.
+    # The deliberation is stripped: the judge scores only what the agent would observe —
+    # but it is preserved on the StepResult so humans can inspect what the env deliberated.
     assert report.results[0].predicted == "real-0"
+    assert report.results[0].reasoning == "auth gate passed"
 
 
 def test_replay_defaults_render_no_knowledge_section() -> None:

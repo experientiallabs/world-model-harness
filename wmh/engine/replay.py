@@ -50,6 +50,9 @@ class StepResult(BaseModel):
     critique: str = ""
     is_error_actual: bool = False
     is_error_predicted: bool = False
+    # The model's deliberation in reasoning mode (empty otherwise). Never part of the scored
+    # observation — carried so humans can read WHY the env decided success vs. error.
+    reasoning: str = ""
 
 
 class ReplayReport(BaseModel):
@@ -168,6 +171,7 @@ def _score_step(
         reasoning=reasoning,
     )
     verdict = judge.score(predicted, step.observation, step)
+    predicted_reasoning = predicted.metadata.get("reasoning")
     return StepResult(
         trace_id=trace_id,
         task=step.task,
@@ -179,6 +183,7 @@ def _score_step(
         critique=verdict.critique,
         is_error_actual=step.observation.is_error,
         is_error_predicted=predicted.is_error,
+        reasoning=predicted_reasoning if isinstance(predicted_reasoning, str) else "",
     )
 
 
