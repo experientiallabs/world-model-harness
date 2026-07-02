@@ -30,7 +30,6 @@ def main() -> None:
     args = parser.parse_args()
 
     import json
-    import re
 
     import torch
     from peft import PeftModel
@@ -41,13 +40,24 @@ def main() -> None:
     config_path = Path(args.adapter_dir) / "adapter_config.json"
     adapter_config = json.loads(config_path.read_text())
     modules = adapter_config.get("target_modules")
-    if isinstance(modules, str):
-        group = re.search(r"\(([^)]+)\)", modules)
-        if not group:
-            raise SystemExit(f"cannot parse target_modules regex: {modules!r}")
-        adapter_config["target_modules"] = group.group(1).split("|")
+    mangled = isinstance(modules, str) or (
+        isinstance(modules, list) and modules and all(len(str(m)) <= 1 for m in modules)
+    )
+    if mangled:
+        # Derive the true module set from the adapter weights themselves.
+        from safetensors import safe_open
+
+        names: set[str] = set()
+        with safe_open(str(Path(args.adapter_dir) / "adapter_model.safetensors"), framework="pt") as f:
+            for key in f.keys():
+                if ".lora_A" in key or ".lora_B" in key:
+                    prefix = key.split(".lora_")[0]
+                    names.add(prefix.rsplit(".", 1)[-1])
+        if not names:
+            raise SystemExit("no lora_A/lora_B keys found in adapter weights")
+        adapter_config["target_modules"] = sorted(names)
         config_path.write_text(json.dumps(adapter_config, indent=2))
-        print(f"rewrote target_modules regex -> {adapter_config['target_modules']}")
+        print(f"rewrote mangled target_modules -> {adapter_config['target_modules']}")
 
     print(f"loading base text model {args.base} (cpu, bf16)...")
     model = AutoModelForCausalLM.from_pretrained(args.base, dtype=torch.bfloat16)
