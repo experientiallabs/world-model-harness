@@ -28,18 +28,24 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 from wmh.core.types import JsonValue, Trace
+from wmh.engine.knowledge import seeded_knowledge_text
 from wmh.research.ablation import Condition
 from wmh.research.pipeline import optimize_prompt, score_prompt
 from wmh.research.scaling_split import CorpusSplit, partition_corpus, subsample_train
 from wmh.research.seed_stability import BackendFactory
 
-# The two prompt sources the sweep compares. `base` = the shipped prompt + RAG only (cheap);
-# `gepa` = GEPA-optimized on the train sample (expensive). Strings (not an enum) so they read
-# straight from a CLI flag and serialize into the report's `Condition.params` unchanged.
+# The prompt/agentic configurations the sweep compares. `base` = the shipped prompt + RAG only
+# (cheap); `gepa` = GEPA-optimized on the train sample (expensive); `reason` = base + the
+# deliberate-then-answer contract; `reason+kb` = reason + a knowledge base seeded from the train
+# sample (train-only, leak-free). Strings (not an enum) so they read straight from a CLI flag and
+# serialize into the report's `Condition.params` unchanged.
 Mode = str
 BASE: Mode = "base"
 GEPA: Mode = "gepa"
+REASON: Mode = "reason"
+REASON_KB: Mode = "reason+kb"
 MODES: tuple[Mode, ...] = (BASE, GEPA)
+ALL_MODES: tuple[Mode, ...] = (BASE, GEPA, REASON, REASON_KB)
 
 
 def _as_int(value: JsonValue) -> int:
@@ -147,6 +153,11 @@ class TraceScalingAblation:
         else:
             prompt = self._base_prompt
 
+        # Agentic-mode cells (roadmap f): same base prompt and RAG buffer, plus the deliberation
+        # contract, and for reason+kb a knowledge base seeded from THIS run's train sample only.
+        reasoning = mode in (REASON, REASON_KB)
+        knowledge = seeded_knowledge_text(train, provider) if mode == REASON_KB else None
+
         return score_prompt(
             prompt,
             self._test,
@@ -158,6 +169,8 @@ class TraceScalingAblation:
             sample_turns=self._sample_turns,
             seed=seed,
             concurrency=self._concurrency,
+            knowledge=knowledge,
+            reasoning=reasoning,
         )
 
 

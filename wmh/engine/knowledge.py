@@ -18,6 +18,7 @@ ACROSS sessions. Models without a `knowledge/` directory load and serve exactly 
 
 from __future__ import annotations
 
+import tempfile
 from pathlib import Path
 
 from pydantic import BaseModel, ValidationError
@@ -220,6 +221,21 @@ def seed_knowledge(
             f"knowledge seeding: {skipped} corpus chunk(s) beyond the {max_calls}-call budget "
             "were not read"
         )
+
+
+def seeded_knowledge_text(
+    train_traces: list[Trace], provider: Provider, *, max_calls: int = 8
+) -> str | None:
+    """Seed an ephemeral KB from TRAIN traces and return its rendered text (None when empty).
+
+    For eval/research contexts that need train-derived knowledge in the prompt without touching
+    any model artifact: the KB lives in a temp dir for the duration of seeding only, so nothing a
+    serve session ever wrote (learned/grounded facts) can leak into a scored run.
+    """
+    with tempfile.TemporaryDirectory(prefix="wmh-kb-") as tmp:
+        kb = KnowledgeBase(Path(tmp))
+        seed_knowledge(kb, train_traces, provider, max_calls=max_calls)
+        return kb.render() or None
 
 
 def _parse_extraction(text: str) -> _Extraction | None:

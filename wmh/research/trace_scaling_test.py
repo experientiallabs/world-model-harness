@@ -125,6 +125,34 @@ def test_gepa_mode_optimizes_then_scores_winner(monkeypatch) -> None:  # noqa: A
     assert set(valid_ids) == {t.trace_id for t in ab.split.valid}
 
 
+def test_reason_and_reason_kb_modes_thread_agentic_flags(monkeypatch) -> None:  # noqa: ANN001
+    seen: list[tuple[str | None, bool]] = []
+
+    def fake_score(prompt, held_out, *, knowledge=None, reasoning=False, **_):  # noqa: ANN001, ANN003, ANN202
+        seen.append((knowledge, reasoning))
+        return 0.6
+
+    def fake_seed(traces, provider, **_):  # noqa: ANN001, ANN003, ANN202
+        return "- gate: seeded from train"
+
+    monkeypatch.setattr(ts, "score_prompt", fake_score)
+    monkeypatch.setattr(ts, "seeded_knowledge_text", fake_seed)
+    ab = TraceScalingAblation(
+        _corpus(200),
+        "BASE",
+        make_backends=_fake_backends,
+        counts=[5],
+        modes=[ts.REASON, ts.REASON_KB],
+        budget=4,
+    )
+    labels = [c.label for c in ab.conditions()]
+    assert labels == ["reason@5", "reason+kb@5"]
+    assert ab.run(ab.conditions()[0], seed=0) == 0.6
+    assert ab.run(ab.conditions()[1], seed=0) == 0.6
+    assert seen[0] == (None, True)  # reason: deliberation only, no KB
+    assert seen[1] == ("- gate: seeded from train", True)  # reason+kb: seeded KB in context
+
+
 def test_run_ablation_end_to_end_with_fakes(monkeypatch) -> None:  # noqa: ANN001
     # Fidelity rises with n_train so the report shape (mean/std per condition) is exercised.
     monkeypatch.setattr(ts, "optimize_prompt", lambda *a, **k: type("R", (), {"prompt": "E"})())

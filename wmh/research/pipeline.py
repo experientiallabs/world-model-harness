@@ -60,6 +60,8 @@ def score_prompt(
     sample_turns: str = "all",
     seed: int = 0,
     concurrency: int = 1,
+    knowledge: str | None = None,
+    reasoning: bool = False,
 ) -> float:
     """Replay-score `prompt`'s held-out fidelity, leak-free. Returns the mean judge score (0..1).
 
@@ -67,7 +69,8 @@ def score_prompt(
     forwards the leak-free `train` corpus, then returns the aggregate `mean_score`. Using `replay`
     (not a private loop) means the rubric/judge the rest of the harness uses scores ablations too.
     `sample_turns="sampled"` scores Qwen-AgentWorld's 5 turns per trace (cheaper on big test sets);
-    `seed` makes that turn selection reproducible.
+    `seed` makes that turn selection reproducible. `knowledge`/`reasoning` are the serving
+    engine's agentic mode (knowledge must be train-derived — callers own that discipline).
     """
     retriever = EmbeddingRetriever(embedder) if embedder is not None else None
     report = replay(
@@ -81,5 +84,7 @@ def score_prompt(
         sample_turns=sample_turns,
         seed=seed,
         concurrency=concurrency,
+        knowledge=knowledge,
+        reasoning=reasoning,
     )
     return report.mean_score

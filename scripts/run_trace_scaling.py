@@ -21,6 +21,8 @@ to Opus 4.8; `--opt-model` sets the model GEPA optimizes/serves with (4.6/4.7 ar
 from __future__ import annotations
 
 import argparse
+import json
+import uuid
 from collections.abc import Callable
 from pathlib import Path
 
@@ -33,6 +35,7 @@ from wmh.providers.base import Embedder, Provider
 from wmh.research import TraceScalingAblation, run_ablation
 from wmh.research.ablation import AblationReport, Condition
 from wmh.retrieval import HashingEmbedder
+from wmh.tracking import MeteredProvider, Phase, RunRecord, RunTracker
 
 # Default scaling ladder: dense at the low end (where the curve bends), capped at the corpus by the
 # ablation. Override with --counts.
@@ -47,6 +50,33 @@ def _parse_strs(text: str) -> list[str]:
     return [x.strip() for x in text.split(",") if x.strip()]
 
 
+class _MeterBank:
+    """One fresh serve-side RunTracker per ablation run, so each cell's target cost is reported.
+
+    The factory is called at the start of every `run(condition, seed)`; the `on_run` callback
+    fires right after it finishes — so `take()` always pairs the tracker with the run that just
+    completed. Only the SERVE provider is metered (judge cost is deliberately separate, D12).
+    """
+
+    def __init__(self) -> None:
+        self._pending: RunTracker | None = None
+        self.by_run: list[tuple[str, int, RunRecord]] = []
+
+    def fresh(self) -> RunTracker:
+        tracker = RunTracker(run_id=uuid.uuid4().hex, kind="research")
+        tracker.start()
+        self._pending = tracker
+        return tracker
+
+    def take(self, label: str, seed: int) -> RunRecord | None:
+        if self._pending is None:
+            return None
+        record = self._pending.record_summary()
+        self.by_run.append((label, seed, record))
+        self._pending = None
+        return record
+
+
 def _make_backends(
     judge_model: str,
     opt_model: str,
@@ -54,11 +84,13 @@ def _make_backends(
     embed_dim: int,
     no_rag: bool,
     judge: str,
+    bank: _MeterBank,
 ) -> Callable[[], tuple[Provider, Judge, Embedder | None]]:
     """Factory the ablation calls per run for (provider, judge, embedder).
 
     `provider` is the model GEPA optimizes/serves with — defaulting to `opt_model` (use 4.6/4.7 to
-    avoid 4.8's Bedrock throttling). The judge is scored with `judge_model` so fidelity stays
+    avoid 4.8's Bedrock throttling), wrapped in a fresh `MeteredProvider` per run so target-side
+    tokens/cost land in `bank`. The judge is scored with `judge_model` so fidelity stays
     comparable to the rest of the harness. Both run on Bedrock; the embedder is the offline
     HashingEmbedder (no creds) unless --no-rag.
     """
@@ -72,7 +104,8 @@ def _make_backends(
     embedder: Embedder | None = None if no_rag else HashingEmbedder(dim=embed_dim)
 
     def factory() -> tuple[Provider, Judge, Embedder | None]:
-        return serve, scorer, embedder
+        metered = MeteredProvider(serve, bank.fresh(), base_phase=Phase.SERVE)
+        return metered, scorer, embedder
 
     return factory
 
@@ -90,17 +123,24 @@ def _load_corpus(args: argparse.Namespace) -> tuple[list, str]:  # noqa: ANN201 
     return adapter.from_file(args.file), Path(args.file).name
 
 
-def _run(args: argparse.Namespace) -> AblationReport:
+def _run(args: argparse.Namespace) -> tuple[AblationReport, _MeterBank]:
     traces, label = _load_corpus(args)
     if not traces:
         raise SystemExit("no traces ingested")
 
     seeds = _parse_ints(args.seeds)
+    bank = _MeterBank()
     ablation = TraceScalingAblation(
         traces,
         BASE_ENV_PROMPT,
         make_backends=_make_backends(
-            args.judge_model, args.opt_model, args.region, args.embed_dim, args.no_rag, args.judge
+            args.judge_model,
+            args.opt_model,
+            args.region,
+            args.embed_dim,
+            args.no_rag,
+            args.judge,
+            bank,
         ),
         counts=_parse_ints(args.counts),
         modes=_parse_strs(args.modes),
@@ -127,9 +167,17 @@ def _run(args: argparse.Namespace) -> AblationReport:
     )
 
     def _progress(condition: Condition, seed: int, score: float) -> None:
-        print(f"  {condition.label:14} seed={seed}  fidelity={score:.3f}", flush=True)
+        usage = bank.take(condition.label, seed)
+        note = ""
+        if usage is not None:
+            t = usage.total
+            note = (
+                f"  serve: {t.calls} calls, {t.input_tokens}in/{t.output_tokens}out tok, "
+                f"${t.cost_usd:.3f}, {usage.duration_seconds:.0f}s"
+            )
+        print(f"  {condition.label:14} seed={seed}  fidelity={score:.3f}{note}", flush=True)
 
-    return run_ablation(ablation, seeds, on_run=_progress)
+    return run_ablation(ablation, seeds, on_run=_progress), bank
 
 
 def main() -> None:
@@ -176,14 +224,34 @@ def main() -> None:
     parser.add_argument("--out", default=None, help="Path to write the AblationReport JSON.")
     args = parser.parse_args()
 
-    report = _run(args)
+    report, bank = _run(args)
 
     print(f"\n=== {report.name} (seeds={report.seeds}) ===")
     for cell in report.conditions:
         print(f"  {cell.summary()}")
+    if bank.by_run:
+        print("\nserve-side usage per run (judge cost excluded):")
+        for label, seed, record in bank.by_run:
+            t = record.total
+            print(
+                f"  {label:14} seed={seed}  {t.calls} calls  "
+                f"{t.input_tokens}in/{t.output_tokens}out tok  ${t.cost_usd:.3f}  "
+                f"{record.duration_seconds:.0f}s"
+            )
     if args.out:
         Path(args.out).write_text(report.model_dump_json(indent=2), encoding="utf-8")
-        print(f"\nwrote report -> {args.out}")
+        usage_out = Path(args.out).with_suffix(".usage.json")
+        usage_out.write_text(
+            json.dumps(
+                [
+                    {"label": label, "seed": seed, **record.model_dump(mode="json")}
+                    for label, seed, record in bank.by_run
+                ],
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        print(f"\nwrote report -> {args.out} (+ {usage_out.name})")
 
 
 if __name__ == "__main__":
