@@ -45,7 +45,8 @@ def main() -> None:
         from safetensors import safe_open
 
         names: set[str] = set()
-        with safe_open(str(Path(args.adapter_dir) / "adapter_model.safetensors"), framework="pt") as f:
+        adapter_weights = str(Path(args.adapter_dir) / "adapter_model.safetensors")
+        with safe_open(adapter_weights, framework="pt") as f:
             for key in f.keys():
                 if ".lora_A" in key or ".lora_B" in key:
                     prefix = key.split(".lora_")[0]
