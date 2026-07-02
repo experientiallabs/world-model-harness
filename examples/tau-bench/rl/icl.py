@@ -58,7 +58,8 @@ _TOOLS_PATH = _HERE / "tools.json"
 HAIKU = "us.anthropic.claude-haiku-4-5-20251001-v1:0"  # dated profile id (undated is rejected)
 OPUS = "us.anthropic.claude-opus-4-8"  # eval reward judge: third family vs both WM backends
 REGION = "us-east-1"
-MAX_STEPS = 12
+MAX_STEPS = 20  # shared eval protocol (DECISIONS.md D30)
+POLICY_MAX_TOKENS = 6000  # room for Qwen3.5 reasoning + tool call (D30/D31)
 OBS_CHARS = 800  # observation excerpt per history line in the policy prompt
 MEMORY_RECORDS = 8  # most-recent cross-task records injected in `multi`
 
@@ -174,7 +175,7 @@ class PolicyAgent:
             self._system,
             [Message(role="user", content=user)],
             temperature=self._temperature,
-            max_tokens=1024,
+            max_tokens=POLICY_MAX_TOKENS,
         )
         return _parse_action(completion.text)
 
@@ -341,7 +342,16 @@ def main() -> int:
     parser.add_argument("--limit", type=int, default=0, help="cap scenarios (0 = all)")
     parser.add_argument("--attempts", type=int, default=2, help="attempts per scenario (single)")
     parser.add_argument(
-        "--temperature", type=float, default=0.7, help="policy sampling (vllm/openai only)"
+        "--temperature",
+        type=float,
+        default=1.0,  # shared eval protocol (D30); vllm/openai only — bedrock drops it
+        help="policy sampling (vllm/openai only)",
+    )
+    parser.add_argument(
+        "--episodes-per-scenario",
+        type=int,
+        default=1,
+        help="episodes per eval scenario (shared protocol D30 uses 2 for official rows)",
     )
     parser.add_argument("--memory", type=Path, default=_HERE / "icl_memory.jsonl")
     parser.add_argument("--out", type=Path, default=None, help="results JSONL (default: derived)")
@@ -377,6 +387,9 @@ def main() -> int:
     ]
     if args.limit:
         scenarios = scenarios[: args.limit]
+    if args.episodes_per_scenario < 1:
+        parser.error("--episodes-per-scenario must be >= 1")
+    scenarios = [s for s in scenarios for _ in range(args.episodes_per_scenario)]
 
     tools = _load_tools()
     wm = _build_wm(args.wm)
