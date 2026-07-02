@@ -664,6 +664,25 @@ wheels = [
 ]
 
 [[package]]
+name = "llm-waterfall"
+version = "0.1.1"
+source = { git = "https://github.com/experientiallabs/llm-waterfall?rev=v0.1.1#400736899d4906a4e60840a6d5e4a5cf94053762" }
+dependencies = [
+    { name = "pydantic" },
+]
+
+[package.optional-dependencies]
+anthropic = [
+    { name = "anthropic" },
+]
+bedrock = [
+    { name = "boto3" },
+]
+openai = [
+    { name = "openai" },
+]
+
+[[package]]
 name = "markdown-it-py"
 version = "4.2.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1544,6 +1563,7 @@ bedrock = [
 dev = [
     { name = "anthropic" },
     { name = "boto3" },
+    { name = "llm-waterfall", extra = ["anthropic", "bedrock", "openai"] },
     { name = "matplotlib" },
     { name = "openai" },
     { name = "opentelemetry-proto" },
@@ -1562,6 +1582,9 @@ viz = [
     { name = "matplotlib" },
     { name = "seaborn" },
 ]
+waterfall = [
+    { name = "llm-waterfall", extra = ["anthropic", "bedrock", "openai"] },
+]
 
 [package.metadata]
 requires-dist = [
@@ -1571,6 +1594,7 @@ requires-dist = [
     { name = "fastapi", specifier = ">=0.110" },
     { name = "gepa", specifier = ">=0.1.1" },
     { name = "httpx", specifier = ">=0.27" },
+    { name = "llm-waterfall", extras = ["anthropic", "bedrock", "openai"], marker = "extra == 'waterfall'", git = "https://github.com/experientiallabs/llm-waterfall?rev=v0.1.1" },
     { name = "matplotlib", marker = "extra == 'viz'", specifier = ">=3.8" },
     { name = "numpy", specifier = ">=1.26" },
     { name = "openai", marker = "extra == 'openai'", specifier = ">=1.40" },
@@ -1585,6 +1609,6 @@ requires-dist = [
     { name = "ty", marker = "extra == 'dev'", specifier = ">=0.0.1a1" },
     { name = "typer", specifier = ">=0.12" },
     { name = "uvicorn", specifier = ">=0.29" },
-    { name = "world-model-harness", extras = ["anthropic", "openai", "bedrock", "otel", "viz"], marker = "extra == 'dev'" },
+    { name = "world-model-harness", extras = ["anthropic", "openai", "bedrock", "otel", "viz", "waterfall"], marker = "extra == 'dev'" },
 ]
-provides-extras = ["anthropic", "openai", "bedrock", "otel", "viz", "dev"]
+provides-extras = ["anthropic", "openai", "bedrock", "waterfall", "otel", "viz", "dev"]
