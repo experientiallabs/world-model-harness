@@ -102,6 +102,18 @@ class WorldModel:
     def get_session(self, session_id: str) -> Session:
         return self._sessions[session_id]
 
+    def end_session(self, session_id: str) -> RunRecord:
+        """End `session_id`: stop its metering, drop it from the model, return the final usage.
+
+        Batch rollouts open thousands of sessions against one WorldModel; without an explicit end,
+        every Session (full step history) and its still-ticking RunTracker stays resident forever.
+        Raises `KeyError` for an unknown/already-ended session id.
+        """
+        self._sessions.pop(session_id)  # KeyError for unknown ids, same as get_session
+        tracker = self._trackers.pop(session_id)
+        tracker.stop()
+        return tracker.record_summary()
+
     def sample_steps(self, n: int) -> list[Step]:
         """Return up to `n` steps from the replay buffer (used to seed the demo agent)."""
         return self._retriever.sample(n)
@@ -147,9 +159,15 @@ class WorldModel:
             usage_event = tracker.record(Phase.SERVE, self._provider.config.model, completion.usage)
             usage_cost_usd = usage_event.cost_usd
 
-        # (4) advance session: append step, update structured state + scratchpad, enrich buffer
+        # (4) advance session: append step, update structured state + scratchpad, enrich buffer.
+        # state_before is a deep copy: _update_state mutates session.state in place, and an aliased
+        # reference would rewrite every recorded step (and the text the retriever embeds in add())
+        # to the post-mutation state.
         step = Step(
-            action=action, observation=observation, state_before=session.state, task=session.task
+            action=action,
+            observation=observation,
+            state_before=session.state.model_copy(deep=True),
+            task=session.task,
         )
         session.history.append(step)
         self._update_state(session, step)
