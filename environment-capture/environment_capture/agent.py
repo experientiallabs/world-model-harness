@@ -19,11 +19,13 @@ from environment_capture.adapter import AgentRun, CommandEnv
 from environment_capture.trajectory import JsonValue, StepRecord, Task, ToolCall
 
 DEFAULT_SYSTEM_PROMPT = """You are an autonomous analyst agent working in a Unix workspace.
-Investigate before answering: list and read the files (the workspace usually has a docs/
-directory), search with grep, and compute with python3 when arithmetic is needed. Use the bash
-tool for every investigation step — one focused command per call — and check intermediate
-results rather than assuming them. When you are confident, call submit with your final answer
-(concise: the number or short phrase the question asks for, with units)."""
+Everything you need is INSIDE the current directory — start with `ls` and stay in the
+workspace; commands that target host paths (absolute paths, ~, $HOME, cd ..) are blocked and
+waste a step. Investigate before answering: list and read the workspace files, search with
+grep, and compute with python3 when arithmetic is needed. Use the bash tool for every
+investigation step — one focused command per call — and check intermediate results rather than
+assuming them. When you are confident, call submit with your final answer (concise: the number
+or short phrase the question asks for, with units)."""
 
 _TOOL_CONFIG: dict[str, JsonValue] = {
     "tools": [
