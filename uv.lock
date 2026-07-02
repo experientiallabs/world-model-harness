@@ -1547,6 +1547,7 @@ dev = [
     { name = "matplotlib" },
     { name = "openai" },
     { name = "opentelemetry-proto" },
+    { name = "pandas" },
     { name = "pytest" },
     { name = "ruff" },
     { name = "seaborn" },
@@ -1560,6 +1561,7 @@ otel = [
 ]
 viz = [
     { name = "matplotlib" },
+    { name = "pandas" },
     { name = "seaborn" },
 ]
 
@@ -1575,6 +1577,7 @@ requires-dist = [
     { name = "numpy", specifier = ">=1.26" },
     { name = "openai", marker = "extra == 'openai'", specifier = ">=1.40" },
     { name = "opentelemetry-proto", marker = "extra == 'otel'", specifier = ">=1.24" },
+    { name = "pandas", marker = "extra == 'viz'", specifier = ">=2.0" },
     { name = "posthog", specifier = ">=7.0" },
     { name = "pydantic", specifier = ">=2.6" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },

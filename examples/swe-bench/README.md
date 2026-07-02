@@ -109,6 +109,50 @@ predicted observation for `(state, action)`, and a reasoning turn has no environ
 
 The output is OTel-GenAI span JSONL that `wmh.ingest.otel_genai` reads directly.
 
+## Concurrency scaling law
+
+`wmh research concurrency swe-bench` measures how batch wall-clock falls as more scenarios
+reconstruct at once (world side fans `predict_observation` across a thread pool; `--side both` also
+times the matching real Docker sandbox, pinned to the same scenarios by `trace_id`).
+
+```bash
+AWS_REGION=us-east-1 uv run wmh research concurrency swe-bench \
+    --scenarios 16 --levels 1,2,4,8,16 --side both --scale-with-concurrency --out conc.json
+uv run wmh research plot-concurrency conc.json --out conc.png   # needs the viz extra
+```
+
+`--scale-with-concurrency` runs **N=W scenarios at each level W** — every level is one concurrent
+*wave* (W=16 = 16 fresh sandboxes building at once vs 16 world-model scenarios at once), so both
+sides are genuinely concurrent and nothing runs sequentially except the W=1 reference. The real side
+stands each environment up **from source** (`--mode build`: base image → the real conda/pip
+dependency install → repo clone/checkout/install) — the honest "stand up from nothing" cost,
+~300–800s per wave. (An earlier version pulled SWE-bench's *prebuilt* image, ~16s, which under-counts
+the real standup ~15–30× and made the world model look slower — it is not.) The from-source build
+works under arm64 emulation once Docker's build store is healthy (`docker builder prune` clears the
+intermittent apt-GPG errors).
+
+Measured (Haiku 4.5, both sides, from-source build, one wave per level; fresh Docker, 16-core /
+18.8 GB Docker cap):
+
+| W (built at once) | world model | real sandbox | differential |
+|---|---|---|---|
+| 1 | 1.6s | 575s | **364×** |
+| 2 | 1.5s | 578s | **396×** |
+| 4 | 2.6s | 471s | **180×** |
+| 8 | 17.5s | 462s | **26×** |
+| 16 | 92.2s | 820s | **8.9×** |
+
+The world model is **9–396× faster** than standing up the real environments from source, at every
+concurrency level. The differential narrows as the wave grows: the real side overlaps builds (2–4 at
+once finish in ~the time of one), while at W=8/16 both sides slow — the real side saturates the
+Docker memory cap and the world side's bigger waves include longer traces. Net: reconstructing a
+scenario is near-free (seconds, zero standup) next to building its container from source (minutes).
+The "How each side parallelizes" panel is a speedup-vs-W=1 view that only applies to the fixed-N
+mode; under `--scale-with-concurrency` each level does more work, so read the wall-clock and
+differential panels. Committed figure: `concurrency_scaling.png`.
+
+![Concurrency scaling law on swe-bench](./concurrency_scaling.png)
+
 ## Run ONE real scenario (the real-environment side of the comparison)
 
 ### One command: `run.sh`
