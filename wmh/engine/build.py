@@ -125,6 +125,10 @@ def build(
     # the TRAIN split only — the same leak-free discipline as retrieval — into human-editable
     # markdown under knowledge/. Falls back to the full corpus only when the corpus is too small
     # to split (mirrors the `test or train` GEPA fallback below).
+    # Known simplification: GEPA below still evolves the prompt under the BASE output contract,
+    # even when this artifact will serve with knowledge/reasoning. That composes — the evolved
+    # SYSTEM prompt never encodes the output contract (it is appended per-completion by
+    # build_env_prompt) — but the optimizer is not yet selecting under agentic-mode conditions.
     if config.knowledge:
         seed_knowledge(KnowledgeBase(paths.knowledge), train or traces, provider)
 
