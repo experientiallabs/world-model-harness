@@ -136,11 +136,23 @@ OUTPUT_CONTRACT = (
 # putting the deliberation before `output` is what makes it an actual deliberation rather than a
 # post-hoc rationalization. `kb_note` is the cross-session counterpart of `state_note` (persisted
 # to the knowledge base by the engine); `ground_query` is offered only when a grounder is active.
+# Deliberation instruction, tuned on observed live failures (docs/agentic_results inspection):
+# unbounded deliberations blew the token budget and truncated the output (hence "1-4 short
+# sentences"); agent-side policy was mistaken for an env gate (a cancel the policy forbids still
+# EXECUTES — tools are mechanical); unobserved state was assumed ("already installed");
+# exploratory greps/finds were assumed to hit when the corpus shows they miss 33-72% of the
+# time; and exact computations missed edge cases (fold/wc off-by-one on a trailing newline).
 _REASONING_FIELD = (
-    '{"reasoning": "<before deciding the output: what would this action really do given the'
-    " current state? check the knowledge base's rules and state-dependent gates (auth,"
-    " availability, preconditions), the interaction history, and the examples; decide success"
-    ' vs. error from evidence, not optimism>", '
+    '{"reasoning": "<1-4 short sentences BEFORE deciding the output: what would this action'
+    " really do given the current state? Check the gates the ENVIRONMENT itself enforces (auth"
+    " checks, availability, preconditions, timeouts) against the knowledge base, history, and"
+    " examples — policy the AGENT is merely supposed to follow does not make a tool refuse, so"
+    " predict refusal only where the environment demonstrably enforces it. Never assume"
+    " unobserved state (installed packages, existing files) — default to a fresh environment."
+    " Exploratory searches (grep/find for guessed strings, line ranges that may exceed the"
+    " file) MISS often: predict empty output unless the evidence shows the target exists there,"
+    " and match how similar commands actually behaved in the examples. Work exact computations"
+    ' carefully (counts, off-by-one, trailing newlines)>", '
 )
 _BASE_FIELDS = (
     '"output": "<exactly what the environment returns to the agent>", '

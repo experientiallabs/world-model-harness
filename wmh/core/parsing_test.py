@@ -66,6 +66,39 @@ def test_parse_observation_empty_output_with_reasoning_is_still_contract() -> No
     assert obs.is_error is False
 
 
+def test_parse_observation_salvages_truncated_reasoning_completion() -> None:
+    # Observed in a live tau eval (score 0.26): a long deliberation + long escaped record blew the
+    # token budget, the JSON never closed, and the WHOLE raw contract text became the observation.
+    # The salvage path must recover the partial `output` string instead.
+    truncated = (
+        '{"reasoning": "Return user details for Mohamed.", '
+        '"output": "{\\"user_id\\": \\"mohamed_hernandez_5188\\", '
+        '\\"name\\": {\\"first_name\\": \\"Moh'
+    )
+    obs = parse_observation(truncated)
+    assert obs.content.startswith('{"user_id": "mohamed_hernandez_5188"')
+    assert '"reasoning"' not in obs.content  # deliberation never leaks to the agent
+    assert obs.metadata["reasoning"] == "Return user details for Mohamed."
+
+
+def test_parse_observation_salvage_recovers_is_error_when_present() -> None:
+    truncated = (
+        '{"reasoning": "gate blocks it", "output": "Error: not permitted", "is_error": true, '
+        '"state_note": "attempted forbidden acti'
+    )
+    obs = parse_observation(truncated)
+    assert obs.content == "Error: not permitted"
+    assert obs.is_error is True
+
+
+def test_parse_observation_salvage_does_not_fire_on_plain_text() -> None:
+    # Ordinary non-JSON replies (and JSON-looking observations without contract keys) still fall
+    # back to full-text — salvage only triggers on a broken CONTRACT payload.
+    assert parse_observation("total 0\ndrwxr-xr-x 2 root").content.startswith("total 0")
+    obs = parse_observation('{"id": "u1", "name": "kath"}')  # complete non-contract JSON
+    assert obs.content == '{"id": "u1", "name": "kath"}'
+
+
 def test_dumps_observation_contract_roundtrips() -> None:
     obs = Observation(content="ok", is_error=False, metadata={"state_note": "did x"})
     text = dumps_observation_contract(obs)

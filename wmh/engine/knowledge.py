@@ -157,8 +157,12 @@ _SEED_SYSTEM_PROMPT = """You are building the canonical KNOWLEDGE BASE for a sim
 environment reconstructed from real agent traces. Extract only DURABLE, CROSS-SESSION facts the \
 environment must stay consistent about:
 
-- rules: business rules and STATE-DEPENDENT GATES — auth requirements, availability checks, \
-preconditions, completion/cancellation rules, limits. These decide success vs. error.
+- rules: business rules and STATE-DEPENDENT GATES the environment ITSELF enforces — auth \
+requirements, availability checks, preconditions, completion/cancellation rules. These decide \
+success vs. error. Distinguish carefully: if traces show a tool executing successfully despite \
+a policy the agent was told to follow, that policy is NOT an environment gate — record it as \
+"agent policy (NOT enforced: tools execute mechanically)". Also record SYSTEM LIMITS evidenced \
+in traces with their observed values: command timeouts, rate limits, output truncation, caps.
 - entities: canonical entities that exist (ids, names, relations) — stated generally, never \
 per-session conversation details.
 - schemas: tool/API response shapes, field names, and exact error formats/messages.

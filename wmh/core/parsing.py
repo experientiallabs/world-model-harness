@@ -109,7 +109,66 @@ def parse_observation(text: str) -> Observation:
                 if value:
                     metadata[key] = value
             return Observation(content=parsed.output, is_error=parsed.is_error, metadata=metadata)
+    salvaged = _salvage_truncated_contract(text)
+    if salvaged is not None:
+        return salvaged
     return Observation(content=text.strip())
+
+
+def _salvage_truncated_contract(text: str) -> Observation | None:
+    """Recover a contract reply whose JSON never closed (token-budget truncation).
+
+    Long deliberations plus long escaped observations can blow the completion budget mid-string;
+    without this, the ENTIRE raw contract text (reasoning included) becomes the observation the
+    agent sees — observed live as a catastrophic 0.26-fidelity step. Conservative trigger: the
+    text must look like a contract object (starts with ``{`` and names an ``"output"`` key) and
+    must NOT have parsed as complete JSON (callers try that first). Recovered string fields are
+    unescaped up to the truncation point.
+    """
+    stripped = text.strip()
+    if not stripped.startswith("{") or '"output"' not in stripped:
+        return None
+    output = _string_field_value(stripped, "output")
+    if output is None:
+        return None
+    metadata: JsonObject = {}
+    reasoning = _string_field_value(stripped, "reasoning")
+    if reasoning:
+        metadata["reasoning"] = reasoning
+    is_error = '"is_error": true' in stripped or '"is_error":true' in stripped
+    return Observation(content=output, is_error=is_error, metadata=metadata)
+
+
+def _string_field_value(text: str, key: str) -> str | None:
+    """Extract `key`'s JSON string value from possibly-truncated JSON, unescaping as we go."""
+    marker = f'"{key}"'
+    at = text.find(marker)
+    if at == -1:
+        return None
+    i = at + len(marker)
+    while i < len(text) and text[i] in ": \t\n":
+        i += 1
+    if i >= len(text) or text[i] != '"':
+        return None
+    i += 1
+    out: list[str] = []
+    escaped = False
+    while i < len(text):
+        ch = text[i]
+        if escaped:
+            out.append(_UNESCAPE.get(ch, ch))
+            escaped = False
+        elif ch == "\\":
+            escaped = True
+        elif ch == '"':
+            break  # properly terminated string
+        else:
+            out.append(ch)
+        i += 1
+    return "".join(out)
+
+
+_UNESCAPE = {"n": "\n", "t": "\t", "r": "\r", '"': '"', "\\": "\\", "/": "/"}
 
 
 def dumps_observation_contract(observation: Observation) -> str:
