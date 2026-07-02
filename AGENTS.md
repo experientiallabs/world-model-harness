@@ -15,6 +15,12 @@ uv run ty check
 uv run pytest -q
 ```
 
+## Python
+
+- Every Python file must have a module docstring.
+- Write Google-style docstrings for all classes and functions with significant logic. Use plain
+  one-line docstrings for simple/self-explanatory classes and functions.
+
 ## Rules
 
 1. **Clean tree before every commit.** Run `uv run ruff check .` and `uv run ty check` over the
@@ -41,6 +47,9 @@ uv run pytest -q
    suite definitions belong under `examples/<task>/evals/`; generated eval results belong under the
    local `.wmh/evals/` artifact root. Built models normally belong under `.wmh/models/`;
    intentional prebuilt example artifacts belong under `examples/<task>/models/`.
+   Exception: `web/` — the project website (Next.js/TypeScript). It is excluded from the Python
+   gate (ruff/ty/pytest never touch it) and carries its own gate instead: `npm run lint` and
+   `npx tsc --noEmit` from `web/` must be clean before every commit that touches it.
 
 6. **Keep dataset-specific logic inside examples.** SWE-bench, tau-bench, terminal-task, and similar
    dataset-specific launch or conversion logic belongs under `examples/<task>/`. A standard example
