@@ -152,6 +152,14 @@ fn contains_any(haystack: &str, needles: &[&str]) -> bool {
     needles.iter().any(|needle| haystack.contains(needle))
 }
 
+/// Whether one provider code is an AUTHORITATIVE content verdict (a content
+/// filter, safety, or data-inspection code). Used where only the code may
+/// decide, never a sentence: a pre-stream 4xx body's prose can say "blocked by"
+/// about a rate limit or a firewall.
+pub fn is_refusal_code(code: Option<&str>) -> bool {
+    code.is_some_and(|value| REFUSAL_CODES.contains(&value.trim().to_ascii_lowercase().as_str()))
+}
+
 /// Classify one provider-declared error from its raw code and message.
 ///
 /// Content verdicts win first (a content filter may arrive under an

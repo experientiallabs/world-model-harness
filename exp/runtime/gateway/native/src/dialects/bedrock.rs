@@ -3,7 +3,7 @@
 
 use serde_json::{Map, Value};
 
-use super::{complete_streamed_tool, malformed, parse_object, refusal_failure, Normalizer};
+use super::{malformed, parse_object, refusal_failure, Normalizer};
 use crate::errors::{Failure, FailureClass};
 use crate::events::{bedrock_usage, require_string, require_u64, Event, ToolAccumulator};
 
@@ -203,7 +203,9 @@ impl Normalizer {
             return Ok(Vec::new());
         };
         let mut events = Vec::new();
-        complete_streamed_tool(index, &mut tool, &mut events)?;
+        // The stop reason arrives in the following messageStop, so a fragment
+        // left open by the output budget cannot be told from garbage yet.
+        self.complete_tool_deferring_failure(index, &mut tool, &mut events);
         Ok(events)
     }
 
@@ -220,6 +222,11 @@ impl Normalizer {
 
     /// Map the retained Bedrock stop reason to one terminal gateway event.
     fn bedrock_terminal(&mut self, reason: &str) -> Event {
+        let truncated = matches!(reason, "max_tokens" | "model_context_window_exceeded");
+        if let Err(failure) = self.resolve_deferred_tool_failure(truncated) {
+            self.tools.clear();
+            return Event::Failed(failure);
+        }
         if !self.tools.is_empty() {
             self.tools.clear();
             return Event::Failed(Failure::new(
@@ -488,6 +495,46 @@ mod bedrock_tests {
         assert_eq!(events[1]["kind"], "usage");
         assert_eq!(events[2]["kind"], "failed");
         assert_eq!(events[2]["failure_class"], "malformed_response");
+    }
+
+    #[test]
+    fn bedrock_tool_fragment_at_the_output_budget_is_incomplete_not_malformed() {
+        let fragment = |stop_reason: &str| {
+            vec![
+                event(
+                    "contentBlockStart",
+                    &json!({
+                        "contentBlockIndex": 0,
+                        "start": {"toolUse": {"toolUseId": "call-1", "name": "lookup"}},
+                    }),
+                ),
+                event(
+                    "contentBlockDelta",
+                    &json!({"contentBlockIndex": 0, "delta": {"toolUse": {"input": "{\"city\": \"Par"}}}),
+                ),
+                event("contentBlockStop", &json!({"contentBlockIndex": 0})),
+                event("messageStop", &json!({"stopReason": stop_reason})),
+                event(
+                    "metadata",
+                    &json!({"usage": {"inputTokens": 1, "outputTokens": 1}}),
+                ),
+            ]
+        };
+        let (events, failure) = run_stream(&fragment("max_tokens"));
+        assert!(failure.is_none());
+        assert!(!events
+            .iter()
+            .any(|event| event["kind"] == "tool_call_completed"));
+        assert_eq!(
+            events.last().map(|event| event["kind"].clone()),
+            Some(json!("incomplete"))
+        );
+
+        let (events, failure) = run_stream(&fragment("end_turn"));
+        assert!(failure.is_none());
+        let last = events.last().expect("terminal");
+        assert_eq!(last["kind"], "failed");
+        assert_eq!(last["failure_class"], "malformed_response");
     }
 
     #[test]

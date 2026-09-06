@@ -9,6 +9,7 @@
 
 mod anthropic;
 mod bedrock;
+mod deferred_tools;
 mod gemini;
 mod openai;
 
@@ -399,6 +400,11 @@ pub struct Normalizer {
     // Caller-known label words (the dispatched model id) exempt from the
     // provider-identifier screen on stream-error detail.
     request_words: Vec<String>,
+    // A tool call whose arguments failed to parse at its block stop, held
+    // until the stop reason arrives (Anthropic `message_delta`, Bedrock
+    // `messageStop` both follow the block): a budget truncation drops the
+    // call and ends Incomplete; any other ending surfaces this failure.
+    deferred_tool_failure: Option<Failure>,
 }
 
 impl Normalizer {
@@ -432,6 +438,7 @@ impl Normalizer {
             gemini_tool_index: 0,
             reasoning_content_route_sha256,
             request_words: Vec::new(),
+            deferred_tool_failure: None,
         }
     }
 

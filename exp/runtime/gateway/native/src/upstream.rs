@@ -7,7 +7,10 @@ use serde_json::Value;
 
 use crate::dialects::Dialect;
 use crate::errors::{Failure, FailureClass};
-use crate::param_attribution::{rejected_detail, rejected_model_not_found, rejected_parameter};
+use crate::param_attribution::{
+    generic_error_code, rejected_code, rejected_detail, rejected_model_not_found,
+    rejected_parameter,
+};
 
 /// Build the shared pooled upstream client, mirroring the pooling constants in
 /// `providers.async_transport` (64 keep-alive) and its no-redirect policy so a
@@ -199,9 +202,28 @@ pub async fn open_stream(
             .and_then(Value::as_str)
             .into_iter()
             .collect();
+        let code = body
+            .as_deref()
+            .and_then(|body| rejected_code(dialect, body));
         let detail = body
             .as_deref()
-            .and_then(|body| rejected_detail(dialect, body, &request_words));
+            .and_then(|body| rejected_detail(dialect, body, &request_words))
+            // A sentence the identifier screen dropped still leaves the
+            // provider's own code token: "invalid_value" beats "verify the
+            // request fields" for the caller and the ledger alike. A generic
+            // family type or bare status adds nothing and is not relayed.
+            .or_else(|| code.clone().filter(|token| !generic_error_code(token)));
+        // A content-filter CODE under a 4xx is the model's verdict on the
+        // content (Azure and Gemini answer 400 for it), not a request-shape
+        // error: file and answer it as a refusal, detail kept ledger-only.
+        // Only the authoritative code decides here; a sentence saying
+        // "blocked by" could be about a firewall or a limit.
+        if crate::stream_errors::is_refusal_code(code.as_deref()) {
+            return Err(
+                Failure::new(FailureClass::Refusal, "provider refused the request")
+                    .with_provider_detail(detail),
+            );
+        }
         return Err(failure
             .with_rejected_parameter(parameter)
             .with_provider_detail(detail));
@@ -315,6 +337,92 @@ mod tests {
         assert!(
             !failure.safe_message.contains("request fields"),
             "the caller must never be told to fix their fields for a provider billing state"
+        );
+    }
+
+    async fn open_against_body(status_line: &str, body: &'static str, model: &str) -> Failure {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        let status_line = status_line.to_string();
+        tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.expect("accept");
+            let mut buffer = [0u8; 8192];
+            let _ = socket.read(&mut buffer).await;
+            let response = format!(
+                "HTTP/1.1 {status_line}\r\ncontent-type: application/json\r\n\
+                 content-length: {}\r\nconnection: close\r\n\r\n{}",
+                body.len(),
+                body,
+            );
+            socket.write_all(response.as_bytes()).await.expect("write");
+        });
+        let client = build_client(Duration::from_secs(2)).expect("client");
+        open_stream(
+            &client,
+            &format!("http://{addr}/v1/chat/completions"),
+            &HashMap::new(),
+            "idem-4xx",
+            &serde_json::json!({"model": model, "messages": []}),
+            None,
+            Duration::from_secs(5),
+            Dialect::OpenAiCompatible,
+        )
+        .await
+        .expect_err("a 4xx must classify as a failure")
+    }
+
+    #[tokio::test]
+    async fn a_dropped_provider_sentence_still_relays_the_provider_code() {
+        // The sentence names an account handle, so the identifier screen drops
+        // it; the caller still learns WHICH rejection it was.
+        let failure = open_against_body(
+            "400 Bad Request",
+            "{\"error\":{\"code\":\"invalid_value\",\"type\":\"invalid_request_error\",\
+             \"message\":\"Invalid value for organization org_a1b2c3d4e5f6: not allowed\"}}",
+            "m",
+        )
+        .await;
+        assert_eq!(failure.failure_class, FailureClass::InvalidRequest);
+        assert_eq!(failure.provider_detail.as_deref(), Some("invalid_value"));
+        assert_eq!(
+            failure.public_error().message,
+            "provider rejected the request: invalid_value"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_blocked_by_sentence_without_a_refusal_code_stays_a_request_error() {
+        let failure = open_against_body(
+            "400 Bad Request",
+            "{\"error\":{\"code\":\"invalid_value\",\"message\":\"Request blocked by the \
+             organization policy for this parameter.\"}}",
+            "m",
+        )
+        .await;
+        assert_eq!(failure.failure_class, FailureClass::InvalidRequest);
+    }
+
+    #[tokio::test]
+    async fn a_content_filter_4xx_is_a_refusal_not_a_request_shape_error() {
+        let failure = open_against_body(
+            "400 Bad Request",
+            "{\"error\":{\"code\":\"content_filter\",\"message\":\"The response was \
+             filtered due to the prompt triggering the content management policy.\"}}",
+            "m",
+        )
+        .await;
+        assert_eq!(failure.failure_class, FailureClass::Refusal);
+        assert_eq!(failure.public_error().status_code, 400);
+        assert_eq!(failure.public_error().code, "refusal");
+        // The sanitized sentence (or the code token when it must drop) rides
+        // to the ledger; a refusal never relays it to the caller.
+        assert!(failure.provider_detail.is_some());
+        assert_eq!(
+            failure.public_error().message,
+            "provider refused the request"
         );
     }
 
