@@ -201,6 +201,53 @@ def test_escaped_pointer_tokens_resolve_to_their_definitions() -> None:
     assert anthropic_strict_schema_unsupported(acyclic) is None
 
 
+def test_definition_namespaces_stay_distinct() -> None:
+    """``$defs`` and legacy ``definitions`` are separate namespaces: a name
+    present in both is two graph nodes, a ``$ref`` resolves to the namespace
+    it names, and only a genuinely recursive node is flagged."""
+    # (a) Same name in both namespaces; only the ``definitions`` one recurses.
+    only_legacy_recursive = _object(
+        {"v": {"$ref": "#/$defs/node"}},
+        **{
+            "$defs": {"node": {"type": "string"}},
+            "definitions": {
+                "node": {"anyOf": [{"type": "string"}, {"$ref": "#/definitions/node"}]}
+            },
+        },
+    )
+    assert anthropic_strict_schema_unsupported(only_legacy_recursive) == "recursive $ref"
+    # The mirror image: a recursive ``$defs`` node beside a plain legacy twin.
+    only_defs_recursive = _object(
+        {"v": {"$ref": "#/definitions/node"}},
+        **{
+            "$defs": {"node": {"anyOf": [{"type": "string"}, {"$ref": "#/$defs/node"}]}},
+            "definitions": {"node": {"type": "string"}},
+        },
+    )
+    assert anthropic_strict_schema_unsupported(only_defs_recursive) == "recursive $ref"
+    # Neither recurses, even though each namespace's ``node`` refers to the
+    # OTHER namespace's ``node``: conflating the names would report a cycle.
+    cross_namespace_acyclic = _object(
+        {"v": {"$ref": "#/$defs/node"}},
+        **{
+            "$defs": {"node": {"$ref": "#/definitions/node"}},
+            "definitions": {"node": {"type": "string"}},
+        },
+    )
+    assert anthropic_strict_schema_unsupported(cross_namespace_acyclic) is None
+    # (b) A ``$ref`` into ``definitions`` resolves there even when an
+    # identically named ``$defs`` entry exists: the legacy node's own
+    # violation is found through it, the ``$defs`` twin is irrelevant.
+    resolves_to_legacy = _object(
+        {"v": {"$ref": "#/definitions/node"}},
+        **{
+            "$defs": {"node": {"type": "string"}},
+            "definitions": {"node": {"$ref": "#/definitions/node"}},
+        },
+    )
+    assert anthropic_strict_schema_unsupported(resolves_to_legacy) == "recursive $ref"
+
+
 def test_limitations_are_found_inside_nested_containers() -> None:
     """The walk reaches properties, items, $defs, anyOf/allOf, and additionalProperties."""
     nested = _object(

@@ -205,56 +205,63 @@ def _has_circular_definitions(schema: JsonObject) -> bool:
     the schema root, which is recursion by construction.
     """
     definitions: dict[str, JsonObject] = {}
-    for key in ("$defs", "definitions"):
-        table = schema.get(key)
+    for table_key in ("$defs", "definitions"):
+        table = schema.get(table_key)
         if isinstance(table, dict):
             for name, definition in table.items():
                 if isinstance(definition, dict):
-                    definitions[name] = definition
+                    # Nodes are keyed by the full pointer to the definition:
+                    # ``$defs`` and legacy ``definitions`` are separate
+                    # namespaces, so a name present in both is two nodes.
+                    definitions[f"#/{table_key}/{_pointer_token(name)}"] = definition
     if any(reference == "#" for reference in _references(schema)):
         return True
     graph = {
-        name: {
+        node: {
             target
-            for target in (_definition_name(reference) for reference in _references(definition))
+            for target in (_definition_node(reference) for reference in _references(definition))
             if target is not None
         }
-        for name, definition in definitions.items()
+        for node, definition in definitions.items()
     }
     visiting: set[str] = set()
     settled: set[str] = set()
 
-    def cyclic(name: str) -> bool:
+    def cyclic(node: str) -> bool:
         """Depth-first cycle probe over the definition reference graph."""
-        if name in settled:
+        if node in settled:
             return False
-        if name in visiting:
+        if node in visiting:
             return True
-        visiting.add(name)
-        if any(cyclic(target) for target in graph.get(name, set())):
+        visiting.add(node)
+        if any(cyclic(target) for target in graph.get(node, set())):
             return True
-        visiting.discard(name)
-        settled.add(name)
+        visiting.discard(node)
+        settled.add(node)
         return False
 
-    return any(cyclic(name) for name in graph)
+    return any(cyclic(node) for node in graph)
 
 
-def _definition_name(reference: str) -> str | None:
-    """Return the local definition a ``#/$defs/<name>...`` reference points into.
+def _pointer_token(name: str) -> str:
+    """Encode one definition name as a JSON Pointer token (RFC 6901)."""
+    return name.replace("~", "~0").replace("/", "~1")
+
+
+def _definition_node(reference: str) -> str | None:
+    """Return the full-pointer node a ``#/$defs/<name>...`` reference points into.
 
     A pointer that descends past the definition (``#/$defs/node/properties/child``)
-    still depends on that definition, so only the first path segment names the
-    graph node; a self-reference through such a pointer is a cycle too. The
-    segment is a JSON Pointer token (RFC 6901), so ``~1`` and ``~0`` decode to
-    ``/`` and ``~`` after the split, and the result matches the raw
-    ``$defs`` key of a definition whose name carries those characters.
+    still depends on that definition, so the node is the pointer truncated to
+    its namespace and first token; a self-reference through such a pointer is
+    a cycle too. The token stays in its RFC 6901 encoded form (``~1`` for
+    ``/``, ``~0`` for ``~``), which is how the node table keys it, so
+    ``#/$defs/foo`` and ``#/definitions/foo`` remain distinct nodes.
     """
     for prefix in ("#/$defs/", "#/definitions/"):
         if reference.startswith(prefix):
             token = reference[len(prefix) :].split("/", 1)[0]
-            name = token.replace("~1", "/").replace("~0", "~")
-            return name or None
+            return f"{prefix}{token}" if token else None
     return None
 
 
