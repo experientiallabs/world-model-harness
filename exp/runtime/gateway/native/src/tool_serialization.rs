@@ -11,6 +11,11 @@
 //! next turn and re-issues the remaining calls then, which is exactly the
 //! sequential behaviour the caller asked for. Provider-executed server tools
 //! and hosted tools are never touched. Nothing here logs request text.
+//!
+//! Lifetime: one serializer per `UpstreamRelay`, and the waterfall builds a
+//! fresh relay for every upstream response, so the kept/dropped state spans
+//! exactly one assistant turn. A failover attempt or a Responses continuation
+//! is a new relay; state never carries across turns and needs no reset.
 
 use std::collections::BTreeSet;
 
