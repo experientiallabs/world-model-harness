@@ -70,6 +70,79 @@ pub fn rejected_parameter(dialect: Dialect, body: &str) -> Option<String> {
 /// OpenAI-family `error.code` naming a deployment model the provider cannot serve.
 const MODEL_NOT_FOUND_CODE: &str = "model_not_found";
 
+/// Sentences a provider answers with a 400 for a request shape the OpenAI
+/// contract allows but THIS lane's serving stack cannot carry (a chat
+/// template that only accepts a leading system turn). They are lane
+/// limitations, not caller errors: the request fails over to the next rung and
+/// only a route with no other rung surfaces the sentence.
+const LANE_LIMITATION_PHRASES: &[&str] = &[
+    "system message must be at the beginning",
+    "system message should be at the beginning",
+    "only the first message can be a system message",
+];
+
+/// The provider's own error sentence from one client-error body, read only
+/// from the dialect's documented message field (never from echoed request
+/// data or unrelated metadata).
+fn error_message_field(dialect: Dialect, value: &Value) -> Option<&str> {
+    match dialect {
+        Dialect::OpenAiResponses
+        | Dialect::OpenAiCompatible
+        | Dialect::AnthropicMessages
+        | Dialect::GeminiGenerateContent => value.get("error")?.get("message")?.as_str(),
+        // Bedrock reports a modeling error as a bare top-level `message`.
+        Dialect::BedrockConverseStream => value.get("message")?.as_str(),
+    }
+}
+
+/// Whether a 4xx body's error SENTENCE describes a limitation of the lane
+/// rather than of the caller's request (see [`LANE_LIMITATION_PHRASES`]). Only
+/// the dialect's message field is read, so request text echoed elsewhere in
+/// the body cannot change routing.
+pub fn rejected_by_lane_limitation(dialect: Dialect, body: &str) -> bool {
+    let value: Value = match serde_json::from_str(body) {
+        Ok(value) => value,
+        Err(_) => return false,
+    };
+    error_message_field(dialect, &value).is_some_and(|message| {
+        let lowered = message.to_ascii_lowercase();
+        LANE_LIMITATION_PHRASES
+            .iter()
+            .any(|phrase| lowered.contains(phrase))
+    })
+}
+
+/// Whether a 403 body is an aggregator ROUTING verdict rather than a
+/// credential one. OpenRouter runs its routing funnel only AFTER the key has
+/// authenticated, and reports the funnel it walked (`metadata.routing_funnel`)
+/// plus the step that refused (`metadata.failed_routing_step`; "Gate Free
+/// Endpoints by Agentic Harness" on its app-allow-listed free endpoints,
+/// 2026-09-06). Both fields together mean the key is fine and this lane will
+/// not serve this model for the gateway's account, so it takes the not-found
+/// policy and the ladder advances. Only the OpenAI-compatible wire OpenRouter
+/// speaks is read; other dialects keep the credential verdict.
+pub fn rejected_by_routing_gate(dialect: Dialect, body: &str) -> bool {
+    if dialect != Dialect::OpenAiCompatible {
+        return false;
+    }
+    let value: Value = match serde_json::from_str(body) {
+        Ok(value) => value,
+        Err(_) => return false,
+    };
+    let Some(metadata) = value.get("error").and_then(|error| error.get("metadata")) else {
+        return false;
+    };
+    let walked_funnel = metadata
+        .get("routing_funnel")
+        .and_then(Value::as_array)
+        .is_some_and(|steps| !steps.is_empty());
+    let failed_step = metadata
+        .get("failed_routing_step")
+        .and_then(Value::as_str)
+        .is_some_and(|step| !step.trim().is_empty());
+    walked_funnel && failed_step
+}
+
 /// Whether one client-error body reports that the dispatched model does not exist.
 ///
 /// The OpenAI Responses surface answers an unknown model with HTTP 400 and
@@ -122,14 +195,7 @@ pub fn rejected_model_not_found(dialect: Dialect, body: &str) -> bool {
 /// generic 400 for a client-side fix (2026-09-04 ledger).
 pub fn rejected_detail(dialect: Dialect, body: &str, request_words: &[&str]) -> Option<String> {
     let value: Value = serde_json::from_str(body).ok()?;
-    let message = match dialect {
-        Dialect::OpenAiResponses
-        | Dialect::OpenAiCompatible
-        | Dialect::AnthropicMessages
-        | Dialect::GeminiGenerateContent => value.get("error")?.get("message")?.as_str()?,
-        // Bedrock reports a modeling error as a bare top-level `message`.
-        Dialect::BedrockConverseStream => value.get("message")?.as_str()?,
-    };
+    let message = error_message_field(dialect, &value)?;
     sanitized_detail(message, request_words)
 }
 

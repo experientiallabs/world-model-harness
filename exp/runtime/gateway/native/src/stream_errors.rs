@@ -68,6 +68,9 @@ const REFUSAL_CODES: &[&str] = &[
     "spii",
     "moderation_blocked",
     "refusal",
+    // OpenAI's cyber-safety policy verdict (gpt-6-astra, 2026-09-06): a model
+    // decision on the content, filed as a refusal, never a provider failure.
+    "cyber_policy",
 ];
 const THROTTLED_CODES: &[&str] = &[
     "rate_limit_exceeded",
@@ -329,6 +332,10 @@ mod tests {
                 Some("data_inspection_failed"),
                 Some("Output data may contain inappropriate content.")
             ),
+            StreamErrorKind::Refusal
+        );
+        assert_eq!(
+            classify_stream_error(Some("cyber_policy"), None),
             StreamErrorKind::Refusal
         );
     }
