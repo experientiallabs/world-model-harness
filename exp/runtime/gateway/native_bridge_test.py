@@ -750,10 +750,8 @@ def test_plaintext_reasoning_degrades_on_a_route_without_exposure(tmp_path: Path
         }
     )
     admitted = _admit(control, raw_key, body)
-    assert (
-        "messages.reasoning_content->dropped(unsupported_by_provider)"
-        in admitted["ignored_parameters"]
-    )
+    ignored = cast("list[str]", admitted["ignored_parameters"])
+    assert "messages.reasoning_content->dropped(unsupported_by_provider)" in ignored
     route = cast("list[JsonObject]", admitted["route"])
     payload = cast("JsonObject", route[0]["upstream_payload"])
     sent_messages = cast("list[JsonObject]", payload["messages"])
