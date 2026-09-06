@@ -950,12 +950,15 @@ def route_generation_parameter_requests(
         )
     elif request.tool_choice == "none" and request.parallel_tool_calls is not None:
         ignore("parallel_tool_calls")
-    elif request.parallel_tool_calls is not None and any(
+    elif request.parallel_tool_calls is not None and all(
         profile.dialect in _NO_PARALLEL_TOOL_CONTROL_DIALECTS for profile in profiles
     ):
-        # A wire with no parallel-tool control: `true` is the provider's own
+        # No rung carries a parallel-tool control: `true` is the provider's own
         # default and is dropped; `false` is honoured by the data plane, which
-        # serializes each turn to its first tool call. Both are disclosed.
+        # serializes each turn to its first tool call. Both are disclosed. A
+        # mixed route keeps the field so rungs that carry the control forward
+        # it natively; only the toggle-less rungs are shaped per rung at
+        # dispatch (native_admission.shape_parallel_tool_calls).
         if request.parallel_tool_calls:
             ignore("parallel_tool_calls", "parallel_tool_calls->dropped(provider_default)")
         else:

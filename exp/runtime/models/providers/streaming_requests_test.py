@@ -1279,6 +1279,26 @@ def test_route_emulates_parallel_control_when_the_dialect_has_no_toggle(dialect:
     assert "parallel_tool_calls->dropped(provider_default)" in public_request.ignored_parameters
 
 
+def test_mixed_route_keeps_parallel_control_for_the_rungs_that_carry_it() -> None:
+    """Route-wide shaping only fires when NO rung has the control.
+
+    With one native rung and one toggle-less rung the field stays on the
+    provider request: the native rung forwards it verbatim and the toggle-less
+    rung is shaped per rung at dispatch, so a capable deployment never loses
+    the caller's native control to another rung's limitation.
+    """
+    tools = (GatewayToolDefinition(name="search", parameters={"type": "object"}),)
+    profiles = (
+        GatewayWireProfile(dialect="openai_compatible", url="https://native.test"),
+        GatewayWireProfile(dialect="openai_responses", url="https://toggle-less.test"),
+    )
+    sequential = _chat_request().model_copy(update={"tools": tools, "parallel_tool_calls": False})
+    public_request, provider_request = route_generation_parameter_requests(profiles, sequential)
+    assert provider_request.parallel_tool_calls is False
+    assert provider_request.serialize_tool_calls is False
+    assert not any("parallel_tool_calls" in note for note in public_request.ignored_parameters)
+
+
 def test_route_rejects_non_strict_schema_on_a_strict_only_provider() -> None:
     """Constrained decoding cannot silently strengthen a non-strict request."""
     request = _chat_request().model_copy(
