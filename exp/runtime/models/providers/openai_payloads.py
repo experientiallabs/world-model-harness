@@ -12,7 +12,6 @@ from exp.common.core.artifacts import JsonObject
 from exp.common.models import ChatMaxTokensField
 from exp.runtime.gateway.contracts import GatewayRequest
 from exp.runtime.models.providers.errors import (
-    ProviderCapabilityError,
     ProviderResponseError,
 )
 from exp.runtime.models.providers.fireworks import prepare_gateway_reasoning_history
@@ -54,11 +53,12 @@ def openai_responses_stream_payload(
         Native Responses request with storage disabled and streaming enabled.
 
     Raises:
-        ProviderCapabilityError: The request uses unsupported stop sequences.
         ProviderResponseError: An instruction message has no text.
     """
-    if request.stop:
-        raise ProviderCapabilityError(capability="stop_sequences")
+    # The Responses API has no stop field. Caller stop sequences never reach
+    # this wire; the native data plane emulates them from the wire entry's
+    # ``stop_sequences`` (see ``deployment_wire_entry``), cutting the stream
+    # at the first match and reporting a stop-sequence terminal.
     instructions: list[str] = []
     items: list[JsonObject] = []
     for message in request.messages:

@@ -79,6 +79,12 @@ pub struct DeploymentWire {
     /// stripped. Defaults false so every other provider is unchanged.
     #[serde(default)]
     pub reasoning_output_exposed: bool,
+    /// Caller stop sequences the data plane enforces on this rung's stream
+    /// because the provider wire has no stop field (OpenAI Responses). The
+    /// relay cuts visible text at the first match and terminates with
+    /// `Event::StoppedAtSequence`. Empty when the payload carries `stop`.
+    #[serde(default)]
+    pub stop_sequences: Vec<String>,
     pub idempotency_key: String,
     /// Deployment override for the flat first-byte allowance; the serving
     /// configuration's default applies when absent.
@@ -550,6 +556,7 @@ async fn run_attempt(
         ),
         None => UpstreamRelay::new(response, dialect, first_byte_deadline),
     };
+    relay.set_stop_sequences(wire.stop_sequences.iter().cloned());
     let mut usage: Option<Usage> = None;
     let mut tool_names: Vec<String> = Vec::new();
     let mut withheld: Vec<Event> = Vec::new();
@@ -727,6 +734,7 @@ mod tests {
             fireworks_reasoning_route_sha256: None,
             hunyuan_reasoning_route_sha256: None,
             reasoning_output_exposed: false,
+            stop_sequences: Vec::new(),
             idempotency_key: "op".to_string(),
             time_to_first_byte_base_seconds: base,
             time_to_first_byte_seconds_per_million_input_tokens: slope,

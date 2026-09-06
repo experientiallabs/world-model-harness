@@ -20,10 +20,12 @@ from exp.runtime.gateway.contracts import (
 from exp.runtime.gateway.health import DeploymentHealthKey, DeploymentHealthRegistry
 from exp.runtime.gateway.native_execution import (
     claim_route_from,
+    deployment_wire_entry,
     next_route_candidate,
     select_route_deployments,
 )
 from exp.runtime.gateway.routing import GatewayRoute
+from exp.runtime.models.providers.base import GatewayWireProfile
 
 _KEYS: tuple[DeploymentHealthKey, ...] = (
     ("catalog" + "0" * 57, "deployment-a", "connection-a"),
@@ -464,7 +466,6 @@ def test_reasoning_wire_contract_conflict_excludes_the_alias(
     from exp.runtime.gateway.lifecycle import load_gateway_components
     from exp.runtime.gateway.lifecycle_test import _configured_gateway
     from exp.runtime.gateway.native_execution import native_serving_blockers
-    from exp.runtime.models.providers.base import GatewayWireProfile
     from exp.runtime.models.providers.gemini import GeminiClient
 
     original_wire_profile = GeminiClient.gateway_wire_profile
@@ -602,3 +603,22 @@ def test_cache_marker_predicate_sees_every_marker_carrier() -> None:
         ),
     )
     assert request_carries_cache_markers(request(messages=(marked_call,)))
+
+
+def test_wire_entry_carries_emulated_stop_sequences_for_the_data_plane() -> None:
+    """A Responses rung's entry names the caller's exact stop sequences; others carry none."""
+    route = _route()
+    profile = GatewayWireProfile(dialect="openai_responses", url="https://provider.test")
+
+    entry = deployment_wire_entry(
+        route,
+        route.deployment,
+        profile,
+        {"model": "gpt-5.6-luna"},
+        stop_sequences=("</severity>", "</block>"),
+    )
+    assert entry["stop_sequences"] == ["</severity>", "</block>"]
+    assert entry["dialect"] == "openai_responses"
+
+    default = deployment_wire_entry(route, route.deployment, profile, {"model": "gpt-5.6-luna"})
+    assert default["stop_sequences"] == []

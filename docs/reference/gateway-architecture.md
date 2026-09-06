@@ -342,8 +342,28 @@ representation and drops it like summary deltas. Streaming emits the Anthropic
 lifecycle (`message_start`, `ping`, content blocks, `message_delta` with the mapped stop reason
 and usage, `message_stop`, or one terminal `error` event); the non-streaming body is the
 Anthropic message object. Completed streams stop with `end_turn` (`tool_use` when tool calls are
-present) and token-limited streams with `max_tokens`. The Anthropic protocol defines no
+present), token-limited streams with `max_tokens`, and a caller stop sequence that the gateway
+matched with `stop_sequence` plus the exact matched string. The Anthropic protocol defines no
 idempotency header, so this surface never joins the keyed replay stores.
+
+**Gateway-emulated stop sequences.** The OpenAI Responses API has no stop field, so a rung on
+that dialect admits `stop` / `stop_sequences` regardless of its catalog flag and the admitted
+route entry carries the caller's exact sequences instead of the payload. The native data plane
+cuts visible text at the first match (withholding only the shortest tail that could still start
+a sequence, so a match may span delta boundaries), discards what the model says afterwards,
+keeps draining lifecycle and usage events so settlement stays exact, and terminates the stream
+with a stop-sequence outcome: `finish_reason: stop` on Chat, `status: completed` on Responses,
+and `stop_reason: stop_sequence` on Messages. Reasoning, tool arguments, and refusals are never
+inspected. Rungs whose provider honours `stop` natively (Chat-compatible, Anthropic, Gemini,
+Bedrock) keep forwarding it on the wire.
+
+**Pre-dispatch context-window refusal.** Before any reservation or provider call, admission
+lower-bounds the prompt's token count from its UTF-8 text bytes (at six bytes per token, below
+what real tokenizers produce on prose, code, or CJK text; inline media is not counted) and
+refuses with `code: context_length_exceeded` and the exact numbers when even that lower bound
+exceeds the largest declared context window on the route. Anything under the bound dispatches
+and is left to the provider's precise count; output budgets are never refused here, a too-small
+ceiling is an `incomplete` answer.
 
 Exposure-gated reasoning rungs (Tencent Hunyuan, DeepSeek — rows the catalog stamps
 `reasoning_output_exposed`) return the model's plaintext `reasoning_content` on every non-tool

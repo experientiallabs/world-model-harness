@@ -107,7 +107,11 @@ pub fn apply_text_replacement(events: &[Event], replacement: &str) -> Vec<Event>
                 rewritten.push(Event::TextDelta(replacement.to_string()));
                 inserted = true;
             }
-            Event::Completed | Event::Incomplete | Event::PausedTurn | Event::Failed(_)
+            Event::Completed
+            | Event::Incomplete
+            | Event::StoppedAtSequence(_)
+            | Event::PausedTurn
+            | Event::Failed(_)
                 if !inserted =>
             {
                 rewritten.push(Event::TextDelta(replacement.to_string()));

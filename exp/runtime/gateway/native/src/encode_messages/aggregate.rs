@@ -237,7 +237,7 @@ pub fn completed_messages_body_with_ignored(
         "model": model,
         "content": content,
         "stop_reason": stop_reason(terminal, saw_tool_use),
-        "stop_sequence": Value::Null,
+        "stop_sequence": super::stop_sequence_value(terminal),
         "usage": messages_usage(usage.as_ref()),
     });
     super::disclose_ignored_parameters(&mut body, ignored_parameters);

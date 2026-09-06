@@ -39,6 +39,8 @@ from exp.runtime.models.providers.errors import (
 from exp.runtime.models.providers.protocol import (
     BoundedSyncModelClientAdapter,
     SyncModelClientAdapter,
+    emulated_gateway_capabilities,
+    emulated_stop_sequences,
     preflight_gateway_request,
     require_gateway_provider,
 )
@@ -257,6 +259,50 @@ def test_preflight_rejects_over_limit_stop_list_with_a_named_parameter_error() -
     at_limit = request.model_copy(update={"stop": ("a", "b", "c", "d", "e")})
     preflight_gateway_request(at_limit, capabilities)
     preflight_gateway_request(request, GatewayDeploymentCapabilities(supports_stop_sequences=True))
+
+
+def test_preflight_admits_an_undeclared_stop_when_the_data_plane_emulates_it() -> None:
+    """A Responses rung has no stop field, yet admits stop: the gateway cuts the stream itself."""
+    request = GatewayRequest(
+        surface=GatewayApiSurface.CHAT_COMPLETIONS,
+        messages=(GatewayMessage(role="user", content="hi"),),
+        stop=("</severity>",),
+    )
+    undeclared = GatewayDeploymentCapabilities(supports_stop_sequences=False)
+
+    with pytest.raises(ProviderCapabilityError) as caught:
+        preflight_gateway_request(request, undeclared)
+    assert caught.value.capability == "stop_sequences"
+
+    assert emulated_gateway_capabilities("openai_responses") == frozenset({"stop_sequences"})
+    assert emulated_gateway_capabilities("openai_compatible") == frozenset()
+    preflight_gateway_request(
+        request,
+        undeclared,
+        emulated_capabilities=emulated_gateway_capabilities("openai_responses"),
+    )
+    # Emulation is per capability: an unrelated undeclared feature still rejects.
+    with pytest.raises(ProviderCapabilityError):
+        preflight_gateway_request(
+            request.model_copy(update={"stream": True}),
+            undeclared,
+            public_stream=True,
+            emulated_capabilities=emulated_gateway_capabilities("openai_responses"),
+        )
+
+
+def test_emulated_stop_sequences_follow_the_dialect_and_the_request() -> None:
+    """Only a Responses rung hands the caller's sequences to the data plane."""
+    request = GatewayRequest(
+        surface=GatewayApiSurface.MESSAGES,
+        messages=(GatewayMessage(role="user", content="hi"),),
+        stop=("</block>", "DONE"),
+    )
+    assert emulated_stop_sequences("openai_responses", request) == ("</block>", "DONE")
+    assert emulated_stop_sequences("anthropic_messages", request) == ()
+    assert (
+        emulated_stop_sequences("openai_responses", request.model_copy(update={"stop": ()})) == ()
+    )
 
 
 def test_tinker_is_explicitly_excluded_from_gateway_execution() -> None:

@@ -182,6 +182,44 @@ class GatewayDispatchSigner(Protocol):
         ...
 
 
+# Wire dialects whose provider has no stop field but whose streams the native
+# data plane cuts itself: the OpenAI Responses API. A rung on one of these
+# dialects satisfies ``stop_sequences`` regardless of its catalog flag, because
+# the gateway, not the provider, honours the caller's sequences.
+STOP_SEQUENCE_EMULATED_DIALECTS: frozenset[str] = frozenset({"openai_responses"})
+
+
+def emulated_gateway_capabilities(dialect: str) -> frozenset[str]:
+    """Name the capabilities the data plane emulates for one wire dialect.
+
+    Args:
+        dialect: The rung's wire dialect (``GatewayWireProfile.dialect``).
+
+    Returns:
+        Capability labels admission treats as satisfied without a catalog
+        declaration; empty for dialects with nothing emulated.
+    """
+    if dialect in STOP_SEQUENCE_EMULATED_DIALECTS:
+        return frozenset({"stop_sequences"})
+    return frozenset()
+
+
+def emulated_stop_sequences(dialect: str, request: GatewayRequest) -> tuple[str, ...]:
+    """Return the stop sequences the data plane must enforce for one rung.
+
+    Args:
+        dialect: The rung's wire dialect.
+        request: Canonical request whose ``stop`` the provider wire cannot carry.
+
+    Returns:
+        The caller's exact sequences when this dialect emulates them; empty
+        when the provider honours ``stop`` natively (or none were requested).
+    """
+    if request.stop and dialect in STOP_SEQUENCE_EMULATED_DIALECTS:
+        return tuple(request.stop)
+    return ()
+
+
 def preflight_gateway_request(
     request: GatewayRequest,
     capabilities: GatewayDeploymentCapabilities,
@@ -189,6 +227,7 @@ def preflight_gateway_request(
     model_capabilities: ModelCapabilities | None = None,
     public_stream: bool | None = None,
     route_provider: str | None = None,
+    emulated_capabilities: frozenset[str] = frozenset(),
 ) -> None:
     """Reject gateway semantics a deployment cannot preserve before provider dispatch.
 
@@ -204,6 +243,10 @@ def preflight_gateway_request(
         route_provider: The deployment's catalog provider. A provider media
             handle is admissible only when this equals the handle's provider;
             ``None`` (standalone callers) admits no handle.
+        emulated_capabilities: Capability labels the data plane provides for
+            this rung itself (see ``emulated_gateway_capabilities``); a
+            requirement in this set passes even when the catalog declares it
+            unsupported.
 
     Raises:
         ProviderCapabilityError: A present request feature is unsupported.
@@ -282,7 +325,7 @@ def preflight_gateway_request(
     if request.stream and not caller_stream:
         requirements += ((True, capabilities.supports_streaming, "streaming"),)
     for requested, supported, capability in requirements:
-        if requested and not supported:
+        if requested and not supported and capability not in emulated_capabilities:
             raise ProviderCapabilityError(capability=capability)
     preflight_media_handles(
         request.media_handles,

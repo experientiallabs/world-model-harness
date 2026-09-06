@@ -70,6 +70,11 @@ from exp.runtime.models.providers.reasoning_compat import (
     anthropic_adaptive_only_thinking,
     anthropic_budgeted_enabled_only,
 )
+from exp.runtime.models.providers.server_tools import (
+    anthropic_server_tool_names,
+    anthropic_server_tools_message,
+    anthropic_server_tools_present,
+)
 
 if TYPE_CHECKING:
     from exp.runtime.models.providers.base import GatewayWireProfile
@@ -380,15 +385,9 @@ def route_generation_parameter_requests(
                     supported_efforts=profile_efforts,
                     param=effort_path,
                 )
-    if request.stop and any(profile.dialect == "openai_responses" for profile in profiles):
-        raise ProviderParameterError(
-            message=(
-                "The parameter 'stop' is not supported by every deployment in this model "
-                "route. Remove the field or choose a Chat-compatible model."
-            ),
-            param="stop",
-            code="unsupported_parameter",
-        )
+    # Stop sequences on a native Responses rung: the Responses API has no stop
+    # field, so the data plane emulates them (the wire entry carries the exact
+    # sequences and the stream is cut at the first match). Nothing to reject.
     if request.reasoning_summary is not None and not all(
         serves_reasoning_summary(profile) for profile in profiles
     ):
@@ -764,22 +763,17 @@ def route_generation_parameter_requests(
                 param="thinking.type",
                 code="unsupported_parameter",
             )
-    server_tools_present = bool(request.provider_server_tools) or any(
-        message.provider_anthropic_block is not None for message in request.messages
-    )
-    if server_tools_present and not all(
+    if anthropic_server_tools_present(request) and not all(
         profile.dialect == "anthropic_messages" for profile in profiles
     ):
-        # Server tools execute at the provider; silently dropping a search
-        # capability the caller asked for would be a behavior lie, so a
-        # route that cannot serve them rejects by name instead.
+        server_tool_names = anthropic_server_tool_names(request)
+        # Server tools execute inside Anthropic's API; silently dropping a
+        # search capability the caller asked for would be a behavior lie, so
+        # a route that cannot serve them rejects and NAMES the tool (Claude
+        # Code's WebSearch is the common case) so the caller knows which
+        # feature needs a Claude model.
         raise ProviderParameterError(
-            message=(
-                "The request carries Anthropic server tools (web_search-style "
-                "entries or their echoed result blocks) that only a native "
-                "Anthropic route can serve. Remove the server tools or choose "
-                "a different model alias."
-            ),
+            message=anthropic_server_tools_message(server_tool_names),
             param="tools",
             code="unsupported_parameter",
         )

@@ -32,6 +32,7 @@ mod route_responses_ws;
 mod server;
 mod settlement;
 mod sse;
+mod stop_sequences;
 mod upstream;
 mod waterfall;
 

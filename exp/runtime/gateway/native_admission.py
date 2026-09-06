@@ -27,8 +27,12 @@ from exp.runtime.gateway.native_execution import (
 )
 from exp.runtime.gateway.native_responses import ContinuationContext
 from exp.runtime.gateway.prompt_cache_affinity import provider_prompt_cache_key
+from exp.runtime.gateway.prompt_size import require_prompt_fits_context_window
 from exp.runtime.gateway.routing import GatewayRoute, GatewayRoutingError
-from exp.runtime.models.providers import preflight_gateway_request
+from exp.runtime.models.providers import (
+    emulated_gateway_capabilities,
+    preflight_gateway_request,
+)
 from exp.runtime.models.providers.base import GatewayWireProfile
 from exp.runtime.models.providers.capability_policy import (
     coerce_generation_parameters,
@@ -119,6 +123,11 @@ def admitted_route_requests(
     # OTHER tier (auto/default carry no price; scale and any future value) is
     # never rejected here — a non-billable candidate simply strips it at payload
     # build (billing-safe, disclosed), so only the opt-in priced tiers gate.
+    # A prompt that cannot fit any rung's context window is refused HERE, before
+    # a reservation or a provider call: the provider would only 400 it back
+    # (charging nothing but costing a round trip and an opaque message).
+    require_prompt_fits_context_window(route, request)
+
     if request.service_tier in ("flex", "priority"):
         tier = request.service_tier
         if not any(profile.forwards_tier(tier) for profile, _client in resolved_wires):
@@ -413,6 +422,7 @@ def protocol_compatible_indexes(
                 model_capabilities=deployment.capabilities,
                 public_stream=public_stream,
                 route_provider=deployment.provider,
+                emulated_capabilities=emulated_gateway_capabilities(profile.dialect),
             )
             dialect_stream_payload(profile, provider_request)
         except (ProviderParameterError, ProviderCapabilityError) as exc:

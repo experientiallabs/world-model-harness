@@ -58,6 +58,9 @@ from exp.runtime.gateway.native_bridge_errors import (
     escalation as _escalation,
 )
 from exp.runtime.gateway.native_bridge_errors import (
+    ledger_capability_message,
+)
+from exp.runtime.gateway.native_bridge_errors import (
     public_capability_error as _public_capability_error,
 )
 from exp.runtime.gateway.native_components import NativeGatewayComponents, SyncWriteLedger
@@ -112,6 +115,8 @@ from exp.runtime.gateway.reasoning_carrier import (
 )
 from exp.runtime.gateway.routing import GatewayRoute, GatewayRoutingError
 from exp.runtime.models.providers import (
+    emulated_gateway_capabilities,
+    emulated_stop_sequences,
     preflight_gateway_request,
     require_gateway_provider,
 )
@@ -532,6 +537,7 @@ class NativeControlPlane(
                     model_capabilities=deployment.capabilities,
                     public_stream=public_request.stream,
                     route_provider=deployment.provider,
+                    emulated_capabilities=emulated_gateway_capabilities(profile.dialect),
                 )
                 upstream_payload = dialect_stream_payload(profile, provider_request)
                 upstream_body, dispatch_signer = frozen_dispatch(profile, client, upstream_payload)
@@ -548,6 +554,7 @@ class NativeControlPlane(
                         upstream_payload,
                         upstream_body,
                         headers=request_headers,
+                        stop_sequences=emulated_stop_sequences(profile.dialect, provider_request),
                     )
                 )
                 signers.append(dispatch_signer)
@@ -591,18 +598,29 @@ class NativeControlPlane(
             # capability path names the capability, so a triager sees which
             # request feature the route cannot preserve.
             failure = normalized_provider_failure(exc)
-            self._accounting.finish_request_quietly(authorization, failure)
-            public_error = (
-                _public_capability_error(
+            if isinstance(exc, ProviderCapabilityError):
+                public_error = _public_capability_error(
                     exc,
                     provider_request.surface,
                     public_stream=public_request.stream,
                     public_tools=bool(public_request.tools),
                     developer_messages_param=decoded.developer_messages_param,
                 )
-                if isinstance(exc, ProviderCapabilityError)
-                else public_failure_error(failure, param=exc.param)
-            )
+                # The ledger keeps the capability-free generic sentence, but a
+                # bare "cannot preserve a requested capability" is untriageable
+                # from an alert. Append the PUBLIC field the caller was told
+                # about (never the internal literal), so operators read
+                # "(field: stop)" without opening the request.
+                failure = failure.model_copy(
+                    update={
+                        "safe_message": ledger_capability_message(
+                            failure.safe_message, public_error.detail.param
+                        )
+                    }
+                )
+            else:
+                public_error = public_failure_error(failure, param=exc.param)
+            self._accounting.finish_request_quietly(authorization, failure)
             raise NativeBridgeError(public_error) from exc
         except GatewayRoutingError as exc:
             # A route/catalog that cannot be built during a rolling deploy is a

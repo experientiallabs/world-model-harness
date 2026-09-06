@@ -185,3 +185,18 @@ def public_capability_error(
 def escalation(reason: str) -> str:
     """Return a content-free native admission escalation disposition."""
     return json.dumps({"escalate": reason}, separators=(",", ":"))
+
+
+def ledger_capability_message(safe_message: str, public_param: str | None) -> str:
+    """Suffix the public request field onto the ledger's generic capability sentence.
+
+    Args:
+        safe_message: The provider-neutral capability rejection text.
+        public_param: The caller-facing field the public 400 named, if any.
+
+    Returns:
+        The ledger message, with ``(field: <param>)`` appended when known.
+    """
+    if not public_param:
+        return safe_message
+    return f"{safe_message} (field: {public_param})"

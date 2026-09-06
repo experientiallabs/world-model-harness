@@ -235,7 +235,9 @@ impl ResponsesSseEncoder {
                 }
                 Ok(Vec::new())
             }
-            Event::Completed | Event::PausedTurn => self.finish("completed", None),
+            Event::Completed | Event::StoppedAtSequence(_) | Event::PausedTurn => {
+                self.finish("completed", None)
+            }
             Event::Incomplete => self.finish("incomplete", None),
             Event::Failed(failure) => self.finish("failed", Some(failure)),
         }
