@@ -39,6 +39,8 @@ Tool-call identifiers on Chat Completions and Responses are opaque strings of 1 
 65,536 characters. Replay the complete returned identifier in both the assistant call
 and its tool result, including any signature suffix. The gateway preserves the identifier
 verbatim on OpenAI-compatible Chat routes; it does not decode or strip provider signatures.
+Output guardrail byte limits count the complete serialized completion, including
+tool IDs, tool names, arguments, and JSON framing.
 Provider-specific wire restrictions still apply when routing to a different API dialect.
 
 ## The data plane

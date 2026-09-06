@@ -140,9 +140,12 @@ class GuardrailCompletion(ContractModel):
     tool_calls: tuple[GuardrailToolCall, ...] = ()
 
     def content_bytes(self) -> int:
-        """Return UTF-8 size of text, refusal flag, and raw tool arguments."""
-        tool_bytes = sum(len(call.arguments.encode("utf-8")) for call in self.tool_calls)
-        return len(self.text.encode("utf-8")) + tool_bytes
+        """Return the UTF-8 size of the complete serialized classifier subject.
+
+        Include opaque tool IDs, names, and JSON framing as well as arguments
+        so the policy bounds the actual completion sent to the classifier.
+        """
+        return len(canonical_json_bytes(self))
 
 
 class ClassifierVerdict(ContractModel):

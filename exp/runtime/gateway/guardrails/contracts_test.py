@@ -157,7 +157,7 @@ def test_request_content_bytes_count_the_compact_json_subject() -> None:
 
     assert request_content_bytes(request) == len(canonical_json_bytes(request))
     assert request_content_bytes(request) > len("hi") + len('{"q":"ab"}')
-    assert completion.content_bytes() == len("ok") + len('{"q":"ab"}')
+    assert completion.content_bytes() == len(canonical_json_bytes(completion))
 
 
 @pytest.mark.parametrize("length", [257, 65_536])
