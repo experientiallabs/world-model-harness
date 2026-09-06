@@ -8,8 +8,8 @@ use serde_json::Value;
 use crate::dialects::Dialect;
 use crate::errors::{Failure, FailureClass};
 use crate::param_attribution::{
-    generic_error_code, rejected_code, rejected_detail, rejected_model_not_found,
-    rejected_parameter,
+    generic_error_code, rejected_by_lane_limitation, rejected_by_routing_gate, rejected_code,
+    rejected_detail, rejected_model_not_found, rejected_parameter,
 };
 
 /// Build the shared pooled upstream client, mirroring the pooling constants in
@@ -172,8 +172,9 @@ pub async fn open_stream(
         // Only the generic client-error class may carry attribution: the body
         // is read bounded, and the relayable facts are a validated parameter
         // path plus the provider's own bounded explanation of what the caller
-        // got wrong; every other class stays content-free.
-        if failure.failure_class != FailureClass::InvalidRequest {
+        // got wrong; every other class stays content-free. A 403 is read too,
+        // only to tell an aggregator routing gate from a credential verdict.
+        if failure.failure_class != FailureClass::InvalidRequest && status != 403 {
             return Err(failure);
         }
         let body = match tokio::time::timeout(ERROR_BODY_READ_TIMEOUT, bounded_error_body(response))
@@ -182,6 +183,17 @@ pub async fn open_stream(
             Ok(Some(body)) => Some(body),
             _ => None,
         };
+        if status == 403 {
+            if body.as_deref().is_some_and(rejected_by_routing_gate) {
+                return Err(Failure::new(
+                    FailureClass::ProviderNotFound,
+                    "provider does not route this model for the gateway's account; ask \
+                     the gateway operator to change or disable the lane",
+                )
+                .with_retry(false, true));
+            }
+            return Err(failure);
+        }
         // A client-error status whose body names a missing model is the
         // catalog's fault, not the caller's: it takes the 404 policy so the
         // ladder advances instead of surfacing one dead rung as a 400.
@@ -224,7 +236,14 @@ pub async fn open_stream(
                     .with_provider_detail(detail),
             );
         }
+        // A sentence naming a limitation of THIS lane's serving stack (a chat
+        // template that rejects a mid-conversation system turn the OpenAI
+        // contract allows) keeps the caller's class and detail but fails over:
+        // another rung serves the same request, and only a route with no other
+        // rung surfaces the 400.
+        let lane_limitation = body.as_deref().is_some_and(rejected_by_lane_limitation);
         return Err(failure
+            .with_retry(false, lane_limitation)
             .with_rejected_parameter(parameter)
             .with_provider_detail(detail));
     }
@@ -424,6 +443,68 @@ mod tests {
             failure.public_error().message,
             "provider refused the request"
         );
+    }
+
+    #[tokio::test]
+    async fn an_aggregator_routing_gate_403_is_not_a_credential_failure() {
+        let failure = open_against_body(
+            "403 Forbidden",
+            "{\"error\":{\"message\":\"thinkingmachines/inkling:free is only available \
+             on agentic harnesses.\",\"code\":403,\"metadata\":{\"failed_routing_step\":\
+             \"Gate Free Endpoints by Agentic Harness\"}}}",
+            "thinkingmachines/inkling:free",
+        )
+        .await;
+        assert_eq!(failure.failure_class, FailureClass::ProviderNotFound);
+        assert!(failure.failover_eligible);
+        assert!(!failure.retryable_same_deployment);
+        assert!(failure.provider_detail.is_none());
+    }
+
+    #[tokio::test]
+    async fn a_plain_403_stays_a_credential_failure() {
+        let failure = open_against_body(
+            "403 Forbidden",
+            "{\"error\":{\"message\":\"Forbidden\",\"code\":403}}",
+            "m",
+        )
+        .await;
+        assert_eq!(failure.failure_class, FailureClass::ProviderAuthentication);
+        assert!(failure.failover_eligible);
+    }
+
+    #[tokio::test]
+    async fn a_lane_limitation_400_keeps_the_class_but_fails_over() {
+        let failure = open_against_body(
+            "400 Bad Request",
+            "{\"error\":{\"message\":\"System message must be at the beginning.\",\
+             \"type\":\"invalid_request_error\"}}",
+            "qwen3.8-27b",
+        )
+        .await;
+        assert_eq!(failure.failure_class, FailureClass::InvalidRequest);
+        assert!(
+            failure.failover_eligible,
+            "another rung can carry the request"
+        );
+        assert!(!failure.retryable_same_deployment);
+        assert!(failure
+            .provider_detail
+            .as_deref()
+            .is_some_and(|detail| detail.contains("System message must be at the beginning")));
+    }
+
+    #[tokio::test]
+    async fn an_ordinary_400_does_not_fail_over() {
+        let failure = open_against_body(
+            "400 Bad Request",
+            "{\"error\":{\"message\":\"Invalid value for temperature.\",\
+             \"type\":\"invalid_request_error\"}}",
+            "m",
+        )
+        .await;
+        assert_eq!(failure.failure_class, FailureClass::InvalidRequest);
+        assert!(!failure.failover_eligible);
     }
 
     #[test]

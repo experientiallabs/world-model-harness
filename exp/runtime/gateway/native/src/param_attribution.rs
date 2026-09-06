@@ -70,6 +70,44 @@ pub fn rejected_parameter(dialect: Dialect, body: &str) -> Option<String> {
 /// OpenAI-family `error.code` naming a deployment model the provider cannot serve.
 const MODEL_NOT_FOUND_CODE: &str = "model_not_found";
 
+/// Sentences a provider answers with a 400 for a request shape the OpenAI
+/// contract allows but THIS lane's serving stack cannot carry (a chat
+/// template that only accepts a leading system turn). They are lane
+/// limitations, not caller errors: the request fails over to the next rung and
+/// only a route with no other rung surfaces the sentence.
+const LANE_LIMITATION_PHRASES: &[&str] = &[
+    "system message must be at the beginning",
+    "system message should be at the beginning",
+    "only the first message can be a system message",
+];
+
+/// Whether a 4xx body describes a limitation of the lane rather than of the
+/// caller's request (see [`LANE_LIMITATION_PHRASES`]).
+pub fn rejected_by_lane_limitation(body: &str) -> bool {
+    let lowered = body.to_ascii_lowercase();
+    LANE_LIMITATION_PHRASES
+        .iter()
+        .any(|phrase| lowered.contains(phrase))
+}
+
+/// Whether a 403 body is an aggregator ROUTING gate rather than a credential
+/// verdict: OpenRouter answers `metadata.failed_routing_step` (its free
+/// endpoints gated to allow-listed apps, 2026-09-06) with an otherwise valid
+/// key. The lane cannot serve this model for the gateway's account, so it takes
+/// the not-found policy and the ladder advances instead of blaming the key.
+pub fn rejected_by_routing_gate(body: &str) -> bool {
+    let value: Value = match serde_json::from_str(body) {
+        Ok(value) => value,
+        Err(_) => return false,
+    };
+    value
+        .get("error")
+        .and_then(|error| error.get("metadata"))
+        .and_then(|metadata| metadata.get("failed_routing_step"))
+        .and_then(Value::as_str)
+        .is_some_and(|step| !step.is_empty())
+}
+
 /// Whether one client-error body reports that the dispatched model does not exist.
 ///
 /// The OpenAI Responses surface answers an unknown model with HTTP 400 and
