@@ -274,6 +274,8 @@ class SQLiteAttemptLedger:
         attempt_ordinal: int,
         route_depth: int,
         maximum_cost_micro_usd: int | None = None,
+        reserved_input_tokens: int | None = None,
+        reserved_output_tokens: int | None = None,
         route_reason: str | None = None,
         fallback_reason: str | None = None,
     ) -> AttemptId:
@@ -285,6 +287,10 @@ class SQLiteAttemptLedger:
             attempt_ordinal: Zero-based physical dispatch position for this request.
             route_depth: Zero-based operational route position.
             maximum_cost_micro_usd: Conservative charge reserved before dispatch.
+            reserved_input_tokens: Worst-case in-flight input tokens (promo
+                free-tier window reservation); unused by this in-process mirror.
+            reserved_output_tokens: Worst-case in-flight output tokens (promo
+                free-tier window reservation); unused by this in-process mirror.
             route_reason: Optional learned-selection reason code.
             fallback_reason: Optional embedding or router fallback reason code.
 
@@ -299,6 +305,8 @@ class SQLiteAttemptLedger:
                 attempt_ordinal=attempt_ordinal,
                 route_depth=route_depth,
                 maximum_cost_micro_usd=maximum_cost_micro_usd,
+                reserved_input_tokens=reserved_input_tokens,
+                reserved_output_tokens=reserved_output_tokens,
                 route_reason=route_reason,
                 fallback_reason=fallback_reason,
             )
@@ -312,6 +320,8 @@ class SQLiteAttemptLedger:
         attempt_ordinal: int,
         route_depth: int,
         maximum_cost_micro_usd: int | None = None,
+        reserved_input_tokens: int | None = None,
+        reserved_output_tokens: int | None = None,
         route_reason: str | None = None,
         fallback_reason: str | None = None,
     ) -> AttemptId:
@@ -324,12 +334,20 @@ class SQLiteAttemptLedger:
             attempt_ordinal: Zero-based physical dispatch position for this request.
             route_depth: Zero-based operational route position.
             maximum_cost_micro_usd: Conservative charge reserved before dispatch.
+            reserved_input_tokens: Worst-case in-flight input tokens (promo
+                free-tier window reservation); unused by this in-process mirror.
+            reserved_output_tokens: Worst-case in-flight output tokens (promo
+                free-tier window reservation); unused by this in-process mirror.
             route_reason: Optional learned-selection reason code.
             fallback_reason: Optional embedding or router fallback reason code.
 
         Returns:
             Stable new attempt ID.
         """
+        # The in-process SQLite mirror carries no promo columns, so the
+        # reservations are accepted for Protocol parity and dropped here; the
+        # promo cap lives only in the platform's Postgres ledger.
+        del reserved_input_tokens, reserved_output_tokens
         for value in (route_reason, fallback_reason):
             if value is not None and (len(value) > 512 or any(ord(char) < 32 for char in value)):
                 raise GatewayLedgerError("route context must be a short display-safe code")

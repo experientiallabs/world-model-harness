@@ -44,6 +44,8 @@ class SyncWriteLedger(Protocol):
         maximum_cost_micro_usd: int | None = None,
         route_reason: str | None = None,
         fallback_reason: str | None = None,
+        reserved_input_tokens: int | None = None,
+        reserved_output_tokens: int | None = None,
     ) -> AttemptId:
         """Durably mark one provider dispatch before network work."""
         ...
