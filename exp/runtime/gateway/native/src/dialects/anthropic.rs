@@ -6,7 +6,7 @@
 use serde_json::Value;
 
 use super::{
-    complete_streamed_tool, finish_open_tools, malformed, optional_text, parse_object,
+    finish_open_tools, finish_open_tools_truncated, malformed, optional_text, parse_object,
     refusal_failure, Normalizer,
 };
 use crate::encode::compact_json;
@@ -230,10 +230,14 @@ impl Normalizer {
             "content_block_stop" => {
                 let index = require_u64(&payload, "index", "Anthropic content index")
                     .map_err(|message| malformed(&message))? as u32;
-                if let Some(tool) = self.tools.get_mut(&index) {
+                if let Some(mut tool) = self.tools.remove(&index) {
                     if !tool.completed {
-                        complete_streamed_tool(index, tool, &mut events)?;
+                        // The stop reason arrives in the following
+                        // message_delta, so a fragment left open by the
+                        // output budget cannot be told from garbage yet.
+                        self.complete_tool_deferring_failure(index, &mut tool, &mut events);
                     }
+                    self.tools.insert(index, tool);
                 }
             }
             "message_delta" => {
@@ -272,7 +276,13 @@ impl Normalizer {
                 }
             }
             "message_stop" => {
-                events.extend(finish_open_tools(&mut self.tools)?);
+                let truncated = self.stop_reason.as_deref() == Some("max_tokens");
+                self.resolve_deferred_tool_failure(truncated)?;
+                events.extend(if truncated {
+                    finish_open_tools_truncated(&mut self.tools)?
+                } else {
+                    finish_open_tools(&mut self.tools)?
+                });
                 let input_tokens = bounded_ledger_sum(
                     &[self.input_tokens, self.cache_read, self.cache_write],
                     "Anthropic input",
@@ -509,5 +519,71 @@ mod tests {
             }
             other => panic!("unexpected events: {other:?}"),
         }
+    }
+
+    fn tool_fragment_stream(stop_reason: &str) -> Vec<SseEvent> {
+        vec![
+            frame(serde_json::json!({
+                "type": "message_start",
+                "message": {"id": "msg_1", "usage": {"input_tokens": 5, "output_tokens": 0}},
+            })),
+            frame(serde_json::json!({
+                "type": "content_block_start",
+                "index": 0,
+                "content_block": {"type": "tool_use", "id": "toolu_1", "name": "lookup", "input": {}},
+            })),
+            frame(serde_json::json!({
+                "type": "content_block_delta",
+                "index": 0,
+                "delta": {"type": "input_json_delta", "partial_json": "{\"city\": \"Par"},
+            })),
+            frame(serde_json::json!({"type": "content_block_stop", "index": 0})),
+            frame(serde_json::json!({
+                "type": "message_delta",
+                "delta": {"stop_reason": stop_reason, "stop_sequence": null},
+                "usage": {"output_tokens": 7},
+            })),
+            frame(serde_json::json!({"type": "message_stop"})),
+        ]
+    }
+
+    #[test]
+    fn a_tool_call_cut_off_by_the_output_budget_is_incomplete_not_malformed() {
+        // Anthropic reveals max_tokens only in message_delta, AFTER the tool
+        // block stopped with its arguments still an open fragment. That is the
+        // provider's own truncation: the unfinished call is dropped and the
+        // stream ends Incomplete (raise max_tokens), never a 502.
+        let mut normalizer = Normalizer::new(Dialect::AnthropicMessages);
+        let mut events = Vec::new();
+        for frame in tool_fragment_stream("max_tokens") {
+            events.extend(
+                normalizer
+                    .feed(&frame)
+                    .expect("truncated tool stream normalizes"),
+            );
+        }
+        assert!(!events
+            .iter()
+            .any(|event| matches!(event, Event::ToolCallCompleted { .. })));
+        assert!(matches!(events.last(), Some(Event::Incomplete)));
+    }
+
+    #[test]
+    fn a_tool_call_with_garbage_arguments_still_fails_when_the_provider_finished() {
+        let mut normalizer = Normalizer::new(Dialect::AnthropicMessages);
+        let frames = tool_fragment_stream("tool_use");
+        let mut outcome = Ok(Vec::new());
+        for frame in &frames {
+            outcome = normalizer.feed(frame);
+            if outcome.is_err() {
+                break;
+            }
+        }
+        let failure = outcome.expect_err("unparsable arguments on a finished turn are malformed");
+        assert_eq!(
+            failure.failure_class,
+            crate::errors::FailureClass::MalformedResponse
+        );
+        assert!(failure.safe_message.contains("not valid JSON"));
     }
 }

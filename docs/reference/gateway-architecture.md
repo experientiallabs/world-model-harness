@@ -377,6 +377,19 @@ credential may still serve, but a terminal answer is the customer's 400
 (`provider_credential_rejected` / `provider_account_quota`) naming their provider and what to
 fix, and settlement files it as `invalid_request`. House rungs keep the operator-actionable classes.
 
+**Tool calls cut off at the output budget are incomplete, not malformed.** On wires that reveal the
+stop reason only after the tool block closes (Anthropic `message_delta`, Bedrock `messageStop`), a
+tool call whose arguments fail to parse at its block stop is held rather than failed; a
+provider-declared `max_tokens` truncation then drops the unfinished call and ends the stream
+`incomplete` (the caller's remedy is a larger budget), while any other ending surfaces the parse
+failure as the malformed stream it is, exactly as the Chat-compatible `finish_reason: length` path
+already did.
+
+**Pre-stream 4xx bodies keep the provider's code.** When a client-error body's sentence must be
+dropped by the identifier screen, the provider's documented code or type token (`invalid_value`,
+`INVALID_ARGUMENT`) is relayed instead of nothing, and a content-filter code under a 4xx (Azure,
+Gemini) is filed and answered as a `refusal` rather than a request-shape error.
+
 **Pre-dispatch context-window refusal.** Before any reservation or provider call, admission
 lower-bounds the prompt's token count from its UTF-8 text bytes (at six bytes per token, below
 what real tokenizers produce on prose, code, or CJK text; inline media is not counted) and

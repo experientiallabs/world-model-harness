@@ -1585,7 +1585,9 @@ def test_provider_400_keeps_the_generic_message_for_a_body_dump(
     """A multi-line provider message is a payload, not an explanation.
 
     The mock provider's 400 message spans lines and names an internal
-    deployment and account; nothing from it may reach the caller.
+    deployment and account; nothing from it may reach the caller. Only the
+    provider's documented code token (``unknown_parameter``) is relayed in its
+    place, so the caller still learns which rejection it was.
     """
     rejected = httpx.post(
         f"{engine.base}/v1/chat/completions",
@@ -1600,8 +1602,7 @@ def test_provider_400_keeps_the_generic_message_for_a_body_dump(
     assert "internal-deployment-7" not in json.dumps(rejected.json())
     assert "4711" not in json.dumps(rejected.json())
     assert rejected.json()["error"]["message"] == (
-        "provider rejected the request; verify the request fields against "
-        "the model alias capabilities"
+        "provider rejected the request: unknown_parameter"
     )
 
 

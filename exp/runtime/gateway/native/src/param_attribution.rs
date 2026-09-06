@@ -133,6 +133,55 @@ pub fn rejected_detail(dialect: Dialect, body: &str, request_words: &[&str]) -> 
     sanitized_detail(message, request_words)
 }
 
+/// The provider's own error code or type from one client-error body, as a
+/// bounded identifier token (`invalid_value`, `content_filter`,
+/// `invalid_request_error`, `INVALID_ARGUMENT`, or a numeric status).
+///
+/// Read only from the dialect's documented code field; it is a vocabulary
+/// token, never prose, so it is safe to relay when [`rejected_detail`] has to
+/// drop the sentence (a provider explanation naming a request or account
+/// handle otherwise left the caller with nothing but "verify the request
+/// fields"). It also classifies the body: a content-filter code is the
+/// model's verdict on the content, not a request-shape error.
+pub fn rejected_code(dialect: Dialect, body: &str) -> Option<String> {
+    let value: Value = serde_json::from_str(body).ok()?;
+    let error = match dialect {
+        Dialect::BedrockConverseStream => return None,
+        _ => value.get("error")?,
+    };
+    let candidate = match dialect {
+        Dialect::GeminiGenerateContent => error.get("status").or_else(|| error.get("code")),
+        _ => error
+            .get("code")
+            .filter(|code| !code.is_null())
+            .or_else(|| error.get("type")),
+    }?;
+    let token = match candidate {
+        Value::String(text) => text.clone(),
+        Value::Number(number) => number.to_string(),
+        _ => return None,
+    };
+    let identifier = !token.is_empty()
+        && token.len() <= 64
+        && token
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '-'));
+    identifier.then_some(token)
+}
+
+/// Whether one provider code token says nothing beyond "the request was
+/// rejected": the family-wide type every 4xx carries, or a bare numeric
+/// status. Such a token is still classified but never relayed as detail, so a
+/// body whose sentence had to drop keeps the generic message rather than
+/// gaining a meaningless suffix.
+pub fn generic_error_code(token: &str) -> bool {
+    let lower = token.to_ascii_lowercase();
+    matches!(
+        lower.as_str(),
+        "invalid_request_error" | "invalid_request" | "bad_request" | "error" | "invalid_argument"
+    ) || lower.chars().all(|c| c.is_ascii_digit())
+}
+
 /// One provider sentence reduced to bounded, single-line, printable text.
 ///
 /// Control characters end the candidate rather than being escaped: their
@@ -389,6 +438,43 @@ mod tests {
         // Any other message keeps the content-free failure.
         let other = r#"{"error": {"message": "This model is not available to your account."}}"#;
         assert_eq!(rejected_parameter(Dialect::OpenAiCompatible, other), None);
+    }
+
+    #[test]
+    fn rejected_code_reads_the_documented_code_field_as_a_bounded_token() {
+        let openai = r#"{"error": {"code": "invalid_value", "type": "invalid_request_error", "message": "x"}}"#;
+        assert_eq!(
+            rejected_code(Dialect::OpenAiResponses, openai).as_deref(),
+            Some("invalid_value")
+        );
+        let typed = r#"{"error": {"code": null, "type": "invalid_request_error", "message": "x"}}"#;
+        assert_eq!(
+            rejected_code(Dialect::OpenAiCompatible, typed).as_deref(),
+            Some("invalid_request_error")
+        );
+        let numeric = r#"{"error": {"code": 400, "message": "x"}}"#;
+        assert_eq!(
+            rejected_code(Dialect::OpenAiCompatible, numeric).as_deref(),
+            Some("400")
+        );
+        let anthropic =
+            r#"{"type": "error", "error": {"type": "invalid_request_error", "message": "x"}}"#;
+        assert_eq!(
+            rejected_code(Dialect::AnthropicMessages, anthropic).as_deref(),
+            Some("invalid_request_error")
+        );
+        let gemini = r#"{"error": {"code": 400, "status": "INVALID_ARGUMENT", "message": "x"}}"#;
+        assert_eq!(
+            rejected_code(Dialect::GeminiGenerateContent, gemini).as_deref(),
+            Some("INVALID_ARGUMENT")
+        );
+        // Prose or hostile shapes are never a token; Bedrock has no code field.
+        let prose = r#"{"error": {"code": "not a code!{}", "message": "x"}}"#;
+        assert_eq!(rejected_code(Dialect::OpenAiCompatible, prose), None);
+        assert_eq!(
+            rejected_code(Dialect::BedrockConverseStream, r#"{"message": "x"}"#),
+            None
+        );
     }
 
     #[test]
