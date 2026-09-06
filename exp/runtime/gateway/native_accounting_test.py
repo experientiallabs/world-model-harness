@@ -132,6 +132,8 @@ class _RecordingLedger:
         attempt_ordinal: int,
         route_depth: int,
         maximum_cost_micro_usd: int | None = None,
+        reserved_input_tokens: int | None = None,
+        reserved_output_tokens: int | None = None,
         route_reason: str | None = None,
         fallback_reason: str | None = None,
     ) -> str:
@@ -148,6 +150,8 @@ class _RecordingLedger:
                 "deployment_id": deployment.deployment_id,
                 "attempt_ordinal": attempt_ordinal,
                 "route_depth": route_depth,
+                "reserved_input_tokens": reserved_input_tokens,
+                "reserved_output_tokens": reserved_output_tokens,
             }
         )
         return attempt_id
@@ -293,6 +297,13 @@ def test_waterfall_reservations_count_every_physical_dispatch() -> None:
         (1, 0),
         (2, 1),
     ]
+    # Every physical dispatch reserves a positive worst-case token window so the
+    # promo free-tier cap binds on the in-flight burst, not only on settlement.
+    for row in ledger.started:
+        assert isinstance(row["reserved_input_tokens"], int)
+        assert row["reserved_input_tokens"] > 0
+        assert isinstance(row["reserved_output_tokens"], int)
+        assert row["reserved_output_tokens"] > 0
     assert [row["finalize"] for row in ledger.finished] == [False, False, True]
     assert registry.entry("request-one") is None
     assert ledger.finished_requests == []
@@ -600,6 +611,8 @@ def test_start_attempt_reprices_only_when_the_selected_depth_forwards_the_tier()
             attempt_ordinal: int,
             route_depth: int,
             maximum_cost_micro_usd: int | None = None,
+            reserved_input_tokens: int | None = None,
+            reserved_output_tokens: int | None = None,
             route_reason: str | None = None,
             fallback_reason: str | None = None,
         ) -> str:
@@ -613,6 +626,8 @@ def test_start_attempt_reprices_only_when_the_selected_depth_forwards_the_tier()
                 attempt_ordinal=attempt_ordinal,
                 route_depth=route_depth,
                 maximum_cost_micro_usd=maximum_cost_micro_usd,
+                reserved_input_tokens=reserved_input_tokens,
+                reserved_output_tokens=reserved_output_tokens,
                 route_reason=route_reason,
                 fallback_reason=fallback_reason,
             )

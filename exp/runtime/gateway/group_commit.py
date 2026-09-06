@@ -172,6 +172,8 @@ class GroupCommitAttemptLedger:
         attempt_ordinal: int,
         route_depth: int,
         maximum_cost_micro_usd: int | None = None,
+        reserved_input_tokens: int | None = None,
+        reserved_output_tokens: int | None = None,
         route_reason: str | None = None,
         fallback_reason: str | None = None,
     ) -> AttemptId:
@@ -183,6 +185,10 @@ class GroupCommitAttemptLedger:
             attempt_ordinal: Zero-based physical dispatch position for this request.
             route_depth: Zero-based operational route position.
             maximum_cost_micro_usd: Conservative charge reserved before dispatch.
+            reserved_input_tokens: Worst-case input tokens reserved for the
+                promo free-tier in-flight window.
+            reserved_output_tokens: Worst-case output tokens reserved for the
+                promo free-tier in-flight window.
             route_reason: Optional learned-selection reason code.
             fallback_reason: Optional embedding or router fallback reason code.
 
@@ -197,6 +203,8 @@ class GroupCommitAttemptLedger:
                 attempt_ordinal=attempt_ordinal,
                 route_depth=route_depth,
                 maximum_cost_micro_usd=maximum_cost_micro_usd,
+                reserved_input_tokens=reserved_input_tokens,
+                reserved_output_tokens=reserved_output_tokens,
                 route_reason=route_reason,
                 fallback_reason=fallback_reason,
             )
@@ -490,6 +498,8 @@ class SyncGroupCommitLedger:
         attempt_ordinal: int,
         route_depth: int,
         maximum_cost_micro_usd: int | None = None,
+        reserved_input_tokens: int | None = None,
+        reserved_output_tokens: int | None = None,
         route_reason: str | None = None,
         fallback_reason: str | None = None,
     ) -> AttemptId:
@@ -501,6 +511,10 @@ class SyncGroupCommitLedger:
             attempt_ordinal: Zero-based physical dispatch position for this request.
             route_depth: Zero-based operational route position.
             maximum_cost_micro_usd: Conservative charge reserved before dispatch.
+            reserved_input_tokens: Worst-case input tokens reserved for the
+                promo free-tier in-flight window.
+            reserved_output_tokens: Worst-case output tokens reserved for the
+                promo free-tier in-flight window.
             route_reason: Optional learned-selection reason code.
             fallback_reason: Optional embedding or router fallback reason code.
 
@@ -515,6 +529,8 @@ class SyncGroupCommitLedger:
                 attempt_ordinal=attempt_ordinal,
                 route_depth=route_depth,
                 maximum_cost_micro_usd=maximum_cost_micro_usd,
+                reserved_input_tokens=reserved_input_tokens,
+                reserved_output_tokens=reserved_output_tokens,
                 route_reason=route_reason,
                 fallback_reason=fallback_reason,
             )

@@ -27,6 +27,7 @@ from exp.runtime.gateway.budgets import (
     BudgetReservationRejected,
     BudgetScopeKind,
     maximum_attempt_cost_micro_usd,
+    worst_case_attempt_tokens,
 )
 from exp.runtime.gateway.contracts import (
     AuthorizationSnapshot,
@@ -409,6 +410,13 @@ class NativeAttemptAccounting:
                     and entry.tier_forwarded_by_depth[candidate]
                 ),
             )
+            # Reserve the worst-case in-flight tokens alongside the worst-case
+            # cost. The promo free-tier windows count these dispatched
+            # reservations, so a concurrent burst binds at the token cap instead
+            # of leaking multiples between admission and settlement.
+            reserved_input_tokens, reserved_output_tokens = worst_case_attempt_tokens(
+                entry.request, deployment
+            )
             try:
                 attempt_id = self._write_ledger.start_attempt(
                     snapshot=route.snapshot,
@@ -418,6 +426,8 @@ class NativeAttemptAccounting:
                     maximum_cost_micro_usd=maximum_attempt_cost_micro_usd(
                         entry.request, deployment
                     ),
+                    reserved_input_tokens=reserved_input_tokens,
+                    reserved_output_tokens=reserved_output_tokens,
                     route_reason=route.route_reason,
                     fallback_reason=route.fallback_reason,
                 )

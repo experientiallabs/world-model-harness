@@ -562,17 +562,11 @@ def maximum_attempt_cost_micro_usd(
             assert_never(request)
 
 
-def _completion_attempt_cost_micro_usd(
+def _completion_worst_case_tokens(
     request: GatewayRequest,
     deployment: ExactModelDeployment,
-) -> int | None:
-    """Return a conservative micro-USD ceiling for one chat/responses call.
-
-    Canonical UTF-8 bytes upper-bound input tokens; the output ceiling is the
-    caller's, else the frozen deployment limit, else a reservation-only default
-    bounded by the context window. Cached and reasoning tokens are subsets of the
-    totals, so the worst case charges the higher rate for the whole leg.
-    """
+) -> tuple[int, int]:
+    """The conservative worst-case ``(input, output)`` tokens for one chat call."""
     input_tokens = len(canonical_json_bytes(request))
     # Excluded provider carriers (replayed reasoning, native items, verbatim
     # configurations) are provider-read input the plain serialization does
@@ -612,6 +606,42 @@ def _completion_attempt_cost_micro_usd(
             if context_window is not None
             else DEFAULT_RESERVATION_OUTPUT_TOKENS
         )
+    return input_tokens, output_tokens
+
+
+def worst_case_attempt_tokens(
+    request: ServingRequest,
+    deployment: ExactModelDeployment,
+) -> tuple[int, int]:
+    """The conservative worst-case ``(input, output)`` token counts for one call.
+
+    These are what :func:`maximum_attempt_cost_micro_usd` prices, and what the
+    promo free-tier windows reserve in flight (released to the settled truth on
+    finish). A completion reserves its byte-bounded input and clamped max output;
+    embeddings and image requests consume no completion output tokens, so they
+    reserve their byte-bounded input against the input window and zero output.
+    """
+    match request:
+        case GatewayRequest():
+            return _completion_worst_case_tokens(request, deployment)
+        case EmbeddingsRequest() | ImagesRequest():
+            return len(canonical_json_bytes(request)), 0
+        case _:  # pragma: no cover - exhaustive over the ServingRequest union.
+            assert_never(request)
+
+
+def _completion_attempt_cost_micro_usd(
+    request: GatewayRequest,
+    deployment: ExactModelDeployment,
+) -> int | None:
+    """Return a conservative micro-USD ceiling for one chat/responses call.
+
+    Canonical UTF-8 bytes upper-bound input tokens; the output ceiling is the
+    caller's, else the frozen deployment limit, else a reservation-only default
+    bounded by the context window. Cached and reasoning tokens are subsets of the
+    totals, so the worst case charges the higher rate for the whole leg.
+    """
+    input_tokens, output_tokens = _completion_worst_case_tokens(request, deployment)
     prices = deployment.gateway.prices
     capabilities = deployment.gateway.capabilities
     # The byte bound never undercounts tokens, so a request whose canonical
