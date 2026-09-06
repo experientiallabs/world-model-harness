@@ -7,6 +7,7 @@ from enum import StrEnum
 from pydantic import Field, model_validator
 
 from exp.common.core.artifacts import ArtifactId, ContractModel, JsonObject, canonical_json_bytes
+from exp.common.models.model import MAXIMUM_TOOL_CALL_ID_CHARACTERS
 from exp.runtime.gateway.contracts import (
     GatewayFailure,
     GatewayFailureClass,
@@ -126,7 +127,7 @@ class GuardrailPolicy(ContractModel):
 class GuardrailToolCall(ContractModel):
     """One completed tool invocation presented to an output check."""
 
-    call_id: str = Field(min_length=1, max_length=256)
+    call_id: str = Field(min_length=1, max_length=MAXIMUM_TOOL_CALL_ID_CHARACTERS)
     name: str = Field(min_length=1, max_length=256)
     arguments: str = Field(max_length=4_000_000)
 

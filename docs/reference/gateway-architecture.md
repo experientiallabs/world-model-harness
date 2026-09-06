@@ -35,6 +35,12 @@ It serves:
 this same gateway application. It does not create a router HTTP server. Gateway startup and readiness
 perform no provider request. Only an authorized model request may cross the provider boundary.
 
+Tool-call identifiers on Chat Completions and Responses are opaque strings of 1 to
+65,536 characters. Replay the complete returned identifier in both the assistant call
+and its tool result, including any signature suffix. The gateway preserves the identifier
+verbatim on OpenAI-compatible Chat routes; it does not decode or strip provider signatures.
+Provider-specific wire restrictions still apply when routing to a different API dialect.
+
 ## The data plane
 
 The gateway has exactly one data plane: a native Rust HTTP server compiled as

@@ -158,3 +158,10 @@ def test_request_content_bytes_count_the_compact_json_subject() -> None:
     assert request_content_bytes(request) == len(canonical_json_bytes(request))
     assert request_content_bytes(request) > len("hi") + len('{"q":"ab"}')
     assert completion.content_bytes() == len("ok") + len('{"q":"ab"}')
+
+
+@pytest.mark.parametrize("length", [257, 65_536])
+def test_output_guardrail_preserves_long_tool_id(length: int) -> None:
+    """An output check accepts every bounded tool identifier emitted by the engine."""
+    call = GuardrailToolCall(call_id="x" * length, name="terminal", arguments="{}")
+    assert GuardrailCompletion(tool_calls=(call,)).tool_calls[0].call_id == "x" * length

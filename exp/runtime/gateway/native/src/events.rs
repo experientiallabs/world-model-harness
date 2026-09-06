@@ -682,6 +682,9 @@ pub struct ToolAccumulator {
     pub server: bool,
 }
 
+/// Opaque tool IDs share the Python model bound, including signature carriers.
+const MAXIMUM_TOOL_CALL_ID_CHARACTERS: usize = 65_536;
+
 impl ToolAccumulator {
     pub fn new(call_id: String, name: String) -> Self {
         Self {
@@ -708,7 +711,7 @@ impl ToolAccumulator {
         // exactly the same provider tool-call streams (a call the python
         // engine rejects must not become client-visible history here).
         if self.call_id.is_empty()
-            || self.call_id.chars().count() > 256
+            || self.call_id.chars().count() > MAXIMUM_TOOL_CALL_ID_CHARACTERS
             || self.name.is_empty()
             || self.name.chars().count() > 256
             || self

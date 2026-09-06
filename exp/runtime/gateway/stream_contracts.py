@@ -11,7 +11,7 @@ from enum import StrEnum
 from pydantic import Field, model_validator
 
 from exp.common.core.artifacts import ContractModel, JsonObject
-from exp.common.models.model import ToolCall
+from exp.common.models.model import MAXIMUM_TOOL_CALL_ID_CHARACTERS, ToolCall
 
 
 class GatewayUsage(ContractModel):
@@ -93,7 +93,9 @@ class GatewayEvent(ContractModel):
     redacted_thinking_data: str | None = None
     encrypted_content: str | None = None
     tool_call_index: int | None = Field(default=None, ge=0)
-    tool_call_id: str | None = Field(default=None, min_length=1, max_length=256)
+    tool_call_id: str | None = Field(
+        default=None, min_length=1, max_length=MAXIMUM_TOOL_CALL_ID_CHARACTERS
+    )
     tool_name: str | None = Field(default=None, min_length=1, max_length=256)
     raw_arguments_delta: str | None = None
     tool_call: ToolCall | None = None
