@@ -37,6 +37,7 @@ from exp.runtime.gateway.native_admission import (
     admitted_route_requests,
     protocol_compatible_indexes,
     route_rejection,
+    shape_parallel_tool_calls,
 )
 from exp.runtime.gateway.native_dispatch import NativeWireClient
 from exp.runtime.gateway.prompt_size import MAXIMUM_BYTES_PER_TOKEN
@@ -1253,3 +1254,32 @@ def test_a_prompt_certain_to_overflow_the_route_is_refused_before_shaping() -> N
     assert caught.value.param == "messages"
     assert "at least 201 tokens" in str(caught.value)
     assert "200 tokens" in str(caught.value)
+
+
+def test_parallel_tool_calls_shape_per_rung_capability() -> None:
+    """A rung with the control forwards it; one without drops `true` or serializes `false`."""
+    request = GatewayRequest(
+        surface=GatewayApiSurface.CHAT_COMPLETIONS,
+        messages=(GatewayMessage(role="user", content="hi"),),
+        parallel_tool_calls=False,
+    )
+    carried = GatewayDeploymentCapabilities(supports_parallel_tool_calls=True)
+    missing = GatewayDeploymentCapabilities(supports_parallel_tool_calls=False)
+
+    shaped, disclosure = shape_parallel_tool_calls(request, carried)
+    assert shaped is request and disclosure is None
+
+    shaped, disclosure = shape_parallel_tool_calls(request, missing)
+    assert shaped.parallel_tool_calls is None and shaped.serialize_tool_calls is True
+    assert disclosure == "parallel_tool_calls->emulated(serialized_by_gateway)"
+
+    shaped, disclosure = shape_parallel_tool_calls(
+        request.model_copy(update={"parallel_tool_calls": True}), missing
+    )
+    assert shaped.parallel_tool_calls is None and shaped.serialize_tool_calls is False
+    assert disclosure == "parallel_tool_calls->dropped(provider_default)"
+
+    untouched, disclosure = shape_parallel_tool_calls(
+        request.model_copy(update={"parallel_tool_calls": None}), missing
+    )
+    assert untouched.parallel_tool_calls is None and disclosure is None

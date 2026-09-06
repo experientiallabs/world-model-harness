@@ -95,6 +95,10 @@ pub struct DeploymentWire {
     /// `Event::StoppedAtSequence`. Empty when the payload carries `stop`.
     #[serde(default)]
     pub stop_sequences: Vec<String>,
+    /// The caller sent `parallel_tool_calls: false` and this rung's wire has
+    /// no such control: the relay serializes the turn to one tool call.
+    #[serde(default)]
+    pub serialize_tool_calls: bool,
     pub idempotency_key: String,
     /// Deployment override for the flat first-byte allowance; the serving
     /// configuration's default applies when absent.
@@ -582,6 +586,7 @@ async fn run_attempt(
         None => UpstreamRelay::new(response, dialect, first_byte_deadline),
     };
     relay.set_stop_sequences(wire.stop_sequences.iter().cloned());
+    relay.set_serialize_tool_calls(wire.serialize_tool_calls);
     if !wire.model_id.is_empty() {
         relay.set_request_words([wire.model_id.clone()]);
     }
@@ -768,6 +773,7 @@ mod tests {
             hunyuan_reasoning_route_sha256: None,
             reasoning_output_exposed: false,
             stop_sequences: Vec::new(),
+            serialize_tool_calls: false,
             model_id: String::new(),
             billing_customer_managed: false,
             idempotency_key: "op".to_string(),

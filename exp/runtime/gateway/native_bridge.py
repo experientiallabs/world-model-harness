@@ -52,7 +52,11 @@ from exp.runtime.gateway.native_accounting import (
 from exp.runtime.gateway.native_accounting import (
     authority_error as _authority_error,
 )
-from exp.runtime.gateway.native_admission import admitted_route_requests, resolve_admission_route
+from exp.runtime.gateway.native_admission import (
+    admitted_route_requests,
+    fold_parallel_tool_call_disclosures,
+    resolve_admission_route,
+)
 from exp.runtime.gateway.native_batches import NativeBatchRelayMixin
 from exp.runtime.gateway.native_bridge_errors import (
     escalation as _escalation,
@@ -77,7 +81,7 @@ from exp.runtime.gateway.native_continuation import (
     select_bound_continuation_route as _select_bound_continuation_route,
 )
 from exp.runtime.gateway.native_decode import NativeDecodeError, decode_native_body
-from exp.runtime.gateway.native_dispatch import dispatch_signature_headers, frozen_dispatch
+from exp.runtime.gateway.native_dispatch import dispatch_signature_headers
 from exp.runtime.gateway.native_embeddings import NativeEmbeddingsMixin
 from exp.runtime.gateway.native_execution import (
     MAXIMUM_SAME_DEPLOYMENT_ATTEMPTS,
@@ -85,7 +89,6 @@ from exp.runtime.gateway.native_execution import (
     FrozenDispatchBinding,
     InflightRequest,
     NativeDialectUnavailableError,
-    deployment_wire_entry,
     dispatchable_route_profiles,
     resolve_route_profiles,
     select_route_deployments,
@@ -105,21 +108,14 @@ from exp.runtime.gateway.native_responses import (
     continued_request,
     responses_envelope,
 )
+from exp.runtime.gateway.native_rungs import build_rung_dispatch
 from exp.runtime.gateway.native_settlement import (
     optional_text,
 )
 from exp.runtime.gateway.reasoning_carrier import (
     ReasoningCarrierAuthority,
-    reasoning_carrier_authority,
-    scheme_for_profile,
 )
 from exp.runtime.gateway.routing import GatewayRoute, GatewayRoutingError
-from exp.runtime.models.providers import (
-    emulated_gateway_capabilities,
-    emulated_stop_sequences,
-    preflight_gateway_request,
-    require_gateway_provider,
-)
 from exp.runtime.models.providers.base import GatewayWireProfile
 from exp.runtime.models.providers.errors import (
     ProviderCapabilityError,
@@ -127,8 +123,6 @@ from exp.runtime.models.providers.errors import (
     normalized_provider_failure,
 )
 from exp.runtime.models.providers.protocol import GatewayDispatchSigner, NativeWireClient
-from exp.runtime.models.providers.streaming_requests import dialect_stream_payload
-from exp.runtime.models.providers.wire_messages import anthropic_request_headers
 from exp.runtime.openai_protocol.errors import (
     OpenAIProtocolError,
     invalid_field,
@@ -524,61 +518,34 @@ class NativeControlPlane(
                 authorization=authorization,
             )
             wire_route: list[JsonObject] = []
+            parallel_disclosures: set[str] = set()
             signers: list[GatewayDispatchSigner | None] = []
             dispatch_bindings: list[FrozenDispatchBinding | None] = []
             carrier_authorities: list[ReasoningCarrierAuthority | None] = []
             for deployment, (profile, client) in zip(
                 route.deployments, resolved_wires, strict=True
             ):
-                require_gateway_provider(deployment.provider)
-                preflight_gateway_request(
-                    provider_request,
-                    deployment.gateway.capabilities,
-                    model_capabilities=deployment.capabilities,
-                    public_stream=public_request.stream,
-                    route_provider=deployment.provider,
-                    emulated_capabilities=emulated_gateway_capabilities(profile.dialect),
+                dispatch = build_rung_dispatch(
+                    route,
+                    deployment,
+                    profile,
+                    client,
+                    provider_request=provider_request,
+                    public_request=public_request,
+                    authorization=authorization,
                 )
-                upstream_payload = dialect_stream_payload(profile, provider_request)
-                upstream_body, dispatch_signer = frozen_dispatch(profile, client, upstream_payload)
-                request_headers = (
-                    anthropic_request_headers(dict(profile.headers), provider_request)
-                    if profile.dialect == "anthropic_messages"
-                    else None
-                )
-                wire_route.append(
-                    deployment_wire_entry(
-                        route,
-                        deployment,
-                        profile,
-                        upstream_payload,
-                        upstream_body,
-                        headers=request_headers,
-                        stop_sequences=emulated_stop_sequences(profile.dialect, provider_request),
-                    )
-                )
-                signers.append(dispatch_signer)
-                dispatch_bindings.append(
-                    None
-                    if dispatch_signer is None or upstream_body is None
-                    else FrozenDispatchBinding(
-                        url=profile.url,
-                        body_sha256=sha256_bytes(upstream_body.encode("utf-8")),
-                    )
-                )
-                carrier_scheme = scheme_for_profile(profile)
-                carrier_authorities.append(
-                    None
-                    if carrier_scheme is None
-                    else reasoning_carrier_authority(
-                        authorization=authorization,
-                        exact_model_id=route.snapshot.exact_model_id,
-                        pool_id=route.snapshot.pool_id,
-                        deployment=deployment,
-                        profile=profile,
-                        scheme=carrier_scheme,
-                    )
-                )
+                if dispatch.parallel_disclosure is not None:
+                    parallel_disclosures.add(dispatch.parallel_disclosure)
+                wire_route.append(dispatch.wire_entry)
+                signers.append(dispatch.signer)
+                dispatch_bindings.append(dispatch.binding)
+                carrier_authorities.append(dispatch.carrier_authority)
+            public_request = fold_parallel_tool_call_disclosures(
+                public_request,
+                parallel_disclosures,
+                accounting=self._accounting,
+                authorization=authorization,
+            )
             if continuation_context is not None:
                 continuation_context.route_bindings = tuple(
                     continuation_route_binding(deployment, profile)

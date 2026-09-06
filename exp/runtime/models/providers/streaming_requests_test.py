@@ -712,11 +712,12 @@ def test_reasoning_summary_narrows_a_mixed_claude_waterfall() -> None:
 def test_route_generation_controls_use_the_whole_waterfall_intersection(
     field: str, value: float | int
 ) -> None:
-    """One incompatible fallback rejects an explicit semantic control before dispatch.
+    """One incompatible fallback drops an explicit sampling control with disclosure.
 
-    temperature/top_p are genuinely unsupported on the fallback (declared False),
-    so they still hard-reject; top_k is a droppable sampling preference and is
-    covered separately.
+    temperature/top_p are genuinely unsupported on the fallback (declared False):
+    the control is dropped route-wide and disclosed, never a 400 (the model
+    still answers with its own default). A value outside a SUPPORTING route's
+    range still rejects (covered separately).
     """
     request = _chat_request().model_copy(update={field: value})
     profiles = (
@@ -742,11 +743,10 @@ def test_route_generation_controls_use_the_whole_waterfall_intersection(
         ),
     )
 
-    with pytest.raises(ProviderParameterError) as raised:
-        route_generation_parameter_requests(profiles, request)
+    public_request, provider_request = route_generation_parameter_requests(profiles, request)
 
-    assert raised.value.code == "unsupported_parameter"
-    assert raised.value.param == field
+    assert getattr(provider_request, field) is None
+    assert f"{field}->dropped(unsupported_by_provider)" in public_request.ignored_parameters
 
 
 def test_top_k_narrows_to_a_supporting_rung_then_drops_when_none_support() -> None:
@@ -1254,23 +1254,49 @@ def test_route_shaping_omits_parallel_control_when_tool_choice_disables_tools() 
     "dialect",
     ("gemini_generate_content", "bedrock_converse_stream"),
 )
-def test_route_rejects_parallel_control_when_the_dialect_has_no_toggle(dialect: str) -> None:
-    """A semantic parallel-tool control never disappears on native provider wires."""
-    request = _chat_request().model_copy(
-        update={
-            "tools": (GatewayToolDefinition(name="search", parameters={"type": "object"}),),
-            "parallel_tool_calls": False,
-        }
+def test_route_emulates_parallel_control_when_the_dialect_has_no_toggle(dialect: str) -> None:
+    """A wire without a parallel-tool control never loses the caller's semantics.
+
+    `false` is honoured by the data plane (one tool call per turn) and
+    disclosed; `true` is the provider's own default and is dropped with its
+    own disclosure. Neither is a 400 any more.
+    """
+    tools = (GatewayToolDefinition(name="search", parameters={"type": "object"}),)
+    profiles = (GatewayWireProfile(dialect=dialect, url="https://provider.test"),)
+
+    sequential = _chat_request().model_copy(update={"tools": tools, "parallel_tool_calls": False})
+    public_request, provider_request = route_generation_parameter_requests(profiles, sequential)
+    assert provider_request.parallel_tool_calls is None
+    assert provider_request.serialize_tool_calls is True
+    assert (
+        "parallel_tool_calls->emulated(serialized_by_gateway)" in public_request.ignored_parameters
     )
 
-    with pytest.raises(ProviderParameterError) as raised:
-        route_generation_parameter_requests(
-            (GatewayWireProfile(dialect=dialect, url="https://provider.test"),),
-            request,
-        )
+    parallel = _chat_request().model_copy(update={"tools": tools, "parallel_tool_calls": True})
+    public_request, provider_request = route_generation_parameter_requests(profiles, parallel)
+    assert provider_request.parallel_tool_calls is None
+    assert provider_request.serialize_tool_calls is False
+    assert "parallel_tool_calls->dropped(provider_default)" in public_request.ignored_parameters
 
-    assert raised.value.code == "unsupported_parameter"
-    assert raised.value.param == "parallel_tool_calls"
+
+def test_mixed_route_keeps_parallel_control_for_the_rungs_that_carry_it() -> None:
+    """Route-wide shaping only fires when NO rung has the control.
+
+    With one native rung and one toggle-less rung the field stays on the
+    provider request: the native rung forwards it verbatim and the toggle-less
+    rung is shaped per rung at dispatch, so a capable deployment never loses
+    the caller's native control to another rung's limitation.
+    """
+    tools = (GatewayToolDefinition(name="search", parameters={"type": "object"}),)
+    profiles = (
+        GatewayWireProfile(dialect="openai_compatible", url="https://native.test"),
+        GatewayWireProfile(dialect="openai_responses", url="https://toggle-less.test"),
+    )
+    sequential = _chat_request().model_copy(update={"tools": tools, "parallel_tool_calls": False})
+    public_request, provider_request = route_generation_parameter_requests(profiles, sequential)
+    assert provider_request.parallel_tool_calls is False
+    assert provider_request.serialize_tool_calls is False
+    assert not any("parallel_tool_calls" in note for note in public_request.ignored_parameters)
 
 
 def test_route_rejects_non_strict_schema_on_a_strict_only_provider() -> None:
@@ -1435,20 +1461,25 @@ def test_temperature_narrows_to_a_honoring_rung_over_an_srn_rung() -> None:
     assert compatible_generation_parameter_profile_indexes((srn_rung, plain_rung), request) == (1,)
 
 
-def test_genuinely_unsupported_sampling_still_hard_rejects() -> None:
-    """A route that never declares temperature (Anthropic constrained [1,1]) still
-    rejects — there is nothing to honor at any effort, so it is not srn-droppable."""
+def test_genuinely_unsupported_sampling_drops_with_its_own_disclosure() -> None:
+    """A route that never declares temperature (Anthropic constrained [1,1]) drops it
+    and says so — there is nothing to honor at any effort, so the disclosure names
+    the provider, not a reasoning-effort remedy, and the model still answers."""
     profile = GatewayWireProfile(
         dialect="anthropic_messages",
         url="https://provider.test",
         model_id="claude-constrained",
         supports_temperature=False,
     )
-    with pytest.raises(ProviderParameterError) as raised:
-        route_generation_parameter_requests((profile,), _chat_request(temperature=0.2))
+    public_request, provider_request = route_generation_parameter_requests(
+        (profile,), _chat_request(temperature=0.2)
+    )
 
-    assert raised.value.code == "unsupported_parameter"
-    assert raised.value.param == "temperature"
+    assert provider_request.temperature is None
+    assert "temperature->dropped(unsupported_by_provider)" in public_request.ignored_parameters
+    assert "temperature->dropped(set_reasoning_effort_none)" not in (
+        public_request.ignored_parameters
+    )
 
 
 def test_thinking_default_enable_resolves_the_required_default_effort() -> None:

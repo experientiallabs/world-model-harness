@@ -672,6 +672,10 @@ class GatewayRequest(ContractModel):
     :func:`canonical_request_sha256`: the same body at a different tier is a
     different provider price and schedule."""
     ignored_parameters: tuple[str, ...] = Field(default=(), exclude=True)
+    """The caller sent ``parallel_tool_calls: false`` and at least one admitted
+    rung has no such wire control: the data plane serializes those rungs' tool
+    calls to one per turn instead. Disclosed through ``ignored_parameters``."""
+    serialize_tool_calls: bool = Field(default=False, exclude=True)
     """Disclosed compatibility decisions applied to this request.
 
     A plain field path names a control accepted but intentionally omitted
