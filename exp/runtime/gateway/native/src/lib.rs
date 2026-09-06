@@ -33,6 +33,7 @@ mod server;
 mod settlement;
 mod sse;
 mod stop_sequences;
+mod stream_errors;
 mod upstream;
 mod waterfall;
 

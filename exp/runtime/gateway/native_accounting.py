@@ -47,6 +47,7 @@ from exp.runtime.gateway.native_execution import (
 from exp.runtime.gateway.native_settlement import (
     budget_quota_protocol_error,
     first_token_at_from_settlement,
+    ledger_failure,
     terminal_from_settlement,
 )
 from exp.runtime.openai_protocol.errors import (
@@ -186,6 +187,7 @@ def _failure_from_payload(payload: object) -> GatewayFailure | None:
         provider_detail=(
             provider_detail if isinstance(provider_detail, str) and provider_detail else None
         ),
+        customer_owned=data.get("customer_owned") is True,
     )
 
 
@@ -478,13 +480,17 @@ class NativeAttemptAccounting:
                 if throttled_remaining is not None
                 else all_routes_unavailable_failure()
             )
-        self.finish_request_quietly(entry.authorization, exhaustion)
+        self.finish_request_quietly(entry.authorization, ledger_failure(exhaustion))
         with self._lock:
             self._inflight.pop(request_id, None)
         failure_payload: JsonObject = {
             "failure_class": exhaustion.failure_class.value,
             "safe_message": exhaustion.safe_message,
         }
+        if exhaustion.customer_owned:
+            # Echoed back so the data plane renders the caller's 400, not the
+            # house 502, from the failure that ended the ladder.
+            failure_payload["customer_owned"] = True
         if exhaustion.rejected_parameter is not None:
             failure_payload["rejected_parameter"] = exhaustion.rejected_parameter
         if exhaustion.provider_detail is not None:

@@ -23,7 +23,7 @@ fn bedrock_exception_detail(frame: &crate::sse::SseEvent) -> Option<String> {
                 .and_then(Value::as_str)
                 .map(str::to_string)
         });
-    let detail = super::provider_error_detail(None, message.as_deref());
+    let detail = super::provider_error_detail(None, message.as_deref(), &[]);
     if let Some(detail) = &detail {
         // The same structured operator line the other dialects emit, so a
         // Bedrock-declared failure is equally visible in the immediate

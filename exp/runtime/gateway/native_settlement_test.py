@@ -120,3 +120,33 @@ def test_terminal_from_settlement_carries_the_provider_detail() -> None:
     )
     assert blank is not None
     assert blank.provider_detail is None
+
+
+def test_customer_owned_failures_settle_as_the_callers_invalid_request() -> None:
+    """A BYOK credential failure keeps its ladder class in the data plane but files client-side."""
+    terminal, failure = terminal_from_settlement(
+        {
+            "outcome": "failed",
+            "failure": {
+                "failure_class": "provider_authentication",
+                "safe_message": "your connected openai credential was rejected by the provider",
+                "customer_owned": True,
+            },
+        }
+    )
+    assert failure is not None
+    assert failure.failure_class == GatewayFailureClass.INVALID_REQUEST
+    assert failure.safe_message.startswith("your connected openai credential")
+    assert terminal.failure is failure
+
+    _terminal, house = terminal_from_settlement(
+        {
+            "outcome": "failed",
+            "failure": {
+                "failure_class": "provider_authentication",
+                "safe_message": "provider authentication failed",
+            },
+        }
+    )
+    assert house is not None
+    assert house.failure_class == GatewayFailureClass.PROVIDER_AUTHENTICATION

@@ -152,6 +152,10 @@ pub struct UpstreamRelay {
     /// Gateway-emulated stop sequences for this rung, when the provider wire
     /// carries none; `None` passes every event straight through.
     stop_guard: Option<StopSequenceGuard>,
+    /// The provider of a customer-managed (BYOK) rung: a credential or account
+    /// failure the provider declares on this stream, before or after commit,
+    /// is re-owned as the customer's. `None` on house rungs.
+    customer_managed_provider: Option<String>,
     eof: bool,
     first_byte_recorded: bool,
     /// Fail-fast bound for the very first provider byte. Once the first byte
@@ -215,6 +219,7 @@ impl UpstreamRelay {
             pending: VecDeque::new(),
             ready: VecDeque::new(),
             stop_guard: None,
+            customer_managed_provider: None,
             eof: false,
             first_byte_recorded: false,
             first_byte_deadline,
@@ -227,6 +232,23 @@ impl UpstreamRelay {
     /// the winning attempt's time-to-first-token.
     pub fn first_token_at(&self) -> Option<SystemTime> {
         self.first_token_at
+    }
+
+    /// Caller-known label words (the dispatched model id) exempt from the
+    /// provider-identifier screen on stream-error detail.
+    pub fn set_request_words<I, S>(&mut self, words: I)
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.normalizer.set_request_words(words);
+    }
+
+    /// Name the customer-managed provider this relay dispatches on, so every
+    /// provider-declared credential or quota failure it yields is the
+    /// customer's (see `stream_errors::customer_credential_failure`).
+    pub fn set_customer_managed_provider(&mut self, provider: Option<String>) {
+        self.customer_managed_provider = provider;
     }
 
     /// Enforce the caller's stop sequences on this relay's visible text.
@@ -242,9 +264,17 @@ impl UpstreamRelay {
     /// Move one normalized event through the stop-sequence guard (if any)
     /// onto the ready queue.
     fn guard_next_pending(&mut self) -> bool {
-        let Some(event) = self.pending.pop_front() else {
+        let Some(mut event) = self.pending.pop_front() else {
             return false;
         };
+        if let (Some(provider), Event::Failed(failure)) =
+            (self.customer_managed_provider.as_deref(), &event)
+        {
+            event = Event::Failed(crate::stream_errors::customer_credential_failure(
+                failure.clone(),
+                provider,
+            ));
+        }
         match self.stop_guard.as_mut() {
             Some(guard) => self.ready.extend(guard.filter(event)),
             None => self.ready.push_back(event),
@@ -547,6 +577,51 @@ mod tests {
             matches!(events.last(), Some(Event::StoppedAtSequence(sequence)) if sequence == "</block>"),
             "the terminal names the matched sequence"
         );
+    }
+
+    #[tokio::test]
+    async fn a_customer_managed_relay_re_owns_a_declared_credential_failure_after_output() {
+        // Text has already streamed (the attempt is committed) when the
+        // provider declares a 401 in-stream: the customer still gets their
+        // own message, not the house "ask the gateway operator" one.
+        let frames = vec![
+            Ok::<_, reqwest::Error>(Bytes::from(
+                "data: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}\n\n",
+            )),
+            Ok::<_, reqwest::Error>(Bytes::from(
+                "data: {\"error\":{\"code\":401,\"message\":\"Incorrect API key provided\"}}\n\n",
+            )),
+        ];
+        let mut relay = UpstreamRelay::from_stream(
+            stream::iter(frames).boxed(),
+            Dialect::OpenAiCompatible,
+            Instant::now() + Duration::from_secs(5),
+        );
+        relay.set_customer_managed_provider(Some("openai".to_string()));
+        let deadline = Instant::now() + Duration::from_secs(30);
+        let per_chunk = Duration::from_secs(5);
+        let first = relay
+            .next_event(deadline, per_chunk, Instant::now())
+            .await
+            .expect("yields")
+            .expect("event");
+        assert!(matches!(&first, Event::TextDelta(text) if text == "hi"));
+        let second = relay
+            .next_event(deadline, per_chunk, Instant::now())
+            .await
+            .expect("yields")
+            .expect("event");
+        match second {
+            Event::Failed(failure) => {
+                assert_eq!(failure.failure_class, FailureClass::ProviderAuthentication);
+                assert!(failure.customer_owned);
+                assert!(failure
+                    .safe_message
+                    .contains("your connected openai credential"));
+                assert_eq!(failure.public_error().status_code, 400);
+            }
+            other => panic!("expected the re-owned failure, got {other:?}"),
+        }
     }
 
     #[test]

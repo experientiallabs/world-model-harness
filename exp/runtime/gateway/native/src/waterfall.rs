@@ -55,6 +55,16 @@ pub struct DeploymentWire {
     pub dialect: String,
     pub url: String,
     pub headers: HashMap<String, String>,
+    /// Exact provider model identifier the payload carries; a caller-known
+    /// word the stream-error detail screen must not redact.
+    #[serde(default)]
+    pub model_id: String,
+    /// Whether this rung dispatches on the customer's own (BYOK) credential.
+    /// A rejected credential or exhausted account on such a rung is the
+    /// customer's configuration, surfaced as their 400, never operator
+    /// deadness that fails over.
+    #[serde(default)]
+    pub billing_customer_managed: bool,
     pub timeout_seconds: f64,
     /// Structured payload the data plane serializes itself; null for
     /// body-signing dialects, whose route entry carries `upstream_body`.
@@ -307,6 +317,9 @@ pub async fn acquire_attempt(ctx: &WaterfallContext<'_>, guard: &mut AttemptGuar
                 // survive the round trip to reach the caller.
                 "rejected_parameter": failure.rejected_parameter,
                 "provider_detail": failure.provider_detail,
+                // Ownership survives the round trip too: the echoed exhaustion
+                // must still render as the customer's 400.
+                "customer_owned": failure.customer_owned,
             })),
         }));
         let started_text = match ctx.bridge.call("start_attempt", argument).await {
@@ -460,6 +473,18 @@ async fn dispatch_headers(
 }
 
 /// Open and read one physical attempt up to commitment or its terminal.
+/// On a customer-managed rung, a rejected credential or exhausted provider
+/// account at stream OPEN is the customer's to fix (see
+/// `stream_errors::customer_credential_failure`); failures declared on the
+/// open stream take the same path inside the relay. House rungs are unchanged.
+fn customer_owned(failure: Failure, wire: &DeploymentWire) -> Failure {
+    if wire.billing_customer_managed {
+        crate::stream_errors::customer_credential_failure(failure, &wire.provider)
+    } else {
+        failure
+    }
+}
+
 async fn run_attempt(
     ctx: &WaterfallContext<'_>,
     guard: &mut AttemptGuard,
@@ -533,7 +558,7 @@ async fn run_attempt(
         Ok(response) => response,
         Err(failure) => {
             return AttemptEnd::Ladder {
-                failure,
+                failure: customer_owned(failure, wire),
                 refusal_eligible: false,
                 exhaustion_flush: Vec::new(),
                 usage: None,
@@ -557,6 +582,14 @@ async fn run_attempt(
         None => UpstreamRelay::new(response, dialect, first_byte_deadline),
     };
     relay.set_stop_sequences(wire.stop_sequences.iter().cloned());
+    if !wire.model_id.is_empty() {
+        relay.set_request_words([wire.model_id.clone()]);
+    }
+    if wire.billing_customer_managed {
+        // Applied to every failure the relay yields, before or after commit,
+        // so a committed stream's late credential error is the customer's too.
+        relay.set_customer_managed_provider(Some(wire.provider.clone()));
+    }
     let mut usage: Option<Usage> = None;
     let mut tool_names: Vec<String> = Vec::new();
     let mut withheld: Vec<Event> = Vec::new();
@@ -735,6 +768,8 @@ mod tests {
             hunyuan_reasoning_route_sha256: None,
             reasoning_output_exposed: false,
             stop_sequences: Vec::new(),
+            model_id: String::new(),
+            billing_customer_managed: false,
             idempotency_key: "op".to_string(),
             time_to_first_byte_base_seconds: base,
             time_to_first_byte_seconds_per_million_input_tokens: slope,

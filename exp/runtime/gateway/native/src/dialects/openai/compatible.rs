@@ -5,8 +5,8 @@
 use serde_json::Value;
 
 use super::super::{
-    finish_open_tools, finish_open_tools_truncated, malformed, parse_object,
-    provider_stream_failed_with_detail, refusal_failure, Normalizer,
+    finish_open_tools, finish_open_tools_truncated, malformed, parse_object, refusal_failure,
+    Normalizer,
 };
 use crate::errors::Failure;
 use crate::events::{openai_compatible_usage, require_string, require_u64, Event, ToolAccumulator};
@@ -63,7 +63,7 @@ impl Normalizer {
                 ),
                 None => (None, None),
             };
-            return Ok(vec![Event::Failed(provider_stream_failed_with_detail(
+            return Ok(vec![Event::Failed(self.provider_stream_failure(
                 "openai_compatible",
                 code.as_deref(),
                 message.as_deref(),

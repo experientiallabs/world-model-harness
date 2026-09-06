@@ -833,3 +833,77 @@ fn a_non_object_function_call_caller_is_malformed() {
         .expect_err("a non-object caller is malformed");
     assert_eq!(failure.failure_class, FailureClass::MalformedResponse);
 }
+
+#[test]
+fn responses_error_frames_classify_by_content_and_read_nested_envelopes() {
+    // Top-level documented shape: a rate limit is a throttle, not a 502.
+    let mut normalizer = Normalizer::new(Dialect::OpenAiResponses);
+    let events = normalizer
+        .feed(&crate::sse::SseEvent {
+            event: None,
+            data: serde_json::json!({
+                "type": "error",
+                "code": "rate_limit_exceeded",
+                "message": "Rate limit reached.",
+                "param": null,
+                "sequence_number": 1,
+            })
+            .to_string(),
+        })
+        .expect("error frame normalizes");
+    assert!(matches!(
+        events.as_slice(),
+        [Event::Failed(failure)] if failure.failure_class == FailureClass::Throttled
+    ));
+
+    // Nested envelope (undocumented but observed): still classified, never opaque.
+    let mut normalizer = Normalizer::new(Dialect::OpenAiResponses);
+    normalizer.set_request_words(["gpt-6-astra"]);
+    let events = normalizer
+        .feed(&crate::sse::SseEvent {
+            event: None,
+            data: serde_json::json!({
+                "type": "error",
+                "error": {
+                    "type": "invalid_request_error",
+                    "code": "context_length_exceeded",
+                    "message": "Your input exceeds the context window of gpt-6-astra.",
+                },
+            })
+            .to_string(),
+        })
+        .expect("nested error frame normalizes");
+    match events.as_slice() {
+        [Event::Failed(failure)] => {
+            assert_eq!(failure.failure_class, FailureClass::InvalidRequest);
+            assert!(!failure.failover_eligible);
+            // The request's own model id is caller-known, so the sentence is kept.
+            assert_eq!(
+                failure.provider_detail.as_deref(),
+                Some("context_length_exceeded: Your input exceeds the context window of gpt-6-astra.")
+            );
+            assert_eq!(
+                failure.public_error().message,
+                "provider rejected the request: context_length_exceeded: Your input exceeds the context window of gpt-6-astra."
+            );
+        }
+        other => panic!("expected one failed event, got {other:?}"),
+    }
+}
+
+#[test]
+fn responses_error_frames_keep_numeric_codes() {
+    let mut normalizer = Normalizer::new(Dialect::OpenAiResponses);
+    let events = normalizer
+        .feed(&crate::sse::SseEvent {
+            event: None,
+            data: serde_json::json!({"type": "error", "code": 429, "message": "Slow down."})
+                .to_string(),
+        })
+        .expect("numeric code frame normalizes");
+    assert!(matches!(
+        events.as_slice(),
+        [Event::Failed(failure)] if failure.failure_class == FailureClass::Throttled
+            && failure.provider_detail.as_deref() == Some("429: Slow down.")
+    ));
+}
