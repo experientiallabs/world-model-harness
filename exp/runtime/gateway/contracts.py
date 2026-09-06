@@ -158,7 +158,7 @@ class StructuredTextFormat(ContractModel):
     """A strict structured-text output schema requested by the caller."""
 
     name: str = Field(min_length=1, max_length=256)
-    description: str | None = Field(default=None, max_length=8_192)
+    description: str | None = Field(default=None, max_length=65_536)
     json_schema: JsonObject
     strict: bool = True
 
