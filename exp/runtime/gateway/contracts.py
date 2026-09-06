@@ -23,7 +23,7 @@ from exp.common.models.gateway_catalog import (
     ExactModelPoolId,
     FailoverMode,
 )
-from exp.common.models.model import ReasoningEffort, ToolCall
+from exp.common.models.model import MAXIMUM_TOOL_CALL_ID_CHARACTERS, ReasoningEffort, ToolCall
 from exp.runtime.gateway.reasoning_blocks import (
     EncryptedReasoningBlock as EncryptedReasoningBlock,
 )
@@ -190,7 +190,9 @@ class GatewayMessage(ContractModel):
 
     role: Literal["system", "developer", "user", "assistant", "tool"]
     content: str | None = None
-    tool_call_id: str | None = Field(default=None, min_length=1, max_length=256)
+    tool_call_id: str | None = Field(
+        default=None, min_length=1, max_length=MAXIMUM_TOOL_CALL_ID_CHARACTERS
+    )
     tool_calls: tuple[ToolCall, ...] = ()
     tool_is_error: bool = Field(default=False, exclude=True)
     """Whether this tool result reports a failed tool invocation.

@@ -20,7 +20,7 @@ from exp.common.models.content import (
     MAXIMUM_IMAGE_BASE64_BYTES,
     MAXIMUM_VIDEO_BASE64_BYTES,
 )
-from exp.common.models.model import ReasoningEffort
+from exp.common.models.model import MAXIMUM_TOOL_CALL_ID_CHARACTERS, ReasoningEffort
 from exp.runtime.gateway.reasoning_carrier import MAXIMUM_REASONING_CARRIER_BYTES
 from exp.runtime.openai_protocol.cache_control import EphemeralCacheControl
 
@@ -253,7 +253,7 @@ class _AssistantToolCall(_WireModel):
     carried for the one wire that can honor it.
     """
 
-    id: str = Field(min_length=1, max_length=256)
+    id: str = Field(min_length=1, max_length=MAXIMUM_TOOL_CALL_ID_CHARACTERS)
     type: Literal["function"] = "function"
     function: _FunctionCall
     cache_control: EphemeralCacheControl | None = None
@@ -281,7 +281,9 @@ class _Message(_WireModel):
     role: Literal["system", "developer", "user", "assistant", "tool"]
     content: str | tuple[_ContentPart, ...] | None = None
     tool_calls: tuple[_AssistantToolCall, ...] | None = None
-    tool_call_id: str | None = Field(default=None, min_length=1, max_length=256)
+    tool_call_id: str | None = Field(
+        default=None, min_length=1, max_length=MAXIMUM_TOOL_CALL_ID_CHARACTERS
+    )
     name: str | None = Field(default=None, min_length=1, max_length=256)
     """Tool function name on a ``role: "tool"`` message.
 
@@ -645,7 +647,7 @@ class _ResponseFunctionCall(_WireModel):
 
     type: Literal["function_call"]
     id: str | None = Field(default=None, min_length=1, max_length=256)
-    call_id: str = Field(min_length=1, max_length=256)
+    call_id: str = Field(min_length=1, max_length=MAXIMUM_TOOL_CALL_ID_CHARACTERS)
     name: str = Field(min_length=1, max_length=256)
     namespace: str | None = Field(default=None, min_length=1, max_length=256)
     caller: JsonObject | None = None
@@ -674,7 +676,7 @@ class _ResponseFunctionOutput(_WireModel):
     """
 
     type: Literal["function_call_output"]
-    call_id: str = Field(min_length=1, max_length=256)
+    call_id: str = Field(min_length=1, max_length=MAXIMUM_TOOL_CALL_ID_CHARACTERS)
     name: str | None = Field(default=None, min_length=1, max_length=256)
     namespace: str | None = Field(default=None, min_length=1, max_length=256)
     caller: JsonObject | None = None
@@ -807,7 +809,7 @@ class _CustomToolCall(_WireModel):
     type: Literal["custom_tool_call"]
     id: str | None = Field(default=None, min_length=1, max_length=256)
     status: _EchoedItemStatus | None = None
-    call_id: str = Field(min_length=1, max_length=256)
+    call_id: str = Field(min_length=1, max_length=MAXIMUM_TOOL_CALL_ID_CHARACTERS)
     name: str = Field(min_length=1, max_length=256)
     namespace: str | None = Field(default=None, min_length=1, max_length=256)
     caller: JsonObject | None = None
@@ -822,7 +824,7 @@ class _CustomToolCallOutput(_WireModel):
     type: Literal["custom_tool_call_output"]
     id: str | None = Field(default=None, min_length=1, max_length=256)
     status: _EchoedItemStatus | None = None
-    call_id: str = Field(min_length=1, max_length=256)
+    call_id: str = Field(min_length=1, max_length=MAXIMUM_TOOL_CALL_ID_CHARACTERS)
     output: JsonValue
 
 

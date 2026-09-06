@@ -11,6 +11,7 @@ from collections.abc import Coroutine
 import httpx
 import pytest
 
+from exp.common.core.artifacts import canonical_json_bytes
 from exp.common.models.model import ToolCall
 from exp.runtime.gateway.contracts import (
     EncryptedReasoningBlock,
@@ -1124,3 +1125,44 @@ def test_cancel_swallowing_adapter_fail_closes_without_starving_others() -> None
             assert inspects.detached_inspect_count() == 0
 
     asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("limit_offset", [-1, 0])
+def test_signed_tool_ids_count_toward_output_subject_limit(limit_offset: int) -> None:
+    """The complete serialized subject is bounded before classifier dispatch."""
+    completion = GuardrailCompletion(
+        tool_calls=(
+            GuardrailToolCall(
+                call_id="toolu~sig1:" + "é" * 1_000,
+                name="terminal",
+                arguments="{}",
+            ),
+        ),
+    )
+    subject_bytes = len(canonical_json_bytes(completion))
+    engine, classifier = _engine(
+        classifier=ScriptedClassifier(),
+        checks=(_check("output-one", stage=GuardrailCheckStage.OUTPUT),),
+        max_response_bytes=subject_bytes + limit_offset,
+    )
+    policy = engine.policy_for("organization-one", "identity-one")
+    assert policy is not None
+    if limit_offset < 0:
+        with pytest.raises(GuardrailRejected):
+            _awaited(
+                engine.enforce_output(
+                    policy=policy,
+                    completion=completion,
+                    deadline_monotonic=200.0,
+                )
+            )
+        assert classifier.output_calls == 0
+    else:
+        _awaited(
+            engine.enforce_output(
+                policy=policy,
+                completion=completion,
+                deadline_monotonic=200.0,
+            )
+        )
+        assert classifier.output_calls == 1

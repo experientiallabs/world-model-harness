@@ -33,6 +33,9 @@ _JSON_OBJECT_ADAPTER = TypeAdapter(JsonObject)
 ReasoningEffort = Literal["none", "minimal", "low", "medium", "high", "xhigh", "ultra", "max"]
 ChatMaxTokensField = Literal["max_tokens", "max_completion_tokens"]
 
+MAXIMUM_TOOL_CALL_ID_CHARACTERS: Final = 65_536
+"""Bound opaque tool identifiers, including provider-carried reasoning signatures."""
+
 DEFAULT_REASONING_EFFORT: Final[ReasoningEffort] = "medium"
 """Reasoning effort pinned by default for models known to accept the parameter.
 
@@ -198,7 +201,7 @@ class ToolCall(ContractModel):
     immutable artifacts but join gateway idempotency identity explicitly.
     """
 
-    call_id: str = Field(min_length=1, max_length=256)
+    call_id: str = Field(min_length=1, max_length=MAXIMUM_TOOL_CALL_ID_CHARACTERS)
     name: str = Field(min_length=1, max_length=256)
     arguments: JsonObject = Field(default_factory=dict)
     raw_arguments: str | None = Field(

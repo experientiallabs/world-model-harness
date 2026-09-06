@@ -366,3 +366,21 @@ fn gemini_usage_folds_thoughts_into_output_tokens() {
     }))
     .is_err());
 }
+
+#[test]
+fn tool_id_bound_counts_characters_and_preserves_opaque_signatures() {
+    for id in [
+        format!("toolu_synthetic~sig1:{}", "YWJj+/=".repeat(110)),
+        format!("toolu_synthetic_sig1_{}", "YWJj+/=".repeat(110)),
+        "é".repeat(65_536),
+    ] {
+        let mut tool = ToolAccumulator::new(id.clone(), "terminal".into());
+        tool.raw_arguments = "{}".into();
+        assert_eq!(tool.complete().expect("bounded opaque id").call_id, id);
+    }
+    for id in [String::new(), "x".repeat(65_537)] {
+        let mut tool = ToolAccumulator::new(id, "terminal".into());
+        tool.raw_arguments = "{}".into();
+        assert!(tool.complete().is_err());
+    }
+}
