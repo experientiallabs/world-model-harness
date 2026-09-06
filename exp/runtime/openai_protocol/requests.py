@@ -582,6 +582,18 @@ def _shape_message(param: str, details: list[ErrorDetails]) -> str | None:
     expected: list[str] = []
     got: str | None = None
     for detail in details:
+        if detail["type"] == "string_too_long":
+            # The bound and the arriving LENGTH are both display-safe facts
+            # (the value itself is never echoed); stating them saves the
+            # caller from bisecting the ceiling out of a bare rejection.
+            context = detail.get("ctx") or {}
+            maximum = context.get("max_length")
+            value = detail.get("input")
+            if isinstance(maximum, int) and isinstance(value, str):
+                return (
+                    f"Invalid value for '{param}': expected at most "
+                    f"{maximum:,} characters, but got {len(value):,}."
+                )
         phrase = _EXPECTED_BY_ERROR_TYPE.get(detail["type"])
         if detail["type"] in {"literal_error", "enum"}:
             context = detail.get("ctx") or {}
