@@ -28,6 +28,7 @@ from exp.runtime.gateway.budgets import (
     BudgetScopeKind,
     SQLiteBudgetStore,
     maximum_attempt_cost_micro_usd,
+    worst_case_attempt_tokens,
 )
 from exp.runtime.gateway.contracts import (
     DirectTarget,
@@ -41,6 +42,8 @@ from exp.runtime.gateway.contracts import (
     GatewayRequest,
     GatewayUsage,
 )
+from exp.runtime.gateway.embeddings_contracts import EmbeddingsRequest
+from exp.runtime.gateway.images_contracts import ImagesRequest
 from exp.runtime.gateway.ledger import SQLiteAttemptLedger
 from exp.runtime.gateway.sqlite.store import SQLiteGatewayStore
 
@@ -288,6 +291,28 @@ def test_huge_caller_output_ceiling_clamps_to_deployment_instead_of_failing_clos
     # Output is clamped to the ceiling; only the input-byte count of the larger
     # literal differs, so the two stay within a handful of micro-USD of each other.
     assert abs(huge - bounded) < 100
+
+
+def test_worst_case_attempt_tokens_matches_over_the_serving_request_union() -> None:
+    """The promo token reservation is match-aware: completions reserve worst-case
+    input and clamped output; embeddings and image requests reserve their
+    byte-bounded input and zero completion output."""
+    deployment = _deployment()
+
+    completion_in, completion_out = worst_case_attempt_tokens(_request("four bytes"), deployment)
+    assert completion_in > 0
+    # 16 is the fixture request's maximum_output_tokens, at/under the deployment ceiling.
+    assert completion_out == 16
+
+    embeddings = EmbeddingsRequest(inputs=("hello", "world"))
+    emb_in, emb_out = worst_case_attempt_tokens(embeddings, deployment)
+    assert emb_in == len(canonical_json_bytes(embeddings)) and emb_in > 0
+    assert emb_out == 0
+
+    images = ImagesRequest(prompt="a cat")
+    img_in, img_out = worst_case_attempt_tokens(images, deployment)
+    assert img_in == len(canonical_json_bytes(images)) and img_in > 0
+    assert img_out == 0
 
 
 def test_concurrent_identity_reservations_never_exceed_hard_limit(tmp_path: Path) -> None:
