@@ -1,7 +1,7 @@
 //! Upstream provider HTTP transport over one shared pooled client.
 
 use std::collections::HashMap;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde_json::Value;
 
@@ -156,6 +156,7 @@ pub async fn open_stream(
         Some(body) => request.body(body.to_string()).send(),
         None => request.json(payload).send(),
     };
+    let phase_started = Instant::now();
     let response = match tokio::time::timeout(phase_timeout, send).await {
         Ok(Ok(response)) => response,
         Ok(Err(error)) => {
@@ -177,14 +178,21 @@ pub async fn open_stream(
         if failure.failure_class != FailureClass::InvalidRequest && status != 403 {
             return Err(failure);
         }
-        let body = match tokio::time::timeout(ERROR_BODY_READ_TIMEOUT, bounded_error_body(response))
-            .await
-        {
+        // The attribution read never outlives the rung's own header-phase
+        // budget: a provider that answers its status and then stalls the body
+        // costs at most what was left of that window, never a further two
+        // seconds past the caller's deadline.
+        let body_budget =
+            ERROR_BODY_READ_TIMEOUT.min(phase_timeout.saturating_sub(phase_started.elapsed()));
+        let body = match tokio::time::timeout(body_budget, bounded_error_body(response)).await {
             Ok(Some(body)) => Some(body),
             _ => None,
         };
         if status == 403 {
-            if body.as_deref().is_some_and(rejected_by_routing_gate) {
+            if body
+                .as_deref()
+                .is_some_and(|body| rejected_by_routing_gate(dialect, body))
+            {
                 return Err(Failure::new(
                     FailureClass::ProviderNotFound,
                     "provider does not route this model for the gateway's account; ask \
@@ -241,7 +249,9 @@ pub async fn open_stream(
         // contract allows) keeps the caller's class and detail but fails over:
         // another rung serves the same request, and only a route with no other
         // rung surfaces the 400.
-        let lane_limitation = body.as_deref().is_some_and(rejected_by_lane_limitation);
+        let lane_limitation = body
+            .as_deref()
+            .is_some_and(|body| rejected_by_lane_limitation(dialect, body));
         return Err(failure
             .with_retry(false, lane_limitation)
             .with_rejected_parameter(parameter)
@@ -450,8 +460,9 @@ mod tests {
         let failure = open_against_body(
             "403 Forbidden",
             "{\"error\":{\"message\":\"thinkingmachines/inkling:free is only available \
-             on agentic harnesses.\",\"code\":403,\"metadata\":{\"failed_routing_step\":\
-             \"Gate Free Endpoints by Agentic Harness\"}}}",
+             on agentic harnesses.\",\"code\":403,\"metadata\":{\"routing_funnel\":\
+             [{\"step\":\"Initial Endpoints\",\"endpoint_count\":1}],\
+             \"failed_routing_step\":\"Gate Free Endpoints by Agentic Harness\"}}}",
             "thinkingmachines/inkling:free",
         )
         .await;
@@ -492,6 +503,32 @@ mod tests {
             .provider_detail
             .as_deref()
             .is_some_and(|detail| detail.contains("System message must be at the beginning")));
+    }
+
+    #[tokio::test]
+    async fn a_lane_limitation_phrase_echoed_outside_the_message_does_not_fail_over() {
+        let failure = open_against_body(
+            "400 Bad Request",
+            "{\"error\":{\"message\":\"Invalid value for temperature.\",\
+             \"type\":\"invalid_request_error\",\"param\":\"temperature\",\
+             \"echo\":\"System message must be at the beginning\"}}",
+            "m",
+        )
+        .await;
+        assert_eq!(failure.failure_class, FailureClass::InvalidRequest);
+        assert!(!failure.failover_eligible);
+    }
+
+    #[tokio::test]
+    async fn a_403_naming_a_step_without_a_walked_funnel_stays_a_credential_failure() {
+        let failure = open_against_body(
+            "403 Forbidden",
+            "{\"error\":{\"message\":\"Forbidden\",\"code\":403,\
+             \"metadata\":{\"failed_routing_step\":\"Authenticate\"}}}",
+            "m",
+        )
+        .await;
+        assert_eq!(failure.failure_class, FailureClass::ProviderAuthentication);
     }
 
     #[tokio::test]
