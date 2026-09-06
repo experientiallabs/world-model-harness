@@ -954,11 +954,8 @@ def route_generation_parameter_requests(
         profile.dialect in _NO_PARALLEL_TOOL_CONTROL_DIALECTS for profile in profiles
     ):
         # No rung carries a parallel-tool control: `true` is the provider's own
-        # default and is dropped; `false` is honoured by the data plane, which
-        # serializes each turn to its first tool call. Both are disclosed. A
-        # mixed route keeps the field so rungs that carry the control forward
-        # it natively; only the toggle-less rungs are shaped per rung at
-        # dispatch (native_admission.shape_parallel_tool_calls).
+        # default (dropped); `false` is serialized by the data plane. A mixed
+        # route keeps the field; toggle-less rungs are shaped per rung at dispatch.
         if request.parallel_tool_calls:
             ignore("parallel_tool_calls", "parallel_tool_calls->dropped(provider_default)")
         else:
