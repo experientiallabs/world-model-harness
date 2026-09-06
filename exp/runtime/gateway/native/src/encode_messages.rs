@@ -56,8 +56,19 @@ pub(super) fn stop_reason(terminal: &Event, saw_tool_use: bool) -> &'static str 
     match terminal {
         Event::Incomplete => "max_tokens",
         Event::PausedTurn => "pause_turn",
+        // A gateway-emulated stop cut the visible text: the caller's sequence
+        // ended the turn, exactly as Anthropic reports a native match.
+        Event::StoppedAtSequence(_) => "stop_sequence",
         _ if saw_tool_use => "tool_use",
         _ => "end_turn",
+    }
+}
+
+/// The matched stop sequence for the `stop_sequence` field, or null.
+pub(super) fn stop_sequence_value(terminal: &Event) -> Value {
+    match terminal {
+        Event::StoppedAtSequence(sequence) => Value::String(sequence.clone()),
+        _ => Value::Null,
     }
 }
 
@@ -390,7 +401,10 @@ impl MessagesSseEncoder {
                 }
                 Ok(Vec::new())
             }
-            Event::Completed | Event::Incomplete | Event::PausedTurn => {
+            Event::Completed
+            | Event::Incomplete
+            | Event::StoppedAtSequence(_)
+            | Event::PausedTurn => {
                 self.terminal = true;
                 if self.refusal_seen {
                     return Ok(vec![error_frame(&refusal_failure())]);
@@ -403,7 +417,7 @@ impl MessagesSseEncoder {
                         "type": "message_delta",
                         "delta": {
                             "stop_reason": stop_reason(event, self.saw_tool_use),
-                            "stop_sequence": Value::Null,
+                            "stop_sequence": stop_sequence_value(event),
                         },
                         "usage": messages_usage(self.usage.as_ref()),
                     }),

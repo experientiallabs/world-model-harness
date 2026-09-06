@@ -20,6 +20,7 @@ from exp.common.models.content import (
     VideoContentPart,
 )
 from exp.common.models.gateway_catalog import ExactModelDeployment
+from exp.common.models.model import ModelCapabilities
 from exp.runtime.gateway.contracts import (
     AuthorizationSnapshot,
     DirectTarget,
@@ -38,6 +39,7 @@ from exp.runtime.gateway.native_admission import (
     route_rejection,
 )
 from exp.runtime.gateway.native_dispatch import NativeWireClient
+from exp.runtime.gateway.prompt_size import MAXIMUM_BYTES_PER_TOKEN
 from exp.runtime.gateway.routing import GatewayRoute
 from exp.runtime.models.providers.base import GatewayWireProfile
 from exp.runtime.models.providers.errors import ProviderCapabilityError, ProviderParameterError
@@ -1219,3 +1221,35 @@ def test_an_open_strict_schema_is_closed_for_the_anthropic_rung_with_disclosure(
     assert provider.tools[0].parameters == {**open_schema, "additionalProperties": False}
     assert public.ignored_parameters == ("tools.parameters.additionalProperties->false",)
     assert accounting.recorded == 1
+
+
+def test_a_prompt_certain_to_overflow_the_route_is_refused_before_shaping() -> None:
+    """The context-window refusal runs first: no rung shaping, no accounting, exact numbers."""
+    deployments = (
+        _deployment("shim").model_copy(
+            update={"capabilities": ModelCapabilities(context_window_tokens=100)}
+        ),
+        _deployment("native").model_copy(
+            update={"capabilities": ModelCapabilities(context_window_tokens=200)}
+        ),
+    )
+    route = _mixed_route("maximize_availability", deployments)
+    request = GatewayRequest(
+        surface=GatewayApiSurface.MESSAGES,
+        messages=(GatewayMessage(role="user", content="x" * (201 * MAXIMUM_BYTES_PER_TOKEN)),),
+    )
+
+    with pytest.raises(ProviderParameterError) as caught:
+        admitted_route_requests(
+            route,
+            _wires(),
+            request,
+            # Never reached: the refusal precedes every coercion or reservation.
+            accounting=cast(NativeAttemptAccounting, object()),
+            authorization=route.snapshot.authorization,
+        )
+
+    assert caught.value.code == "context_length_exceeded"
+    assert caught.value.param == "messages"
+    assert "at least 201 tokens" in str(caught.value)
+    assert "200 tokens" in str(caught.value)

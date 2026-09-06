@@ -16,6 +16,7 @@ use crate::dialects::{
 use crate::errors::{Failure, FailureClass, PublicError};
 use crate::events::{Event, Usage};
 use crate::metrics::METRICS;
+use crate::stop_sequences::StopSequenceGuard;
 use crate::waterfall::CommittedAttempt;
 
 /// Map one collection failure to its public error, honoring the shared
@@ -144,7 +145,13 @@ pub struct UpstreamRelay {
     stream: BoxStream<'static, reqwest::Result<Bytes>>,
     decoder: FrameDecoder,
     normalizer: Normalizer,
+    /// Normalized events not yet passed through the stop-sequence guard.
     pending: VecDeque<Event>,
+    /// Guarded events ready to yield.
+    ready: VecDeque<Event>,
+    /// Gateway-emulated stop sequences for this rung, when the provider wire
+    /// carries none; `None` passes every event straight through.
+    stop_guard: Option<StopSequenceGuard>,
     eof: bool,
     first_byte_recorded: bool,
     /// Fail-fast bound for the very first provider byte. Once the first byte
@@ -206,6 +213,8 @@ impl UpstreamRelay {
                 reasoning_content_route_sha256,
             ),
             pending: VecDeque::new(),
+            ready: VecDeque::new(),
+            stop_guard: None,
             eof: false,
             first_byte_recorded: false,
             first_byte_deadline,
@@ -218,6 +227,29 @@ impl UpstreamRelay {
     /// the winning attempt's time-to-first-token.
     pub fn first_token_at(&self) -> Option<SystemTime> {
         self.first_token_at
+    }
+
+    /// Enforce the caller's stop sequences on this relay's visible text.
+    /// Installed before the first event is yielded; an empty set is a no-op.
+    pub fn set_stop_sequences<I, S>(&mut self, sequences: I)
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.stop_guard = StopSequenceGuard::new(sequences);
+    }
+
+    /// Move one normalized event through the stop-sequence guard (if any)
+    /// onto the ready queue.
+    fn guard_next_pending(&mut self) -> bool {
+        let Some(event) = self.pending.pop_front() else {
+            return false;
+        };
+        match self.stop_guard.as_mut() {
+            Some(guard) => self.ready.extend(guard.filter(event)),
+            None => self.ready.push_back(event),
+        }
+        true
     }
 
     /// Route an abnormal stream termination through the normalizer's recovery.
@@ -243,7 +275,7 @@ impl UpstreamRelay {
         request_started: Instant,
     ) -> Result<Option<Event>, Failure> {
         loop {
-            if let Some(event) = self.pending.pop_front() {
+            if let Some(event) = self.ready.pop_front() {
                 // Every yielded event exits here, so this is the one place that
                 // stamps time-to-first-token: the first event carrying visible
                 // model output. Prefix events peeked during commit also passed
@@ -253,6 +285,9 @@ impl UpstreamRelay {
                     self.first_token_at = Some(SystemTime::now());
                 }
                 return Ok(Some(event));
+            }
+            if self.guard_next_pending() {
+                continue;
             }
             if self.eof {
                 return Ok(None);
@@ -448,6 +483,69 @@ mod tests {
         assert!(
             relay.first_token_at().is_some(),
             "the first content delta stamps time-to-first-token"
+        );
+    }
+
+    #[tokio::test]
+    async fn stop_sequences_cut_the_relayed_text_and_keep_usage_and_settlement_exact() {
+        // A Chat-compatible stream stands in for any dialect: "</block>" spans
+        // two content deltas, more text follows it, then usage and the
+        // provider's own terminal arrive. The guard cuts at the match, drops
+        // the trailing text, still yields the usage, and replaces the terminal.
+        let frames = vec![
+            Ok::<_, reqwest::Error>(Bytes::from(
+                "data: {\"choices\":[{\"delta\":{\"content\":\"allow</bl\"}}]}\n\n",
+            )),
+            Ok::<_, reqwest::Error>(Bytes::from(
+                "data: {\"choices\":[{\"delta\":{\"content\":\"ock>ignored\"}}]}\n\n",
+            )),
+            Ok::<_, reqwest::Error>(Bytes::from(
+                "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":5,\"completion_tokens\":3}}\n\n",
+            )),
+            Ok::<_, reqwest::Error>(Bytes::from(
+                "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
+            )),
+            Ok::<_, reqwest::Error>(Bytes::from("data: [DONE]\n\n")),
+        ];
+        let mut relay = UpstreamRelay::from_stream(
+            stream::iter(frames).boxed(),
+            Dialect::OpenAiCompatible,
+            Instant::now() + Duration::from_secs(5),
+        );
+        relay.set_stop_sequences(["</block>"]);
+        let deadline = Instant::now() + Duration::from_secs(30);
+        let per_chunk = Duration::from_secs(5);
+        let mut events = Vec::new();
+        loop {
+            match relay.next_event(deadline, per_chunk, Instant::now()).await {
+                Ok(Some(event)) => {
+                    let terminal = event.is_terminal();
+                    events.push(event);
+                    if terminal {
+                        break;
+                    }
+                }
+                Ok(None) => panic!("the stream must end on a terminal"),
+                Err(failure) => panic!("unexpected failure: {failure:?}"),
+            }
+        }
+        let text: String = events
+            .iter()
+            .filter_map(|event| match event {
+                Event::TextDelta(text) => Some(text.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(text, "allow", "text stops exactly before the sequence");
+        assert!(
+            events
+                .iter()
+                .any(|event| matches!(event, Event::Usage(usage) if usage.has_token_counts())),
+            "usage still reaches settlement after the cut"
+        );
+        assert!(
+            matches!(events.last(), Some(Event::StoppedAtSequence(sequence)) if sequence == "</block>"),
+            "the terminal names the matched sequence"
         );
     }
 

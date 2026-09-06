@@ -4621,9 +4621,24 @@ def test_keyed_reasoning_content_joins_replay_identity(tmp_path: Path) -> None:
     assert json.loads(repeated.value.public_error_json)["code"] != "idempotency_conflict"
 
 
-def test_capability_rejection_names_the_public_request_field(tmp_path: Path) -> None:
-    """A pre-dispatch capability rejection names the exact public field."""
+def test_capability_rejection_names_the_public_request_field(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A pre-dispatch capability rejection names the exact public field.
+
+    Both the caller's 400 and the ledger row name it: an alert that only
+    read "cannot preserve a requested capability" could not be triaged
+    without opening the request.
+    """
     control, raw_key = _control_plane(tmp_path)
+    recorded: list[GatewayFailure] = []
+    original_finish = control._accounting.finish_request_quietly  # noqa: SLF001
+
+    def _capture_finish(authorization: AuthorizationSnapshot, failure: GatewayFailure) -> None:
+        recorded.append(failure)
+        return original_finish(authorization, failure)
+
+    monkeypatch.setattr(control._accounting, "finish_request_quietly", _capture_finish)  # noqa: SLF001
     body = json.dumps(
         {
             "model": "coding",
@@ -4647,6 +4662,12 @@ def test_capability_rejection_names_the_public_request_field(tmp_path: Path) -> 
     assert "'input.0.role'" in payload["message"]
     assert "developer_messages" not in payload["message"]
     assert "canary" not in json.dumps(payload)
+    assert recorded, "the rejection records a durable failure"
+    ledger = recorded[-1]
+    assert ledger.failure_class == GatewayFailureClass.UNSUPPORTED_CAPABILITY
+    assert ledger.safe_message.endswith("(field: input.0.role)")
+    assert "developer_messages" not in ledger.safe_message
+    assert "canary" not in ledger.safe_message
 
 
 def test_reasoning_context_reflects_in_the_envelope_only_when_sent() -> None:

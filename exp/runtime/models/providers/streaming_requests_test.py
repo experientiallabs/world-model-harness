@@ -1512,18 +1512,28 @@ def test_payload_builder_rejects_conditional_sampling_without_admission() -> Non
         )
 
 
-def test_route_rejects_stop_before_native_responses_dispatch() -> None:
-    """Chat stop sequences never reach a Responses deployment that lacks the field."""
-    request = _chat_request().model_copy(update={"stop": ("DONE",)})
+def test_route_admits_stop_on_native_responses_and_keeps_it_off_the_wire() -> None:
+    """The Responses API has no stop field: the route admits stop for data-plane emulation.
 
-    with pytest.raises(ProviderParameterError) as raised:
-        route_generation_parameter_requests(
-            (GatewayWireProfile(dialect="openai_responses", url="https://provider.test"),),
-            request,
-        )
+    The canonical request keeps the caller's sequences (the wire entry hands
+    them to the native relay) while the provider payload never carries them.
+    """
+    request = _chat_request().model_copy(update={"stop": ("DONE", "</severity>")})
 
-    assert raised.value.code == "unsupported_parameter"
-    assert raised.value.param == "stop"
+    public_request, provider_request = route_generation_parameter_requests(
+        (GatewayWireProfile(dialect="openai_responses", url="https://provider.test"),),
+        request,
+    )
+
+    assert provider_request.stop == ("DONE", "</severity>")
+    assert "stop" not in public_request.ignored_parameters
+    payload = openai_responses_stream_payload(
+        "gpt-5.6-luna",
+        provider_request,
+        supports_temperature=True,
+    )
+    assert "stop" not in payload
+    assert "stop_sequences" not in payload
 
 
 def test_responses_logprob_request_is_rejected_instead_of_ignored() -> None:
@@ -2935,7 +2945,12 @@ def test_server_tools_reject_mixed_routes_by_name() -> None:
             route_generation_parameter_requests(profiles, request)
         assert raised.value.code == "unsupported_parameter"
         assert raised.value.param == "tools"
-        assert "Anthropic" in str(raised.value)
+        # The rejection names the exact tool, its Claude Code label, and the
+        # Anthropic-only rule, so a Claude Code user knows what to change.
+        message = str(raised.value)
+        assert "'web_search' (Claude Code's WebSearch)" in message
+        assert "Anthropic only allows them on Anthropic (Claude) models" in message
+        assert "Switch to a Claude model alias" in message
 
 
 def test_server_tools_keep_tool_choice_on_an_anthropic_route() -> None:

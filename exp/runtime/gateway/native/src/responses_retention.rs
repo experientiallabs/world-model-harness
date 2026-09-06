@@ -201,7 +201,9 @@ impl ResponsesRetention {
                 self.hosted
                     .insert(*output_index, RetainedHostedItem { item: item.clone() });
             }
-            Event::Completed => self.finish_open_items(ProviderOutputItemStatus::Completed),
+            Event::Completed | Event::StoppedAtSequence(_) => {
+                self.finish_open_items(ProviderOutputItemStatus::Completed)
+            }
             Event::Incomplete | Event::Failed(_) => {
                 self.finish_open_items(ProviderOutputItemStatus::Incomplete);
             }
