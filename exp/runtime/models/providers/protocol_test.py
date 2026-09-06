@@ -276,6 +276,10 @@ def test_preflight_admits_an_undeclared_stop_when_the_data_plane_emulates_it() -
 
     assert emulated_gateway_capabilities("openai_responses") == frozenset({"stop_sequences"})
     assert emulated_gateway_capabilities("openai_compatible") == frozenset()
+    # parallel_tool_calls emulation is opt-in: admission's last resort on any wire.
+    assert emulated_gateway_capabilities(
+        "openai_compatible", emulate_parallel_tool_calls=True
+    ) == frozenset({"parallel_tool_calls"})
     preflight_gateway_request(
         request,
         undeclared,

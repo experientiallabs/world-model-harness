@@ -17,6 +17,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Sequence
 
+from exp.common.models.catalog import GatewayDeploymentCapabilities
 from exp.runtime.gateway.contracts import AuthorizationSnapshot, DirectTarget, GatewayRequest
 from exp.runtime.gateway.native_accounting import NativeAttemptAccounting
 from exp.runtime.gateway.native_components import NativeGatewayComponents
@@ -205,6 +206,20 @@ def admitted_route_requests(
                 provider_request,
                 public_stream=public_request.stream,
             )
+    if not protocol_indexes and provider_request.parallel_tool_calls is not None:
+        # LAST resort for parallel_tool_calls: no rung honours the control
+        # natively (and no other coercion freed one), so admit the rungs whose
+        # only objection is that control. The data plane then drops `true`
+        # (the provider's default) or serializes `false` per rung, disclosed
+        # (native_bridge's per-rung shaping). A native rung is always
+        # preferred, which is why this pass runs after everything else.
+        protocol_indexes, protocol_errors = protocol_compatible_indexes(
+            route,
+            resolved_wires,
+            provider_request,
+            public_stream=public_request.stream,
+            emulate_parallel_tool_calls=True,
+        )
     if not protocol_indexes:
         if not protocol_errors:
             raise GatewayRoutingError("authorized route has no compatible deployment")
@@ -396,6 +411,7 @@ def protocol_compatible_indexes(
     provider_request: GatewayRequest,
     *,
     public_stream: bool | None,
+    emulate_parallel_tool_calls: bool = False,
 ) -> tuple[tuple[int, ...], tuple[ProviderParameterError | ProviderCapabilityError, ...]]:
     """Select rungs that pass capability preflight and payload build.
 
@@ -422,7 +438,9 @@ def protocol_compatible_indexes(
                 model_capabilities=deployment.capabilities,
                 public_stream=public_stream,
                 route_provider=deployment.provider,
-                emulated_capabilities=emulated_gateway_capabilities(profile.dialect),
+                emulated_capabilities=emulated_gateway_capabilities(
+                    profile.dialect, emulate_parallel_tool_calls=emulate_parallel_tool_calls
+                ),
             )
             dialect_stream_payload(profile, provider_request)
         except (ProviderParameterError, ProviderCapabilityError) as exc:
@@ -430,6 +448,71 @@ def protocol_compatible_indexes(
             continue
         indexes.append(index)
     return tuple(indexes), tuple(errors)
+
+
+def shape_parallel_tool_calls(
+    request: GatewayRequest,
+    capabilities: GatewayDeploymentCapabilities,
+) -> tuple[GatewayRequest, str | None]:
+    """Shape ``parallel_tool_calls`` for one rung that may lack the control.
+
+    A rung whose wire carries the control forwards it verbatim. One that does
+    not gets ``true`` dropped (parallel calls are the provider's own default)
+    or ``false`` emulated: the data plane serializes that rung's stream to one
+    tool call per turn (``serialize_tool_calls``). Either way the caller reads
+    the disclosure in ``ignored_parameters``.
+
+    Args:
+        request: The streaming-forced provider request.
+        capabilities: The rung's deployment capability declaration.
+
+    Returns:
+        The request to build this rung's payload from, and the disclosure to
+        publish (``None`` when nothing changed).
+    """
+    if request.parallel_tool_calls is None or capabilities.supports_parallel_tool_calls:
+        return request, None
+    if request.parallel_tool_calls:
+        return (
+            request.model_copy(update={"parallel_tool_calls": None}),
+            "parallel_tool_calls->dropped(provider_default)",
+        )
+    return (
+        request.model_copy(update={"parallel_tool_calls": None, "serialize_tool_calls": True}),
+        "parallel_tool_calls->emulated(serialized_by_gateway)",
+    )
+
+
+def fold_parallel_tool_call_disclosures(
+    public_request: GatewayRequest,
+    disclosures: set[str],
+    *,
+    accounting: NativeAttemptAccounting,
+    authorization: AuthorizationSnapshot,
+) -> GatewayRequest:
+    """Publish per-rung parallel-tool shaping like any other admission coercion.
+
+    Args:
+        public_request: The public request the admission answer carries.
+        disclosures: Distinct disclosures the per-rung shaping produced.
+        accounting: Shared accounting owning the coercion counter.
+        authorization: Frozen authority for the accepted request.
+
+    Returns:
+        The public request with the disclosures folded into
+        ``ignored_parameters`` (unchanged when there are none).
+    """
+    if not disclosures:
+        return public_request
+    ordered = tuple(sorted(disclosures))
+    record_admission_coercions(accounting, authorization, ordered)
+    return public_request.model_copy(
+        update={
+            "ignored_parameters": tuple(
+                dict.fromkeys((*public_request.ignored_parameters, *ordered))
+            )
+        }
+    )
 
 
 def record_admission_coercions(

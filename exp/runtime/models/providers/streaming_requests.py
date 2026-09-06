@@ -263,9 +263,17 @@ def route_generation_parameter_requests(
             sampling_supported(profile, top_p=top_p) for profile in profiles
         )
 
+    # Sampling controls a rung cannot carry at all (a reasoning model whose
+    # provider rejects temperature outright) are DROPPED with disclosure, not
+    # refused: the model still answers, with its own default. The 400 stays
+    # only for a value outside a supporting route's declared range, which is
+    # a genuine caller error. (2026-09-06: 1,483 rejections in six hours across
+    # 289 orgs on one alias for a field OpenAI itself simply refuses.)
     if request.temperature is not None:
         if srn_only_block():
             ignore("temperature", "temperature->dropped(set_reasoning_effort_none)")
+        elif not all(sampling_supported(profile) for profile in profiles):
+            ignore("temperature", "temperature->dropped(unsupported_by_provider)")
         else:
             _require_route_numeric_parameter(
                 profiles,
@@ -278,6 +286,8 @@ def route_generation_parameter_requests(
     if request.top_p is not None:
         if srn_only_block(top_p=True):
             ignore("top_p", "top_p->dropped(set_reasoning_effort_none)")
+        elif not all(sampling_supported(profile, top_p=True) for profile in profiles):
+            ignore("top_p", "top_p->dropped(unsupported_by_provider)")
         else:
             _require_route_numeric_parameter(
                 profiles,
@@ -943,15 +953,17 @@ def route_generation_parameter_requests(
     elif request.parallel_tool_calls is not None and any(
         profile.dialect in _NO_PARALLEL_TOOL_CONTROL_DIALECTS for profile in profiles
     ):
-        raise ProviderParameterError(
-            message=(
-                "The parameter 'parallel_tool_calls' is not supported by this model route. "
-                "Remove the field or choose a provider route with an explicit parallel-tool "
-                "control."
-            ),
-            param="parallel_tool_calls",
-            code="unsupported_parameter",
-        )
+        # A wire with no parallel-tool control: `true` is the provider's own
+        # default and is dropped; `false` is honoured by the data plane, which
+        # serializes each turn to its first tool call. Both are disclosed.
+        if request.parallel_tool_calls:
+            ignore("parallel_tool_calls", "parallel_tool_calls->dropped(provider_default)")
+        else:
+            ignore(
+                "parallel_tool_calls",
+                "parallel_tool_calls->emulated(serialized_by_gateway)",
+            )
+            provider_updates["serialize_tool_calls"] = True
 
     # A true logprob request changes the requested result. Until the normalized
     # response can return those arrays, reject it rather than pretending it ran.

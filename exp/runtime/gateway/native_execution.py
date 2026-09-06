@@ -546,6 +546,7 @@ def deployment_wire_entry(
     upstream_body: str | None = None,
     headers: dict[str, str] | None = None,
     stop_sequences: Sequence[str] = (),
+    serialize_tool_calls: bool = False,
 ) -> JsonObject:
     """Build one deployment's wire configuration for the admitted route.
 
@@ -566,6 +567,9 @@ def deployment_wire_entry(
         stop_sequences: Caller stop sequences the data plane must enforce on
             this rung's stream because the provider wire has no stop field
             (OpenAI Responses). Empty when the provider honours them itself.
+        serialize_tool_calls: The caller sent ``parallel_tool_calls: false``
+            and this rung's wire has no such control, so the data plane keeps
+            one tool call per turn on its stream.
 
     Returns:
         The JSON-compatible wire entry consumed by the data plane.
@@ -592,6 +596,7 @@ def deployment_wire_entry(
         # match and terminates with a stop-sequence reason. Empty for rungs
         # whose payload already carries the caller's stop field.
         "stop_sequences": list(stop_sequences),
+        "serialize_tool_calls": serialize_tool_calls,
         "idempotency_key": deployment_operation_key(route, deployment),
         # First-byte allowance overrides; the data plane falls back to its
         # serving defaults when a deployment declares nothing.

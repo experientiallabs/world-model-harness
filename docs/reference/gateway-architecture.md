@@ -390,6 +390,20 @@ dropped by the identifier screen, the provider's documented code or type token (
 `INVALID_ARGUMENT`) is relayed instead of nothing, and a content-filter code under a 4xx (Azure,
 Gemini) is filed and answered as a `refusal` rather than a request-shape error.
 
+**Sampling controls a route cannot carry are dropped with disclosure, not refused.** A
+`temperature` or `top_p` sent to a route where some rung's provider rejects the field outright (a
+reasoning model such as GPT-6 Astra) is dropped and disclosed (`temperature->dropped(unsupported_by_provider)`)
+so the model still answers with its own default; the 400 remains only for a value outside a
+supporting route's declared range, which is a genuine caller error.
+
+**`parallel_tool_calls` is honoured on every route.** A rung whose wire carries the control forwards it.
+On a rung without it (Gemini, Bedrock, an OpenAI-compatible server that ignores the field), `true` is
+dropped as the provider's own default (`parallel_tool_calls->dropped(provider_default)`) and `false` is
+emulated by the data plane, which serializes that rung's stream to its first tool call per turn and
+drops later calls in the same turn, start to completion, including their Responses item lifecycle
+(`parallel_tool_calls->emulated(serialized_by_gateway)`). The model receives one result on the next
+turn and re-issues the remaining calls then, which is the sequential behaviour the caller asked for.
+
 **Pre-dispatch context-window refusal.** Before any reservation or provider call, admission
 lower-bounds the prompt's token count from its UTF-8 text bytes (at six bytes per token, below
 what real tokenizers produce on prose, code, or CJK text; inline media is not counted) and

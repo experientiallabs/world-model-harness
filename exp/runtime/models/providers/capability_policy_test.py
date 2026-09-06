@@ -97,10 +97,11 @@ def test_effort_snaps_to_the_nearest_route_level_with_disclosure() -> None:
     assert coercion.disclosures == ("reasoning_effort->high",)
 
 
-def test_effort_snap_skips_levels_that_admit_no_rung() -> None:
-    """The snap is the nearest level that actually serves, not the nearest
-    level on paper: a rung carrying the closer effort may reject another
-    requested control, and the coercion must not dead-end there."""
+def test_effort_snap_lands_on_the_nearer_rung_and_drops_what_it_cannot_carry() -> None:
+    """The snap is the nearest level that actually serves. A rung carrying the
+    closer effort no longer dead-ends on a sampling control it cannot carry:
+    since 2026-09-06 an unsupported temperature is dropped with disclosure
+    rather than refused, so the nearer rung admits the request."""
     xhigh_only_no_temperature = GatewayWireProfile(
         dialect="openai_compatible",
         url="https://a.test",
@@ -115,10 +116,10 @@ def test_effort_snap_skips_levels_that_admit_no_rung() -> None:
         request,
     )
     assert coercion is not None
-    # xhigh is nearer to ultra but only the temperature-rejecting rung has
-    # it; high is the closest level that admits a serving rung.
-    assert coercion.request.reasoning_effort == "high"
-    assert coercion.disclosures == ("reasoning_effort->high",)
+    # xhigh is nearer to ultra; the rung that carries it serves once the
+    # temperature it rejects is dropped (disclosed downstream, not refused).
+    assert coercion.request.reasoning_effort == "xhigh"
+    assert coercion.disclosures == ("reasoning_effort->xhigh",)
 
 
 def test_any_effort_drops_on_a_route_with_no_reasoning_at_all() -> None:

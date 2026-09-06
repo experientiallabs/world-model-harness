@@ -17,6 +17,7 @@ use crate::errors::{Failure, FailureClass, PublicError};
 use crate::events::{Event, Usage};
 use crate::metrics::METRICS;
 use crate::stop_sequences::StopSequenceGuard;
+use crate::tool_serialization::ToolCallSerializer;
 use crate::waterfall::CommittedAttempt;
 
 /// Map one collection failure to its public error, honoring the shared
@@ -152,6 +153,8 @@ pub struct UpstreamRelay {
     /// Gateway-emulated stop sequences for this rung, when the provider wire
     /// carries none; `None` passes every event straight through.
     stop_guard: Option<StopSequenceGuard>,
+    /// Gateway-emulated `parallel_tool_calls: false`: one tool call per turn.
+    tool_serializer: Option<ToolCallSerializer>,
     /// The provider of a customer-managed (BYOK) rung: a credential or account
     /// failure the provider declares on this stream, before or after commit,
     /// is re-owned as the customer's. `None` on house rungs.
@@ -219,6 +222,7 @@ impl UpstreamRelay {
             pending: VecDeque::new(),
             ready: VecDeque::new(),
             stop_guard: None,
+            tool_serializer: None,
             customer_managed_provider: None,
             eof: false,
             first_byte_recorded: false,
@@ -251,6 +255,12 @@ impl UpstreamRelay {
         self.customer_managed_provider = provider;
     }
 
+    /// Serialize this relay's tool calls to one per turn (the caller sent
+    /// `parallel_tool_calls: false` to a wire without that control).
+    pub fn set_serialize_tool_calls(&mut self, serialize: bool) {
+        self.tool_serializer = serialize.then(ToolCallSerializer::new);
+    }
+
     /// Enforce the caller's stop sequences on this relay's visible text.
     /// Installed before the first event is yielded; an empty set is a no-op.
     pub fn set_stop_sequences<I, S>(&mut self, sequences: I)
@@ -274,6 +284,12 @@ impl UpstreamRelay {
                 failure.clone(),
                 provider,
             ));
+        }
+        if let Some(serializer) = self.tool_serializer.as_mut() {
+            let Some(kept) = serializer.filter(event) else {
+                return true;
+            };
+            event = kept;
         }
         match self.stop_guard.as_mut() {
             Some(guard) => self.ready.extend(guard.filter(event)),

@@ -189,19 +189,30 @@ class GatewayDispatchSigner(Protocol):
 STOP_SEQUENCE_EMULATED_DIALECTS: frozenset[str] = frozenset({"openai_responses"})
 
 
-def emulated_gateway_capabilities(dialect: str) -> frozenset[str]:
+def emulated_gateway_capabilities(
+    dialect: str, *, emulate_parallel_tool_calls: bool = False
+) -> frozenset[str]:
     """Name the capabilities the data plane emulates for one wire dialect.
 
     Args:
         dialect: The rung's wire dialect (``GatewayWireProfile.dialect``).
+        emulate_parallel_tool_calls: Admit ``parallel_tool_calls`` on a rung
+            whose wire lacks the control (``true`` dropped as the provider's
+            default, ``false`` serialized by the data plane, both disclosed).
+            Admission turns this on only as the LAST resort, after no rung
+            honouring the control natively could serve, so a native rung is
+            always preferred over emulation.
 
     Returns:
         Capability labels admission treats as satisfied without a catalog
         declaration; empty for dialects with nothing emulated.
     """
+    emulated: set[str] = set()
     if dialect in STOP_SEQUENCE_EMULATED_DIALECTS:
-        return frozenset({"stop_sequences"})
-    return frozenset()
+        emulated.add("stop_sequences")
+    if emulate_parallel_tool_calls:
+        emulated.add("parallel_tool_calls")
+    return frozenset(emulated)
 
 
 def emulated_stop_sequences(dialect: str, request: GatewayRequest) -> tuple[str, ...]:

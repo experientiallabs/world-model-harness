@@ -633,3 +633,13 @@ def test_wire_entry_names_customer_managed_billing_for_the_data_plane() -> None:
     house = GatewayWireProfile(dialect="openai_responses", url="https://provider.test")
     assert deployment_wire_entry(route, route.deployment, byok, {})["billing_customer_managed"]
     assert not deployment_wire_entry(route, route.deployment, house, {})["billing_customer_managed"]
+
+
+def test_wire_entry_carries_the_tool_call_serialization_flag() -> None:
+    """A rung emulating parallel_tool_calls=false tells the data plane to serialize."""
+    route = _route()
+    profile = GatewayWireProfile(dialect="gemini_generate_content", url="https://provider.test")
+    assert deployment_wire_entry(route, route.deployment, profile, {}, serialize_tool_calls=True)[
+        "serialize_tool_calls"
+    ]
+    assert not deployment_wire_entry(route, route.deployment, profile, {})["serialize_tool_calls"]
