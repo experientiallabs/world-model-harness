@@ -23,6 +23,22 @@ _TERMINAL_KINDS = {
 }
 
 
+def ledger_failure(failure: GatewayFailure) -> GatewayFailure:
+    """The failure as the ledger records it.
+
+    A customer-owned provider failure (their BYOK credential or account) keeps
+    its provider class for ladder decisions, but the durable row files it as
+    the caller's invalid request: it is their configuration, never operator
+    deadness that pages or opens a house circuit.
+    """
+    if failure.customer_owned and failure.failure_class in {
+        GatewayFailureClass.PROVIDER_AUTHENTICATION,
+        GatewayFailureClass.PROVIDER_QUOTA,
+    }:
+        return failure.model_copy(update={"failure_class": GatewayFailureClass.INVALID_REQUEST})
+    return failure
+
+
 def terminal_from_settlement(
     data: JsonObject,
 ) -> tuple[GatewayEvent, GatewayFailure | None]:
@@ -50,7 +66,14 @@ def terminal_from_settlement(
             provider_detail=(
                 provider_detail if isinstance(provider_detail, str) and provider_detail else None
             ),
+            customer_owned=failure_payload.get("customer_owned") is True,
         )
+        # A rejected credential or exhausted account on the customer's own
+        # BYOK rung kept its ladder class in the data plane (so another
+        # customer-managed rung could still serve), but the ledger files it
+        # where it belongs: the caller's configuration, never operator
+        # deadness that pages.
+        failure = ledger_failure(failure)
     kind = _TERMINAL_KINDS[str(data["outcome"])]
     terminal = GatewayEvent(
         kind=kind,

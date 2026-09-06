@@ -192,6 +192,12 @@ pub struct Failure {
     /// so the header never contradicts the message.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub retry_after_seconds: Option<u32>,
+    /// The failure is the CUSTOMER's own provider configuration (a rejected
+    /// credential or exhausted account on their BYOK rung). The class keeps
+    /// its ladder semantics (fail over to any other rung), but a terminal
+    /// answer is their 400 naming the fix, and settlement files it client-side.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub customer_owned: bool,
 }
 
 impl Failure {
@@ -204,6 +210,7 @@ impl Failure {
             rejected_parameter: None,
             provider_detail: None,
             retry_after_seconds: None,
+            customer_owned: false,
         }
     }
 
@@ -268,6 +275,15 @@ impl Failure {
     /// the reset boundary is computed control-plane side; the PoC returns the
     /// plain safe message with a one-hour retry hint instead.
     pub fn public_error(&self) -> PublicError {
+        // The customer's own BYOK credential or account: their 400, with the
+        // message that names their provider and the fix.
+        if self.customer_owned {
+            let code = match self.failure_class {
+                FailureClass::ProviderQuota => "provider_account_quota",
+                _ => "provider_credential_rejected",
+            };
+            return PublicError::new(400, code, &self.safe_message, "invalid_request_error");
+        }
         let (status, code, error_type) = match self.failure_class {
             FailureClass::InvalidRequest => (400, "invalid_request", "invalid_request_error"),
             FailureClass::UnsupportedCapability => {

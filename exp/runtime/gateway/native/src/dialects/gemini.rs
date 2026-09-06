@@ -34,9 +34,11 @@ impl Normalizer {
                 ),
                 None => (None, None),
             };
-            return Ok(vec![Event::Failed(
-                super::provider_stream_failed_with_detail("gemini_generate_content", code, message),
-            )]);
+            return Ok(vec![Event::Failed(self.provider_stream_failure(
+                "gemini_generate_content",
+                code,
+                message,
+            ))]);
         }
         if let Some(raw_usage) = payload.get("usageMetadata") {
             if !raw_usage.is_null() {
@@ -503,12 +505,13 @@ mod gemini_tests {
     }
 
     #[test]
-    fn gemini_error_envelope_is_a_retryable_provider_failure() {
+    fn gemini_error_envelope_is_classified_by_what_google_said() {
         // Google's own error envelope on the stream (verified shape for a
-        // 503 UNAVAILABLE): a provider-declared failure, classified like the
-        // OpenAI and Anthropic dialects classify theirs: provider_internal,
-        // same-deployment retry allowed, failover eligible. Never a malformed
-        // stream end, and never a completion when output preceded it.
+        // 503 UNAVAILABLE "overloaded"): a provider-declared failure. It is
+        // classified by its content like every other dialect's: an overloaded
+        // model is a THROTTLE (fail over, advertise Retry-After; redialing the
+        // same saturated rung buys nothing), never a malformed stream end, and
+        // never a completion when output preceded it.
         let envelope = json!({
             "error": {
                 "code": 503,
@@ -518,8 +521,8 @@ mod gemini_tests {
         });
         let failed = json!({
             "kind": "failed",
-            "failure_class": "provider_internal",
-            "safe_message": "provider stream failed",
+            "failure_class": "throttled",
+            "safe_message": "provider throttled the request; retry after the delay in the Retry-After header",
         });
         let alone = [sse(&envelope)];
         let refs: Vec<&[u8]> = alone.iter().map(Vec::as_slice).collect();
@@ -537,7 +540,25 @@ mod gemini_tests {
             events,
             vec![json!({"kind": "text_delta", "text": "partial"}), failed]
         );
-        let classified = crate::dialects::provider_stream_failed();
+        // A genuine provider fault keeps the retry-then-failover shape.
+        let internal = json!({
+            "error": {"code": 500, "message": "Internal error encountered.", "status": "INTERNAL"}
+        });
+        let refs = [sse(&internal)];
+        let refs: Vec<&[u8]> = refs.iter().map(Vec::as_slice).collect();
+        let (events, _failure) = run_stream(Dialect::GeminiGenerateContent, &refs);
+        assert_eq!(
+            events,
+            vec![json!({
+                "kind": "failed",
+                "failure_class": "provider_internal",
+                "safe_message": "provider stream failed",
+            })]
+        );
+        let classified = crate::stream_errors::stream_failure(
+            crate::stream_errors::StreamErrorKind::ProviderInternal,
+            None,
+        );
         assert_eq!(classified.failure_class, FailureClass::ProviderInternal);
         assert!(classified.retryable_same_deployment);
         assert!(classified.failover_eligible);

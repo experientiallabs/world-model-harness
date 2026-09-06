@@ -32,6 +32,7 @@ from exp.runtime.gateway.native_accounting import (
     _failure_from_payload,
 )
 from exp.runtime.gateway.native_execution import InflightRequest, deployment_health_key
+from exp.runtime.gateway.native_settlement import ledger_failure
 from exp.runtime.gateway.routing import GatewayRoute
 from exp.runtime.openai_protocol.errors import (
     THROTTLED_RETRY_AFTER_SECONDS,
@@ -654,3 +655,48 @@ def test_start_attempt_reprices_only_when_the_selected_depth_forwards_the_tier()
     assert _reserved_rate(forwards=True) == 500_000
     # Same flex card, but the selected depth strips the tier -> reserve at BASE.
     assert _reserved_rate(forwards=False) == 1_000_000
+
+
+def test_customer_owned_failures_round_trip_and_file_as_the_callers_invalid_request() -> None:
+    """A BYOK credential failure keeps its ladder class, echoes its ownership, and
+    is recorded as the caller's invalid request."""
+    parsed = _failure_from_payload(
+        {
+            "failure_class": "provider_authentication",
+            "safe_message": "your connected openai credential was rejected by the provider",
+            "failover_eligible": True,
+            "customer_owned": True,
+        }
+    )
+    assert parsed is not None
+    assert parsed.customer_owned is True
+    assert parsed.failure_class == GatewayFailureClass.PROVIDER_AUTHENTICATION
+    assert ledger_failure(parsed).failure_class == GatewayFailureClass.INVALID_REQUEST
+    # Only the two customer-configurable provider classes re-file; a
+    # house-shaped failure (or one without the flag) is untouched.
+    house = _failure_from_payload(
+        {
+            "failure_class": "provider_authentication",
+            "safe_message": "provider authentication failed",
+        }
+    )
+    assert house is not None and ledger_failure(house).failure_class is (
+        GatewayFailureClass.PROVIDER_AUTHENTICATION
+    )
+
+    registry, _ledger, _entry = _registry()
+    _start(registry, ordinal=0)
+    exhausted = _start(
+        registry,
+        ordinal=1,
+        current_depth=0,
+        failure={
+            "failure_class": "provider_quota",
+            "safe_message": "your connected openrouter account has exhausted its quota",
+            "customer_owned": True,
+        },
+    )
+    failure_payload = exhausted["failure"]
+    assert isinstance(failure_payload, dict)
+    assert failure_payload["customer_owned"] is True
+    assert failure_payload["failure_class"] == "provider_quota"

@@ -357,6 +357,26 @@ and `stop_reason: stop_sequence` on Messages. Reasoning, tool arguments, and ref
 inspected. Rungs whose provider honours `stop` natively (Chat-compatible, Anthropic, Gemini,
 Bedrock) keep forwarding it on the wire.
 
+**Provider-declared stream errors are classified by what the provider said.** A provider that
+opens the stream and then declares its own error inside a frame (OpenAI `error` /
+`response.failed`, Anthropic `error`, Gemini's error envelope, an OpenAI-compatible `error`
+object) no longer collapses to one `provider_internal` 502. The raw code and message classify
+it: content verdicts (content filtering, safety, data inspection) are `refusal`; caller-input
+phrasing ("exceeds the context window", "does not support max tokens", "invalid params") or a
+4xx code is `invalid_request`, a 400 that relays the provider's sentence and never redials or
+fails over; rate limits and overloads are `throttled` with `Retry-After`; provider quota,
+credential, and model-not-found codes take their HTTP-status classes; only a genuine provider
+fault stays `provider stream failed`. An aggregator's 502 wrapping an upstream 400 is read by its
+sentence. The bounded ledger detail exempts the request's own model id from the identifier screen,
+so a provider sentence naming the model is kept rather than dropped.
+
+**Customer-managed credentials fail as the customer's error.** On a BYOK rung, a provider 401/403
+or 402, at stream open or declared mid-stream, is the customer's configuration, not operator
+deadness. The failure keeps its ladder class so any other customer-managed rung with its own
+credential may still serve, but a terminal answer is the customer's 400
+(`provider_credential_rejected` / `provider_account_quota`) naming their provider and what to
+fix, and settlement files it as `invalid_request`. House rungs keep the operator-actionable classes.
+
 **Pre-dispatch context-window refusal.** Before any reservation or provider call, admission
 lower-bounds the prompt's token count from its UTF-8 text bytes (at six bytes per token, below
 what real tokenizers produce on prose, code, or CJK text; inline media is not counted) and

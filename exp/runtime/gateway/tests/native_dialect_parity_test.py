@@ -259,9 +259,10 @@ def test_native_gemini_normalizer_matches_the_golden_fixture() -> None:
 
 
 def test_native_gemini_normalizer_classifies_googles_error_envelope() -> None:
-    """Google's error envelope on the stream is the provider declaring failure:
-    provider_internal (retry, then fail over), never a malformed stream end and
-    never a synthesized completion after prior output."""
+    """Google's error envelope on the stream is the provider declaring failure,
+    classified by what it says: an overloaded model is a throttle (fail over,
+    Retry-After), never a malformed stream end and never a synthesized
+    completion after prior output. A genuine fault stays provider_internal."""
     envelope = _sse(
         {
             "error": {
@@ -273,8 +274,10 @@ def test_native_gemini_normalizer_classifies_googles_error_envelope() -> None:
     )
     failed = {
         "kind": "failed",
-        "failure_class": "provider_internal",
-        "safe_message": "provider stream failed",
+        "failure_class": "throttled",
+        "safe_message": (
+            "provider throttled the request; retry after the delay in the Retry-After header"
+        ),
     }
     alone = _native_normalized("gemini_generate_content", (envelope,))
     assert alone["failure"] is None
@@ -284,6 +287,27 @@ def test_native_gemini_normalizer_classifies_googles_error_envelope() -> None:
     )
     assert after_output["failure"] is None
     assert after_output["events"] == [{"kind": "text_delta", "text": "Hel"}, failed]
+    internal = _native_normalized(
+        "gemini_generate_content",
+        (
+            _sse(
+                {
+                    "error": {
+                        "code": 500,
+                        "message": "Internal error encountered.",
+                        "status": "INTERNAL",
+                    }
+                }
+            ),
+        ),
+    )
+    assert internal["events"] == [
+        {
+            "kind": "failed",
+            "failure_class": "provider_internal",
+            "safe_message": "provider stream failed",
+        }
+    ]
 
 
 def test_native_gemini_normalizer_refuses_a_blocked_prompt() -> None:

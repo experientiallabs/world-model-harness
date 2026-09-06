@@ -622,3 +622,14 @@ def test_wire_entry_carries_emulated_stop_sequences_for_the_data_plane() -> None
 
     default = deployment_wire_entry(route, route.deployment, profile, {"model": "gpt-5.6-luna"})
     assert default["stop_sequences"] == []
+
+
+def test_wire_entry_names_customer_managed_billing_for_the_data_plane() -> None:
+    """A BYOK rung's entry says so, so the data plane re-owns credential failures."""
+    route = _route()
+    byok = GatewayWireProfile(
+        dialect="openai_responses", url="https://provider.test", billing_customer_managed=True
+    )
+    house = GatewayWireProfile(dialect="openai_responses", url="https://provider.test")
+    assert deployment_wire_entry(route, route.deployment, byok, {})["billing_customer_managed"]
+    assert not deployment_wire_entry(route, route.deployment, house, {})["billing_customer_managed"]

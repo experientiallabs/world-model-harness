@@ -198,6 +198,11 @@ class GatewayFailure(ContractModel):
     provider_detail: str | None = Field(default=None, min_length=1, max_length=240)
     """Provider explanation of a client error, relayed only for that class."""
     retry_after_seconds: int | None = Field(default=None, ge=1)
+    """The failure is the caller's own provider configuration: a rejected
+    credential or exhausted account on their customer-managed (BYOK) rung. The
+    class keeps its ladder semantics; the ledger files it as the caller's
+    invalid request and the terminal answer is their 400."""
+    customer_owned: bool = False
     """Known wait before a retry can dispatch (a throttle window's remainder).
 
     When present on a throttled failure, the public mapping advertises this

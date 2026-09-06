@@ -313,7 +313,7 @@ impl Normalizer {
                     ),
                     None => (None, None),
                 };
-                events.push(Event::Failed(super::provider_stream_failed_with_detail(
+                events.push(Event::Failed(self.provider_stream_failure(
                     "anthropic_messages",
                     code,
                     message,

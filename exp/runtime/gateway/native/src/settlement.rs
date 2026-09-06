@@ -85,6 +85,10 @@ fn settle_argument(
             // class only); accounting persists it on the failed-attempt row so
             // an operator sees WHY the provider refused the call.
             "provider_detail": failure.provider_detail,
+            // The customer's own BYOK credential/account failure: the ledger
+            // files it as the caller's invalid request (see
+            // native_accounting.ledger_failure).
+            "customer_owned": failure.customer_owned,
         })),
         "finalize": finalize,
         "opened": opened,
@@ -476,6 +480,28 @@ mod tests {
             parsed["failure"]["provider_detail"],
             "max_tokens must be greater than thinking budget."
         );
+        assert_eq!(parsed["failure"]["customer_owned"], false);
+        let owned = crate::stream_errors::customer_credential_failure(
+            crate::upstream::transport_failure(Some(401)),
+            "openai",
+        );
+        let owned_argument = settle_argument(
+            "req",
+            "att",
+            "failed",
+            None,
+            &[],
+            Some(&owned),
+            true,
+            true,
+            None,
+        );
+        let parsed: Value = serde_json::from_str(&owned_argument).expect("valid json");
+        assert_eq!(
+            parsed["failure"]["failure_class"],
+            "provider_authentication"
+        );
+        assert_eq!(parsed["failure"]["customer_owned"], true);
         // A failure with no provider explanation carries an explicit null, which
         // the control plane parses back to None.
         let bare = Failure::new(FailureClass::ProviderInternal, "provider failed");

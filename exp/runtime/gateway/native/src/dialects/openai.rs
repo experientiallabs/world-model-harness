@@ -6,7 +6,7 @@ use serde_json::Value;
 use super::{
     bounded_wire_token, complete_streamed_tool, complete_streamed_tool_truncated,
     finish_open_tools, finish_open_tools_truncated, malformed, optional_text, parse_object,
-    provider_error_detail, provider_stream_failed_with_detail, refusal_failure, Normalizer,
+    provider_error_detail, refusal_failure, Normalizer,
 };
 use crate::errors::{Failure, FailureClass};
 use crate::events::{
@@ -804,7 +804,7 @@ impl Normalizer {
                                 "provider ended the stream incompletely",
                             )
                             .with_retry(true, true)
-                            .with_provider_detail(provider_error_detail(Some(reason), None)),
+                            .with_provider_detail(provider_error_detail(Some(reason), None, &[])),
                         ));
                     }
                 }
@@ -825,26 +825,53 @@ impl Normalizer {
                         events.push(Event::Usage(usage));
                     }
                     if let Some(error) = response.get("error").and_then(Value::as_object) {
-                        code = error.get("code").and_then(Value::as_str);
+                        code = error.get("code").and_then(error_code_text);
                         message = error.get("message").and_then(Value::as_str);
                     }
                 }
-                events.push(Event::Failed(provider_stream_failed_with_detail(
+                events.push(Event::Failed(self.provider_stream_failure(
                     "openai_responses",
-                    code,
+                    code.as_deref(),
                     message,
                 )));
             }
             "error" => {
                 // The in-stream error frame is the provider declaring its own
                 // failure mid-stream, mirroring the Anthropic dialect's error
-                // event: provider_internal (retry, then fail over), never a
-                // stream that "ended without a terminal event". Its code and
-                // message ride the failure as the bounded ledger detail.
-                events.push(Event::Failed(provider_stream_failed_with_detail(
+                // event, never a stream that "ended without a terminal event".
+                // Its code and message classify the failure (a throttle, the
+                // caller's input, or the provider) and ride it as the bounded
+                // ledger detail. The documented shape puts code/message at the
+                // top level; a nested `error` object is read as the fallback
+                // so an undocumented envelope never degrades to an opaque
+                // "provider stream failed".
+                let nested = payload.get("error").and_then(Value::as_object);
+                // A code is a string in the documented shape; an aggregator
+                // may send the upstream status as a number, which is just as
+                // classifiable (429, 400) and must not be dropped.
+                let code = payload
+                    .get("code")
+                    .and_then(error_code_text)
+                    .or_else(|| {
+                        nested
+                            .and_then(|error| error.get("code"))
+                            .and_then(error_code_text)
+                    })
+                    .or_else(|| {
+                        nested
+                            .and_then(|error| error.get("type"))
+                            .and_then(Value::as_str)
+                            .map(str::to_string)
+                    });
+                let message = payload.get("message").and_then(Value::as_str).or_else(|| {
+                    nested
+                        .and_then(|error| error.get("message"))
+                        .and_then(Value::as_str)
+                });
+                events.push(Event::Failed(self.provider_stream_failure(
                     "openai_responses",
-                    payload.get("code").and_then(Value::as_str),
-                    payload.get("message").and_then(Value::as_str),
+                    code.as_deref(),
+                    message,
                 )));
             }
             other if is_openai_hosted_progress_event(other) => {
@@ -854,6 +881,15 @@ impl Normalizer {
         }
         Ok(events)
     }
+}
+
+/// One provider error code as text: a string as-is, a numeric status (an
+/// aggregator relaying the upstream 429/400) rendered so it still classifies.
+fn error_code_text(value: &Value) -> Option<String> {
+    value
+        .as_str()
+        .map(str::to_string)
+        .or_else(|| value.as_i64().map(|numeric| numeric.to_string()))
 }
 
 mod compatible;
